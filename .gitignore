@@ -1,0 +1,31 @@
+# Node modules
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+
+# macOS / editor / OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime / system artifacts
+tmp/
+temp/
+
+# Optional lockfiles (uncomment if your workflow prefers)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
