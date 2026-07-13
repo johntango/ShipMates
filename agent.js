@@ -111,41 +111,42 @@ async function reportToHerdr(state, details = {}) {
   }
 
   for (let attempt = 0; attempt <= HERDR_MAX_RETRIES; attempt += 1) {
+    const useCustomStatus = payload.customStatus && attempt === 0;
+    const commandArgs = [
+      "pane",
+      "report-agent",
+      HERDR_PANE_ID,
+      "--source",
+      payload.source,
+      "--agent",
+      payload.agent,
+      "--state",
+      payload.state,
+    ];
+
+    if (payload.message) {
+      commandArgs.push("--message", payload.message);
+    }
+
+    if (useCustomStatus) {
+      commandArgs.push("--custom-status", payload.customStatus);
+    }
+
+    if (payload.seq !== undefined) {
+      commandArgs.push("--seq", String(payload.seq));
+    }
+
+    if (payload.agentSessionId) {
+      commandArgs.push("--agent-session-id", payload.agentSessionId);
+    }
+
+    if (payload.agentSessionPath) {
+      commandArgs.push("--agent-session-path", payload.agentSessionPath);
+    }
+
     try {
-      const args = [
-        "pane",
-        "report-agent",
-        HERDR_PANE_ID,
-        "--source",
-        payload.source,
-        "--agent",
-        payload.agent,
-        "--state",
-        payload.state,
-      ];
-
-      if (payload.message) {
-        args.push("--message", payload.message);
-      }
-
-      if (payload.customStatus) {
-        args.push("--custom-status", payload.customStatus);
-      }
-
-      if (payload.seq !== undefined) {
-        args.push("--seq", String(payload.seq));
-      }
-
-      if (payload.agentSessionId) {
-        args.push("--agent-session-id", payload.agentSessionId);
-      }
-
-      if (payload.agentSessionPath) {
-        args.push("--agent-session-path", payload.agentSessionPath);
-      }
-
       await Promise.race([
-        execFileAsync(HERDR_BIN, args),
+        execFileAsync(HERDR_BIN, commandArgs),
         sleep(HERDR_TIMEOUT_MS).then(() => {
           throw new Error(`Herdr report timed out after ${HERDR_TIMEOUT_MS} ms`);
         }),
@@ -155,13 +156,49 @@ async function reportToHerdr(state, details = {}) {
         return;
       }
     } catch (error) {
+      if (payload.customStatus && useCustomStatus) {
+        const stderr = error.stderr || error.message || "";
+        if (stderr.includes("--custom-status")) {
+          void reportToHerdr(state, {
+            ...details,
+            customStatus: undefined,
+            message: `${details.message ? `${details.message}; ` : ""}custom status unsupported in herdr`,
+          });
+        }
+      }
+
       if (attempt === HERDR_MAX_RETRIES) {
-        console.error("Herdr report failed:", error.message);
+        console.error("Herdr report failed:", error.stderr || error.message);
         return;
       }
     }
 
     await sleep(getBackoffDelayMs(attempt));
+  }
+}
+
+async function releaseFromHerdr() {
+  if (!HERDR_PANE_ID) {
+    return;
+  }
+
+  try {
+    await Promise.race([
+      execFileAsync(HERDR_BIN, [
+        "pane",
+        "release-agent",
+        HERDR_PANE_ID,
+        "--source",
+        "shipmates:agent-js",
+        "--agent",
+        HERDR_AGENT_NAME,
+      ]),
+      sleep(HERDR_TIMEOUT_MS).then(() => {
+        throw new Error(`Herdr release timed out after ${HERDR_TIMEOUT_MS} ms`);
+      }),
+    ]);
+  } catch (error) {
+    console.error("Herdr release failed:", error.stderr || error.message);
   }
 }
 
@@ -242,7 +279,7 @@ async function runAgentLoop() {
 
     shuttingDown = true;
     clearInterval(heartbeatId);
-    await reportToHerdr("unknown", { event: "stopped", reason, customStatus: "stopped" });
+    await releaseFromHerdr();
     terminal.close();
     console.log("\nGoodbye.");
   }

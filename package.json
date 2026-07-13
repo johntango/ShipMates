@@ -4,6 +4,17 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"start": "node agent.js"
+		"start": "node agent.js",
+		"codex": "./codex-headr.sh",
+		"codex:mcp-scout": "node scripts/codex-mcp-scout.js",
+		"codex:mcp-pair": "node scripts/codex-mcp-pair.js",
+		"scout:synthesize": "node scripts/scout-synthesis.js",
+		"firstmate": "node --env-file=.env scripts/firstmate.js",
+		"github:draft-pr": "node scripts/github-draft-pr.js",
+		"herdr:status": "node scripts/herdr-status.js"
+	},
+	"dependencies": {
+		"@openai/agents": "^0.13.2",
+		"zod": "^4.4.3"
 	}
 }

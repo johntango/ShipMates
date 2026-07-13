@@ -1,0 +1,363 @@
+export class HerdrProjection {
+  constructor({ store } = {}) {
+    if (!store || typeof store.getSnapshot !== "function") {
+      throw new TypeError("HerdrProjection requires a store with getSnapshot()");
+    }
+    this.store = store;
+  }
+
+  async read({ taskId }) {
+    return projectHerdrSnapshot(await this.store.getSnapshot(taskId));
+  }
+}
+
+export function projectHerdrSnapshot(snapshot) {
+  requireSnapshot(snapshot);
+  const latestValidation = snapshot.validationRuns.at(-1) || null;
+  const latestGitHub = snapshot.githubObservations.at(-1) || null;
+  const latestRecovery = snapshot.recoveryAudits.at(-1) || null;
+  const recoveryCurrent = latestRecovery?.eventId === snapshot.lastEventId;
+  const syntheses = (snapshot.scoutSyntheses || []).map(projectScoutSynthesis);
+  const workers = snapshot.workers.map(projectWorker);
+  const draftPullRequests = (snapshot.githubDraftPullRequests || []).map(
+    projectDraftPullRequest,
+  );
+  const attention = deriveAttention({
+    snapshot,
+    workers,
+    draftPullRequests,
+    latestValidation,
+    latestGitHub,
+    latestRecovery,
+    recoveryCurrent,
+    syntheses,
+  });
+  return {
+    schemaVersion: 1,
+    source: {
+      kind: "shipmates-task-ledger",
+      taskId: snapshot.id,
+      eventsCount: snapshot.eventsCount,
+      lastEventId: snapshot.lastEventId,
+      lastEventAt: snapshot.lastEventAt,
+    },
+    task: {
+      id: snapshot.id,
+      kind: snapshot.kind,
+      repository: snapshot.repo,
+      state: snapshot.state,
+      displayState: displayState(snapshot.state),
+      baseSha: snapshot.baseSha,
+    },
+    worktree: projectWorktree(snapshot.worktree),
+    workers,
+    validation: projectValidation(latestValidation),
+    github: {
+      draftPullRequests,
+      ci: projectCi(latestGitHub),
+    },
+    approvals: {
+      merge: snapshot.approvals.map((approval) => ({
+        eventId: approval.eventId,
+        actor: approval.actor,
+        repository: approval.repo,
+        prNumber: approval.prNumber,
+        headSha: approval.headSha,
+        decision: approval.decision,
+      })),
+      draftPullRequest: (snapshot.githubDraftPrApprovals || []).map(
+        (approval) => ({
+          approvalId: approval.approvalId,
+          actor: approval.actor,
+          repository: approval.repository,
+          headBranch: approval.headBranch,
+          headSha: approval.headSha,
+          decision: approval.decision,
+          consumedBy: approval.consumedBy,
+        }),
+      ),
+    },
+    recovery: latestRecovery === null ? null : {
+      auditId: latestRecovery.auditId,
+      safeToResume: latestRecovery.safeToResume,
+      recommendedActions: [...latestRecovery.recommendedActions],
+      auditedEventId: latestRecovery.auditedEventId,
+      current: recoveryCurrent,
+    },
+    syntheses,
+    attention,
+    summary: {
+      workers: workers.length,
+      activeWorkers: workers.filter(({ status }) =>
+        new Set(["dispatch_requested", "started"]).has(status)).length,
+      pendingReplies: workers.reduce(
+        (count, worker) => count + worker.replies.filter(
+          ({ status }) => status === "requested",
+        ).length,
+        0,
+      ),
+      draftPullRequests: draftPullRequests.length,
+      pendingDraftPullRequests: draftPullRequests.filter(
+        ({ status }) => status === "requested",
+      ).length,
+      requiredChecksSatisfied: latestGitHub?.requiredChecks?.satisfied ?? null,
+      attentionItems: attention.length,
+      syntheses: syntheses.length,
+    },
+  };
+}
+
+export function renderHerdrView(projection) {
+  if (!projection || projection.schemaVersion !== 1) {
+    throw new TypeError("Herdr view requires a schemaVersion 1 projection");
+  }
+  const lines = [
+    `${safe(projection.task.id)}  ${safe(projection.task.state)}  [${safe(projection.task.displayState)}]`,
+    `${safe(projection.task.repository)}  events=${projection.source.eventsCount}  last=${safe(projection.source.lastEventId)}`,
+    `worktree: ${projection.worktree ? `${safe(projection.worktree.status)} ${safe(projection.worktree.headSha)}` : "none"}`,
+    `workers: ${projection.summary.workers} (${projection.summary.activeWorkers} active, ${projection.summary.pendingReplies} replies pending)`,
+    `draft PRs: ${projection.summary.draftPullRequests} (${projection.summary.pendingDraftPullRequests} pending)`,
+    `CI required checks: ${formatNullableBoolean(projection.summary.requiredChecksSatisfied)}`,
+    `recovery: ${projection.recovery ? (!projection.recovery.current ? "stale" : projection.recovery.safeToResume ? "safe" : "required") : "not audited"}`,
+    `scout syntheses: ${projection.summary.syntheses}`,
+  ];
+  if (projection.workers.length > 0) {
+    lines.push("", "Workers");
+    for (const worker of projection.workers) {
+      lines.push(
+        `- ${safe(worker.id)}: ${safe(worker.status)} via ${safe(worker.backend)}; pane=${safe(worker.paneId || "none")}; thread=${safe(worker.threadId || "none")}`,
+      );
+      for (const reply of worker.replies) {
+        lines.push(`  - reply ${safe(reply.id)}: ${safe(reply.status)}`);
+      }
+    }
+  }
+  if (projection.github.draftPullRequests.length > 0) {
+    lines.push("", "Draft pull requests");
+    for (const operation of projection.github.draftPullRequests) {
+      lines.push(
+        `- ${safe(operation.operationId)}: ${safe(operation.status)}; PR=${operation.pullRequest?.number ?? "none"}; head=${safe(operation.headSha)}`,
+      );
+    }
+  }
+  if (projection.syntheses.length > 0) {
+    lines.push("", "Scout syntheses");
+    for (const synthesis of projection.syntheses) {
+      lines.push(
+        `- ${safe(synthesis.id)}: ${safe(synthesis.outcome)}; agreements=${synthesis.counts.agreements}; disagreements=${synthesis.counts.disagreements}; unsupported=${synthesis.counts.unsupportedClaims}; follow-ups=${synthesis.counts.followUpChecks}`,
+      );
+    }
+  }
+  if (projection.attention.length > 0) {
+    lines.push("", "Attention");
+    for (const item of projection.attention) {
+      lines.push(`- ${safe(item.code)}: ${safe(item.message)}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function projectWorker(worker) {
+  return {
+    id: worker.id,
+    backend: worker.backend,
+    mode: worker.mode,
+    sandbox: worker.sandbox,
+    paneId: worker.paneId ?? null,
+    status: worker.status,
+    threadId: worker.threadId,
+    reportStatus: worker.report?.status ?? null,
+    noMutation: worker.verification?.noMutation ?? null,
+    failure: worker.failure,
+    replies: (worker.replies || []).map((reply) => ({
+      id: reply.id,
+      status: reply.status,
+      threadId: reply.threadId,
+      reportStatus: reply.report?.status ?? null,
+      noMutation: reply.verification?.noMutation ?? null,
+      failure: reply.failure,
+    })),
+  };
+}
+
+function projectScoutSynthesis(synthesis) {
+  return {
+    id: synthesis.synthesisId,
+    eventId: synthesis.eventId,
+    workerIds: [...synthesis.workerIds],
+    leaseHeadSha: synthesis.leaseHeadSha,
+    artifactSha256: synthesis.artifactSha256,
+    outcome: synthesis.outcome,
+    counts: { ...synthesis.counts },
+  };
+}
+
+function projectWorktree(worktree) {
+  if (worktree === null) return null;
+  return {
+    status: worktree.status,
+    worktreePath: worktree.worktreePath ?? null,
+    headSha: worktree.headSha ?? worktree.baseSha ?? null,
+    branch: worktree.branch ?? null,
+    leaseHolder: worktree.leaseHolder ?? null,
+  };
+}
+
+function projectValidation(validation) {
+  if (validation === null) return null;
+  return {
+    runId: validation.runId,
+    passed: validation.passed,
+    outcome: validation.outcome,
+    headSha: validation.finalHeadSha,
+    completedAt: validation.completedAt,
+  };
+}
+
+function projectDraftPullRequest(operation) {
+  return {
+    operationId: operation.operationId,
+    approvalId: operation.approvalId,
+    status: operation.status,
+    repository: operation.repository,
+    headBranch: operation.headBranch,
+    headSha: operation.headSha,
+    baseBranch: operation.baseBranch,
+    failure: operation.failure,
+    pullRequest: operation.pullRequest === null ? null : {
+      number: operation.pullRequest.number,
+      url: operation.pullRequest.url,
+      state: operation.pullRequest.state,
+      draft: operation.pullRequest.draft,
+      headSha: operation.pullRequest.head.sha,
+    },
+  };
+}
+
+function projectCi(observation) {
+  if (observation === null) return null;
+  return {
+    prNumber: observation.pullRequest.number,
+    headSha: observation.pullRequest.head.sha,
+    observedAt: observation.observedAt,
+    requiredChecks: {
+      names: [...observation.requiredChecks.names],
+      missing: [...observation.requiredChecks.missing],
+      unsuccessful: [...observation.requiredChecks.unsuccessful],
+      satisfied: observation.requiredChecks.satisfied,
+    },
+    checks: observation.checks.map((check) => ({
+      name: check.name,
+      status: check.status,
+      conclusion: check.conclusion,
+    })),
+  };
+}
+
+function deriveAttention({
+  snapshot, workers, draftPullRequests, latestValidation, latestGitHub,
+  latestRecovery, recoveryCurrent, syntheses,
+}) {
+  const result = [];
+  if (new Set(["lease_requested", "return_requested"]).has(snapshot.worktree?.status)) {
+    result.push(item("worktree_reconciliation", `Worktree is ${snapshot.worktree.status}`));
+  }
+  for (const worker of workers) {
+    if (new Set(["dispatch_requested", "started"]).has(worker.status)) {
+      result.push(item("worker_reconciliation", `Worker ${worker.id} is ${worker.status}`));
+    }
+    for (const reply of worker.replies) {
+      if (reply.status === "requested") {
+        result.push(item(
+          "reply_reconciliation",
+          `Worker ${worker.id} reply ${reply.id} needs reconciliation`,
+        ));
+      }
+    }
+  }
+  for (const operation of draftPullRequests) {
+    if (operation.status === "requested") {
+      result.push(item(
+        "draft_pr_reconciliation",
+        `Draft PR operation ${operation.operationId} needs reconciliation`,
+      ));
+    }
+  }
+  if (latestValidation && latestValidation.passed !== true) {
+    result.push(item("validation_not_passing", "Latest local validation is not passing"));
+  }
+  if (latestGitHub && latestGitHub.requiredChecks.satisfied !== true) {
+    result.push(item("ci_not_satisfied", "Required GitHub checks are not satisfied"));
+  }
+  if (snapshot.state === "awaiting_human") {
+    result.push(item("human_decision", "Task is awaiting a human decision"));
+  }
+  for (const synthesis of syntheses) {
+    if (synthesis.outcome === "review_required") {
+      result.push(item(
+        "scout_synthesis_review",
+        `Scout synthesis ${synthesis.id} has disagreements or uncorroborated claims`,
+      ));
+    }
+  }
+  if (latestRecovery && !recoveryCurrent) {
+    result.push(item(
+      "recovery_audit_stale",
+      "Task evidence changed after the latest recovery audit",
+    ));
+  } else if (latestRecovery && latestRecovery.safeToResume !== true) {
+    result.push(item(
+      "recovery_required",
+      `Recovery actions: ${latestRecovery.recommendedActions.join(", ") || "manual inspection"}`,
+    ));
+  }
+  return result;
+}
+
+function item(code, message) {
+  return { code, message };
+}
+
+function displayState(state) {
+  if (state === "complete") return "done";
+  if (new Set(["blocked", "failed", "cancelled", "recovery_required"]).has(state)) {
+    return "blocked";
+  }
+  if (state === "awaiting_human") return "blocked";
+  if (new Set(["proposed", "clarified", "approved_for_dispatch"]).has(state)) {
+    return "idle";
+  }
+  return "working";
+}
+
+function formatNullableBoolean(value) {
+  if (value === null) return "not observed";
+  return value ? "satisfied" : "not satisfied";
+}
+
+function safe(value) {
+  return String(value).replace(/[\p{Cc}\p{Cf}]/gu, "?");
+}
+
+function requireSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new TypeError("Herdr source snapshot must be an object");
+  }
+  for (const field of [
+    "id", "kind", "repo", "state", "baseSha", "eventsCount", "lastEventId",
+    "lastEventAt", "workers", "validationRuns", "githubObservations",
+    "recoveryAudits", "approvals",
+  ]) {
+    if (snapshot[field] === undefined || snapshot[field] === null) {
+      throw new TypeError(`Herdr source snapshot lacks ${field}`);
+    }
+  }
+  for (const field of [
+    "workers", "validationRuns", "githubObservations", "recoveryAudits",
+    "approvals",
+  ]) {
+    if (!Array.isArray(snapshot[field])) {
+      throw new TypeError(`Herdr source snapshot ${field} must be an array`);
+    }
+  }
+}
