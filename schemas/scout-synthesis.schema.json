@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ShipMates two-scout synthesis artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "taskId",
+    "synthesisId",
+    "leaseHeadSha",
+    "sources",
+    "agreements",
+    "disagreements",
+    "unsupportedClaims",
+    "followUpChecks",
+    "outcome"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "taskId": { "type": "string" },
+    "synthesisId": { "type": "string" },
+    "leaseHeadSha": { "type": "string" },
+    "sources": { "type": "array", "minItems": 2, "maxItems": 2 },
+    "agreements": { "type": "array" },
+    "disagreements": { "type": "array" },
+    "unsupportedClaims": { "type": "array" },
+    "followUpChecks": { "type": "array" },
+    "outcome": { "enum": ["aligned", "review_required"] }
+  }
+}

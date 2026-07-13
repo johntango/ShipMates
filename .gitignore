@@ -24,6 +24,7 @@ pnpm-debug.log*
 # Runtime / system artifacts
 tmp/
 temp/
+.shipmates/
 
 # Optional lockfiles (uncomment if your workflow prefers)
 # package-lock.json
