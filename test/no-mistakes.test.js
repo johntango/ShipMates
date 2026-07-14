@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -26,7 +28,7 @@ test("runs a passing validator with remote-capable steps disabled", async () => 
   const runner = fakeRunner({ calls, output: passingOutput() });
   const gate = new NoMistakesLocalGate({
     binaryPath: "/private/tmp/no-mistakes",
-    stateRoot: "/private/tmp/nm-state",
+    stateRoot: path.join(tmpdir(), "shipmates-no-mistakes-test"),
     runner,
     clock: () => NOW,
     ...PIN_OPTIONS,
