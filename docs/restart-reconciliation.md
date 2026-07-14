@@ -30,6 +30,8 @@ The reconciler:
   GitHub reconciliation rather than a second merge request;
 - requires a completed merge to have passing exact-commit CI evidence, a
   matching exact-tree proof, and a returned lease before cleanup is complete;
+- identifies uncertain remote branch deletion and directs the operator to
+  read-only ref reconciliation rather than a second delete;
 - identifies pinned local validation intent without a result and refuses an
   automatic rerun;
 - checks whether validation evidence matches the active lease;

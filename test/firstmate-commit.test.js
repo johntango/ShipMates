@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { TaskStore } from "../src/storage/task-store.js";
+import { BranchCleanupWorkflow } from "../src/workflows/branch-cleanup.js";
 import {
   FirstmateCommitRecoveryRequiredError,
   FirstmateCommitWorkflow,
@@ -380,7 +381,71 @@ test("records exact delivery approvals through merge assurance and lease return"
   assert.equal(completed.postMergeAssurances[0].mergeCommitSha, MERGE);
   assert.equal(completed.postMergeAssurances[0].requiredChecks.satisfied, true);
   assert.deepEqual(treehouseCalls.map(([name]) => name), ["fetch", "prove", "return"]);
+
+  let remoteTaskHead = HEAD;
+  let deleteCalls = 0;
+  const cleanup = new BranchCleanupWorkflow({
+    store,
+    readGateway: {
+      readRepository: async () => ({
+        nameWithOwner: "johntango/ShipMates",
+        defaultBranch: "main",
+        archived: false,
+        disabled: false,
+      }),
+    },
+    deleteAdapter: {
+      inspect: async () => ({ remoteHeadSha: remoteTaskHead }),
+      deleteExact: async () => {
+        deleteCalls += 1;
+        remoteTaskHead = null;
+        return cleanupResult("delete-confirmation");
+      },
+      reconcile: async () => ({
+        status: remoteTaskHead === null ? "completed" : "not_deleted",
+        evidence: remoteTaskHead === null
+          ? cleanupResult("remote-reconciliation")
+          : null,
+      }),
+    },
+    idFactory: () => "cleanup-attempt-001",
+  });
+  await cleanup.approve({
+    taskId,
+    approvalId: "cleanup-approval-001",
+    humanActor: "john",
+    repository: "johntango/ShipMates",
+    branch: "task-branch",
+    headSha: HEAD,
+  });
+  const cleaned = await cleanup.delete({
+    taskId,
+    operationId: "cleanup-operation-001",
+    approvalId: "cleanup-approval-001",
+  });
+
+  assert.equal(cleaned.state, "complete");
+  assert.equal(cleaned.branchCleanups[0].status, "completed");
+  assert.equal(cleaned.branchCleanups[0].result.deletedHeadSha, HEAD);
+  assert.equal(cleaned.branchCleanupApprovals[0].consumedBy, "cleanup-operation-001");
+  assert.equal(deleteCalls, 1);
 });
+
+function cleanupResult(evidenceKind) {
+  return {
+    evidenceKind,
+    repository: "johntango/ShipMates",
+    remoteName: "origin",
+    branch: "task-branch",
+    remoteRef: "refs/heads/task-branch",
+    deletedHeadSha: HEAD,
+    remoteHeadSha: null,
+    transportOutputSha256: evidenceKind === "delete-confirmation"
+      ? "e".repeat(64)
+      : null,
+    deleted: true,
+  };
+}
 
 async function preparedStore(t, taskId) {
   const rootDir = await mkdtemp(path.join(tmpdir(), "shipmates-commit-flow-"));

@@ -5,6 +5,7 @@ export class FirstmateDeliveryWorkflow {
     draftWorkflow,
     mergeWorkflow = null,
     postMergeWorkflow = null,
+    cleanupWorkflow = null,
   } = {}) {
     if (!store || !pushWorkflow || !draftWorkflow) {
       throw new TypeError(
@@ -16,6 +17,7 @@ export class FirstmateDeliveryWorkflow {
     this.draftWorkflow = draftWorkflow;
     this.mergeWorkflow = mergeWorkflow;
     this.postMergeWorkflow = postMergeWorkflow;
+    this.cleanupWorkflow = cleanupWorkflow;
   }
 
   async status({ taskId }) {
@@ -139,6 +141,30 @@ export class FirstmateDeliveryWorkflow {
     return this.status({ taskId });
   }
 
+  async approveBranchCleanup({ taskId, approvalId, humanActor }) {
+    this.#requireCleanupWorkflow();
+    const target = completedTarget(await this.store.getSnapshot(taskId));
+    await this.cleanupWorkflow.approve({
+      taskId,
+      approvalId,
+      humanActor,
+      ...target,
+    });
+    return this.status({ taskId });
+  }
+
+  async cleanupBranch({ taskId, operationId, approvalId }) {
+    this.#requireCleanupWorkflow();
+    await this.cleanupWorkflow.delete({ taskId, operationId, approvalId });
+    return this.status({ taskId });
+  }
+
+  async reconcileBranchCleanup({ taskId, operationId }) {
+    this.#requireCleanupWorkflow();
+    await this.cleanupWorkflow.reconcile({ taskId, operationId });
+    return this.status({ taskId });
+  }
+
   #requireMergeWorkflow() {
     if (!this.mergeWorkflow) {
       throw new FirstmateDeliveryWorkflowError("Merge workflow is not configured");
@@ -149,6 +175,14 @@ export class FirstmateDeliveryWorkflow {
     if (!this.postMergeWorkflow) {
       throw new FirstmateDeliveryWorkflowError(
         "Post-merge assurance workflow is not configured",
+      );
+    }
+  }
+
+  #requireCleanupWorkflow() {
+    if (!this.cleanupWorkflow) {
+      throw new FirstmateDeliveryWorkflowError(
+        "Branch cleanup workflow is not configured",
       );
     }
   }
@@ -182,7 +216,17 @@ function summarize(snapshot) {
       stage = "merge_reconciliation_required";
     } else if (merge?.status === "completed") {
       if (snapshot.state === "complete" && snapshot.worktree?.status === "returned") {
-        stage = "complete";
+        const cleanup = snapshot.branchCleanups?.at(-1) || null;
+        const approval = latestUnusedCleanupApproval(snapshot, target);
+        if (cleanup?.status === "requested") {
+          stage = "branch_cleanup_reconciliation_required";
+        } else if (cleanup?.status === "completed") {
+          stage = "complete";
+        } else {
+          stage = approval
+            ? "ready_to_cleanup_branch"
+            : "awaiting_branch_cleanup_approval";
+        }
       } else if (snapshot.worktree?.status === "return_requested") {
         stage = "treehouse_return_reconciliation_required";
       } else if (snapshot.state === "cleaning") {
@@ -246,6 +290,14 @@ function summarize(snapshot) {
         ? snapshot.worktree.proof.eventId
         : null,
       leaseStatus: snapshot.worktree?.status || null,
+    } : null,
+    branchCleanup: snapshot.branchCleanups?.at(-1) ? {
+      operationId: snapshot.branchCleanups.at(-1).operationId,
+      approvalId: snapshot.branchCleanups.at(-1).approvalId,
+      status: snapshot.branchCleanups.at(-1).status,
+      branch: snapshot.branchCleanups.at(-1).branch,
+      deletedHeadSha: snapshot.branchCleanups.at(-1).result?.deletedHeadSha || null,
+      failure: snapshot.branchCleanups.at(-1).failure,
     } : null,
     ledger: {
       state: snapshot.state,
@@ -353,4 +405,24 @@ function mergeTarget(snapshot) {
     prNumber: draft.pullRequest.number,
     headSha: target.headSha,
   };
+}
+
+function completedTarget(snapshot) {
+  const target = validatedTarget(snapshot);
+  const assurance = snapshot.postMergeAssurances?.at(-1);
+  if (snapshot.state !== "complete" || snapshot.worktree?.status !== "returned" ||
+    assurance?.requiredChecks?.satisfied !== true ||
+    snapshot.worktree?.proof?.kind !== "exact-tree-landing") {
+    throw new FirstmateDeliveryWorkflowError(
+      "Branch cleanup requires completed landed-work assurance and lease return",
+    );
+  }
+  return target;
+}
+
+function latestUnusedCleanupApproval(snapshot, target) {
+  return [...(snapshot.branchCleanupApprovals || [])].reverse().find((approval) =>
+    approval.consumedBy === null && approval.decision === "approved" &&
+    approval.repository.toLowerCase() === target.repository.toLowerCase() &&
+    approval.branch === target.branch && approval.headSha === target.headSha) || null;
 }

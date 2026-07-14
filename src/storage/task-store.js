@@ -254,6 +254,54 @@ export class TaskStore {
     });
   }
 
+  async recordBranchCleanupApproval({ taskId, actor, approval, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.branch_cleanup.approved",
+      at,
+      actor,
+      data: approval,
+    });
+  }
+
+  async requestBranchCleanup({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.branch_cleanup.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordBranchCleanupCompleted({
+    taskId, actor, operationId, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.branch_cleanup.completed",
+      at,
+      actor,
+      data: { operationId, requestEventId, result },
+    });
+  }
+
+  async recordBranchCleanupFailure({
+    taskId, actor, operationId, requestEventId, code, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.branch_cleanup.failed",
+      at,
+      actor,
+      data: { operationId, requestEventId, code },
+    });
+  }
+
   async requestGitCommit({ taskId, actor, request, eventId, at }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),

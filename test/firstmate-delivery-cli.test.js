@@ -100,3 +100,48 @@ test("dispatches post-merge assurance and return reconciliation", async () => {
     ["reconcile-return", { taskId: "task-001" }],
   ]);
 });
+
+test("dispatches separately approved branch cleanup and reconciliation", async () => {
+  const calls = [];
+  const workflow = {
+    async approveBranchCleanup(input) {
+      calls.push(["approve", input]);
+      return { stage: "ready_to_cleanup_branch" };
+    },
+    async cleanupBranch(input) {
+      calls.push(["delete", input]);
+      return { stage: "complete" };
+    },
+    async reconcileBranchCleanup(input) {
+      calls.push(["reconcile", input]);
+      return { stage: "complete" };
+    },
+  };
+
+  await runFirstmateDeliveryCli({
+    args: ["approve-cleanup", "task-001", "approval-001"],
+    env: { SHIPMATES_HUMAN_ACTOR: "john" },
+    workflow,
+    write() {},
+  });
+  await runFirstmateDeliveryCli({
+    args: ["cleanup-branch", "task-001", "cleanup-001", "approval-001"],
+    workflow,
+    write() {},
+  });
+  await runFirstmateDeliveryCli({
+    args: ["reconcile-cleanup", "task-001", "cleanup-001"],
+    workflow,
+    write() {},
+  });
+
+  assert.deepEqual(calls, [
+    ["approve", {
+      taskId: "task-001", approvalId: "approval-001", humanActor: "john",
+    }],
+    ["delete", {
+      taskId: "task-001", operationId: "cleanup-001", approvalId: "approval-001",
+    }],
+    ["reconcile", { taskId: "task-001", operationId: "cleanup-001" }],
+  ]);
+});

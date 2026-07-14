@@ -96,6 +96,9 @@ Implemented repository artifacts include:
 - post-merge assurance that requires protected CI on the exact merge commit,
   proves the squash tree equals the approved task tree, and returns the
   Treehouse lease through a crash-safe intent/result boundary;
+- a fourth separately human-approved cleanup gateway that atomically deletes
+  only the exact published remote task-branch SHA and reconciles uncertain
+  transport without repeating deletion;
 - a local Codex MCP runtime wrapped as one strict, read-only Firstmate scout
   tool with no conversational handoff;
 - architecture and GitHub governance documentation;
@@ -536,6 +539,15 @@ the Treehouse lease through the existing crash-safe lifecycle. It refuses an
 advanced default branch and never repeats an uncertain return. See the
 [post-merge assurance guide](docs/post-merge-assurance.md).
 
+### Step 32: Delete only the completed exact task branch
+
+Firstmate now treats remote branch cleanup as a fourth distinct human decision.
+Approval binds the completed repository, task branch, published SHA,
+post-merge assurance, tree proof, and returned-lease events. Mutation uses an
+atomic Git `--force-with-lease` deletion for the full remote ref, so any branch
+movement refuses the write. Uncertain transport is reconciled by `ls-remote`
+without a second deletion. See the [branch cleanup guide](docs/branch-cleanup.md).
+
 ## Running the current checks
 
 Run the ShipMates tests after `npm install`:
@@ -598,6 +610,8 @@ at its expected head.
 - Post-merge assurance deliberately requires the default branch to remain at
   the confirmed merge commit until proof completes; it does not yet reconcile
   later commits that contain the same landed tree.
+- The branch-cleanup gateway is implemented and tested with injected Git
+  transports but has not deleted a live task branch through Firstmate.
 - lavish-axi review is not yet wired into the full executable path. Herdr
   receives best-effort live worker, commit, and validation status in addition
   to its deterministic read-only projection, but it remains non-authoritative.
@@ -611,8 +625,9 @@ at its expected head.
 
 The next sequence is:
 
-1. add a separately approved remote task-branch cleanup capability, with
-   exact landed-work and returned-lease preconditions plus read-only recovery.
+1. run an explicitly approved, instrumented end-to-end practice exercise for
+   merge, post-merge assurance, lease return, and branch cleanup, then use its
+   evidence to harden operator recovery and release readiness.
 
 We will keep using `Shipmates-Practice` for each stage and will not advance a
 sensitive transition without exact evidence and explicit human approval.

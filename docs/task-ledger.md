@@ -163,6 +163,13 @@ assurance event before `worktree.return.requested` can advance through
 `cleaning` to `complete`. An uncertain return remains durable and is reconciled
 without repeating Treehouse mutation.
 
+Remote task-branch cleanup adds `git.branch_cleanup.approved`, `.requested`,
+`.completed`, and `.failed`. Approval binds the exact published repository,
+branch, head, assurance, tree-proof, and returned-lease events. Requested intent
+consumes the approval before atomic deletion. An absent ref completes; the
+original ref still present fails and requires new approval; a changed ref is
+never accepted as either outcome.
+
 The Herdr adapter reads the replaceable task snapshot and creates an ephemeral
 operator projection. It never writes a status event back into the ledger; see
 the [Herdr status guide](herdr-status.md).

@@ -100,6 +100,8 @@ export function replayTaskEvents(events) {
     gitCommits: [],
     gitPushApprovals: [],
     gitPushes: [],
+    branchCleanupApprovals: [],
+    branchCleanups: [],
     validationRequests: [],
     validationRuns: [],
     recoveryAudits: [],
@@ -500,6 +502,80 @@ function applyEvent(snapshot, event, index) {
       if (event.data.requestEventId !== operation.requestEventId ||
         event.data.code !== "remote_branch_absent") {
         throw new TaskStateError("Git push failure does not match its request");
+      }
+      operation.status = "failed";
+      operation.failure = event.data.code;
+      operation.failedEventId = event.id;
+      break;
+    }
+
+    case "git.branch_cleanup.approved": {
+      requireCreated(snapshot, event);
+      const approval = event.data;
+      validateBranchCleanupApproval(snapshot, approval);
+      if (snapshot.branchCleanupApprovals.some(({ approvalId }) =>
+        approvalId === approval.approvalId)) {
+        throw new TaskStateError(
+          `Branch cleanup approval already exists: ${approval.approvalId}`,
+        );
+      }
+      snapshot.branchCleanupApprovals.push({
+        ...approval,
+        eventId: event.id,
+        at: event.at,
+        actor: event.actor,
+        consumedBy: null,
+      });
+      break;
+    }
+
+    case "git.branch_cleanup.requested": {
+      requireCreated(snapshot, event);
+      const request = event.data;
+      validateBranchCleanupRequest(snapshot, request);
+      if (snapshot.branchCleanups.some(({ operationId }) =>
+        operationId === request.operationId)) {
+        throw new TaskStateError(
+          `Branch cleanup operation already exists: ${request.operationId}`,
+        );
+      }
+      const approval = snapshot.branchCleanupApprovals.find(
+        ({ eventId }) => eventId === request.approvalEventId,
+      );
+      approval.consumedBy = request.operationId;
+      snapshot.branchCleanups.push({
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+        failure: null,
+      });
+      break;
+    }
+
+    case "git.branch_cleanup.completed": {
+      requireCreated(snapshot, event);
+      const operation = requireBranchCleanupOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId) {
+        throw new TaskStateError("Branch cleanup result does not match its request");
+      }
+      validateBranchCleanupResult(operation, event.data.result);
+      operation.status = "completed";
+      operation.result = { ...event.data.result };
+      operation.completedEventId = event.id;
+      break;
+    }
+
+    case "git.branch_cleanup.failed": {
+      requireCreated(snapshot, event);
+      const operation = requireBranchCleanupOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId ||
+        event.data.code !== "remote_branch_not_deleted") {
+        throw new TaskStateError("Branch cleanup failure does not match its request");
       }
       operation.status = "failed";
       operation.failure = event.data.code;
@@ -1606,6 +1682,143 @@ function requireGitPushOperation(snapshot, operationId, status) {
 function sameGitPushBinding(left, right) {
   return ["repository", "branch", "headSha"].every((field) =>
     left[field] === right[field]);
+}
+
+function validateBranchCleanupApproval(snapshot, approval) {
+  const expectedKeys = [
+    "approvalId", "approverType", "branch", "decision", "headSha",
+    "postMergeAssuranceEventId", "repository", "treeProofEventId",
+    "worktreeReturnedEventId",
+  ];
+  if (!approval || typeof approval !== "object" || Array.isArray(approval) ||
+    Object.keys(approval).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Branch cleanup approval fields are invalid");
+  }
+  requireIdentifier("Branch cleanup approval ID", approval.approvalId);
+  requireNonEmpty("Branch cleanup repository", approval.repository);
+  requireNonEmpty("Branch cleanup branch", approval.branch);
+  requireFullSha("Branch cleanup head SHA", approval.headSha);
+  requireNonEmpty("Branch cleanup assurance event", approval.postMergeAssuranceEventId);
+  requireNonEmpty("Branch cleanup tree proof event", approval.treeProofEventId);
+  requireNonEmpty("Branch cleanup returned event", approval.worktreeReturnedEventId);
+  if (approval.decision !== "approved" || approval.approverType !== "human") {
+    throw new TaskStateError("Branch cleanup requires explicit human approval");
+  }
+  validateBranchCleanupTaskTarget(snapshot, approval);
+  if (snapshot.branchCleanups.some(({ status }) =>
+    new Set(["requested", "completed"]).has(status))) {
+    throw new TaskStateError(
+      "Task already has an active or completed branch cleanup",
+    );
+  }
+}
+
+function validateBranchCleanupRequest(snapshot, request) {
+  const expectedKeys = [
+    "approvalEventId", "approvalId", "attemptId", "branch",
+    "expectedRemoteHeadSha", "headSha", "operationId", "remoteName",
+    "remoteRef", "repository",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Branch cleanup request fields are invalid");
+  }
+  requireIdentifier("Branch cleanup operation ID", request.operationId);
+  requireIdentifier("Branch cleanup attempt ID", request.attemptId);
+  requireIdentifier("Branch cleanup approval ID", request.approvalId);
+  requireNonEmpty("Branch cleanup approval event", request.approvalEventId);
+  requireFullSha("Branch cleanup expected remote head", request.expectedRemoteHeadSha);
+  if (request.remoteName !== "origin" ||
+    request.remoteRef !== `refs/heads/${request.branch}` ||
+    request.expectedRemoteHeadSha !== request.headSha ||
+    snapshot.branchCleanups.some(({ status }) =>
+      new Set(["requested", "completed"]).has(status))) {
+    throw new TaskStateError("Branch cleanup request is not a new exact deletion");
+  }
+  validateBranchCleanupTaskTarget(snapshot, request);
+  const approval = snapshot.branchCleanupApprovals.find(
+    ({ approvalId }) => approvalId === request.approvalId,
+  );
+  if (!approval || approval.eventId !== request.approvalEventId ||
+    approval.consumedBy !== null || !sameBranchCleanupBinding(approval, request)) {
+    throw new TaskStateError(
+      "Branch cleanup request lacks a matching unused human approval",
+    );
+  }
+}
+
+function validateBranchCleanupTaskTarget(snapshot, value) {
+  const assurance = (snapshot.postMergeAssurances || []).at(-1);
+  const proof = snapshot.worktree?.proof;
+  const pushed = [...snapshot.gitPushes].reverse().find((operation) =>
+    operation.status === "completed" &&
+    operation.repository.toLowerCase() === value.repository.toLowerCase() &&
+    operation.branch === value.branch && operation.headSha === value.headSha);
+  if (snapshot.state !== "complete" || snapshot.worktree?.status !== "returned" ||
+    snapshot.repo.toLowerCase() !== value.repository.toLowerCase() ||
+    snapshot.worktree.branch !== value.branch ||
+    snapshot.worktree.headSha !== value.headSha || !pushed ||
+    assurance?.requiredChecks?.satisfied !== true ||
+    assurance.approvedHeadSha !== value.headSha ||
+    proof?.kind !== "exact-tree-landing" ||
+    proof.assuranceEventId !== assurance.eventId ||
+    snapshot.worktree.returnedEventId === null ||
+    (value.postMergeAssuranceEventId !== undefined &&
+      value.postMergeAssuranceEventId !== assurance.eventId) ||
+    (value.treeProofEventId !== undefined && value.treeProofEventId !== proof.eventId) ||
+    (value.worktreeReturnedEventId !== undefined &&
+      value.worktreeReturnedEventId !== snapshot.worktree.returnedEventId)) {
+    throw new TaskStateError(
+      "Branch cleanup target lacks completed landed-work and lease-return evidence",
+    );
+  }
+}
+
+function validateBranchCleanupResult(operation, result) {
+  const expectedKeys = [
+    "branch", "deleted", "deletedHeadSha", "evidenceKind", "remoteHeadSha",
+    "remoteName", "remoteRef", "repository", "transportOutputSha256",
+  ];
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+    Object.keys(result).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Branch cleanup result fields are invalid");
+  }
+  if (!new Set(["delete-confirmation", "remote-reconciliation"]).has(
+    result.evidenceKind)) {
+    throw new TaskStateError("Branch cleanup evidence kind is invalid");
+  }
+  if (result.repository !== operation.repository ||
+    result.remoteName !== "origin" || result.branch !== operation.branch ||
+    result.remoteRef !== operation.remoteRef ||
+    result.deletedHeadSha !== operation.headSha || result.remoteHeadSha !== null ||
+    result.deleted !== true ||
+    (result.evidenceKind === "delete-confirmation" &&
+      !/^[a-f0-9]{64}$/u.test(result.transportOutputSha256)) ||
+    (result.evidenceKind === "remote-reconciliation" &&
+      result.transportOutputSha256 !== null)) {
+    throw new TaskStateError(
+      "Branch cleanup result does not match its approved exact deletion",
+    );
+  }
+}
+
+function requireBranchCleanupOperation(snapshot, operationId, status) {
+  requireIdentifier("Branch cleanup operation ID", operationId);
+  const operation = snapshot.branchCleanups.find(
+    ({ operationId: id }) => id === operationId,
+  );
+  if (!operation || operation.status !== status) {
+    throw new TaskStateError(
+      `Branch cleanup operation ${operationId} requires status ${status}`,
+    );
+  }
+  return operation;
+}
+
+function sameBranchCleanupBinding(left, right) {
+  return ["repository", "branch", "headSha"].every(
+    (field) => left[field] === right[field],
+  );
 }
 
 function validateGitHubMergeApproval(snapshot, approval) {

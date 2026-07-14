@@ -24,6 +24,7 @@ The projection includes:
 - merge and draft-PR approvals;
 - exact-head merge operation, merge commit, and recovery status;
 - merge-commit check assurance, exact-tree proof event, and lease-return status;
+- branch-cleanup approval, exact remote head, mutation status, and recovery need;
 - latest restart audit and recommended recovery actions;
 - two-scout synthesis identity, exact-head binding, outcome, and counts;
 - human-selected follow-up binding, read-only reply lifecycle, outcome, and
@@ -47,8 +48,11 @@ the separate draft-PR approval, and a completed draft with no matching
 observation is shown as awaiting exact-head CI evidence.
 Passing non-draft exact-head CI is shown as awaiting separate merge approval.
 Uncertain merge intent requires reconciliation. A landed merge remains visible
-as awaiting post-merge CI, then exact-tree proof, then lease return; a completed
-task exposes the returned lease without a cleanup attention item.
+as awaiting post-merge CI, then exact-tree proof, then lease return. After lease
+return, those assurance items clear and Herdr shows the separate remote
+branch-cleanup approval;
+uncertain deletion becomes a reconciliation item and confirmed deletion clears
+that attention.
 
 ## Commands
 

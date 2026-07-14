@@ -114,6 +114,28 @@ test("continues one validated task through separate push and draft approvals int
       },
       async reconcileReturn() {},
     },
+    cleanupWorkflow: {
+      async approve(input) {
+        calls.push(["approve-cleanup", input]);
+        store.snapshot.branchCleanupApprovals.push({
+          ...input, decision: "approved", consumedBy: null,
+        });
+      },
+      async delete(input) {
+        calls.push(["cleanup-branch", input]);
+        store.snapshot.branchCleanupApprovals[0].consumedBy = input.operationId;
+        store.snapshot.branchCleanups.push({
+          ...input,
+          repository: REPOSITORY,
+          branch: BRANCH,
+          headSha: HEAD,
+          status: "completed",
+          result: { deletedHeadSha: HEAD },
+          failure: null,
+        });
+      },
+      async reconcile() {},
+    },
   });
 
   assert.equal((await workflow.status({ taskId: "delivery-001" })).stage,
@@ -165,11 +187,21 @@ test("continues one validated task through separate push and draft approvals int
     taskId: "delivery-001",
     operationId: "post-merge-operation-001",
   });
-  assert.equal(completed.stage, "complete");
+  assert.equal(completed.stage, "awaiting_branch_cleanup_approval");
   assert.equal(completed.postMerge.treeProofEventId, "tree-proof");
+  assert.equal((await workflow.approveBranchCleanup({
+    taskId: "delivery-001",
+    approvalId: "cleanup-approval-001",
+    humanActor: "john",
+  })).stage, "ready_to_cleanup_branch");
+  assert.equal((await workflow.cleanupBranch({
+    taskId: "delivery-001",
+    operationId: "cleanup-operation-001",
+    approvalId: "cleanup-approval-001",
+  })).stage, "complete");
   assert.deepEqual(calls.map(([name]) => name), [
     "approve-push", "push", "approve-pr", "create-pr", "ci",
-    "approve-merge", "merge", "post-merge",
+    "approve-merge", "merge", "post-merge", "approve-cleanup", "cleanup-branch",
   ]);
   for (const [, input] of calls.slice(0, 4)) {
     assert.equal(input.repository, REPOSITORY);
@@ -239,6 +271,8 @@ class MemoryStore {
       githubMergeApprovals: [],
       githubMerges: [],
       postMergeAssurances: [],
+      branchCleanupApprovals: [],
+      branchCleanups: [],
     };
   }
 

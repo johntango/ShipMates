@@ -29,6 +29,9 @@ export function projectHerdrSnapshot(snapshot) {
   const postMerge = (snapshot.postMergeAssurances || []).map(
     (assurance) => projectPostMergeAssurance(assurance, snapshot),
   );
+  const branchCleanups = (snapshot.branchCleanups || []).map(
+    projectBranchCleanup,
+  );
   const attention = deriveAttention({
     snapshot,
     workers,
@@ -36,6 +39,7 @@ export function projectHerdrSnapshot(snapshot) {
     pushes,
     merges,
     postMerge,
+    branchCleanups,
     draftPullRequests,
     latestValidation,
     latestGitHub,
@@ -67,6 +71,7 @@ export function projectHerdrSnapshot(snapshot) {
     pushes,
     merges,
     postMerge,
+    branchCleanups,
     validation: projectValidation(latestValidation),
     github: {
       draftPullRequests,
@@ -107,6 +112,15 @@ export function projectHerdrSnapshot(snapshot) {
         decision: approval.decision,
         consumedBy: approval.consumedBy,
       })),
+      branchCleanup: (snapshot.branchCleanupApprovals || []).map((approval) => ({
+        approvalId: approval.approvalId,
+        actor: approval.actor,
+        repository: approval.repository,
+        branch: approval.branch,
+        headSha: approval.headSha,
+        decision: approval.decision,
+        consumedBy: approval.consumedBy,
+      })),
     },
     recovery: latestRecovery === null ? null : {
       auditId: latestRecovery.auditId,
@@ -137,6 +151,10 @@ export function projectHerdrSnapshot(snapshot) {
       merges: merges.length,
       pendingMerges: merges.filter(({ status }) => status === "requested").length,
       postMergeAssurances: postMerge.length,
+      branchCleanups: branchCleanups.length,
+      pendingBranchCleanups: branchCleanups.filter(
+        ({ status }) => status === "requested",
+      ).length,
       requiredChecksSatisfied: latestGitHub?.requiredChecks?.satisfied ?? null,
       attentionItems: attention.length,
       syntheses: syntheses.length,
@@ -158,6 +176,7 @@ export function renderHerdrView(projection) {
     `pushes: ${projection.summary.pushes} (${projection.summary.pendingPushes} pending)`,
     `merges: ${projection.summary.merges} (${projection.summary.pendingMerges} pending)`,
     `post-merge assurances: ${projection.summary.postMergeAssurances}`,
+    `branch cleanups: ${projection.summary.branchCleanups} (${projection.summary.pendingBranchCleanups} pending)`,
     `draft PRs: ${projection.summary.draftPullRequests} (${projection.summary.pendingDraftPullRequests} pending)`,
     `CI required checks: ${formatNullableBoolean(projection.summary.requiredChecksSatisfied)}`,
     `recovery: ${projection.recovery ? (!projection.recovery.current ? "stale" : projection.recovery.safeToResume ? "safe" : "required") : "not audited"}`,
@@ -204,6 +223,14 @@ export function renderHerdrView(projection) {
     for (const assurance of projection.postMerge) {
       lines.push(
         `- ${safe(assurance.operationId)}: checks=${assurance.requiredChecksSatisfied ? "passing" : "not passing"}; merge=${safe(assurance.mergeCommitSha)}; tree=${safe(assurance.treeProofEventId || "pending")}; lease=${safe(assurance.leaseStatus)}`,
+      );
+    }
+  }
+  if (projection.branchCleanups.length > 0) {
+    lines.push("", "Remote branch cleanup");
+    for (const cleanup of projection.branchCleanups) {
+      lines.push(
+        `- ${safe(cleanup.operationId)}: ${safe(cleanup.status)}; branch=${safe(cleanup.branch)}; head=${safe(cleanup.headSha)}`,
       );
     }
   }
@@ -375,6 +402,20 @@ function projectPostMergeAssurance(assurance, snapshot) {
   };
 }
 
+function projectBranchCleanup(operation) {
+  return {
+    operationId: operation.operationId,
+    approvalId: operation.approvalId,
+    status: operation.status,
+    repository: operation.repository,
+    branch: operation.branch,
+    headSha: operation.headSha,
+    failure: operation.failure,
+    requestEventId: operation.requestEventId,
+    completedEventId: operation.completedEventId || null,
+  };
+}
+
 function projectDraftPullRequest(operation) {
   return {
     operationId: operation.operationId,
@@ -416,7 +457,8 @@ function projectCi(observation) {
 }
 
 function deriveAttention({
-  snapshot, workers, commits, pushes, merges, postMerge, draftPullRequests,
+  snapshot, workers, commits, pushes, merges, postMerge, branchCleanups,
+  draftPullRequests,
   latestValidation, latestGitHub,
   latestRecovery, recoveryCurrent, syntheses, followUps,
 }) {
@@ -479,6 +521,19 @@ function deriveAttention({
       ));
     }
   }
+  for (const operation of branchCleanups) {
+    if (operation.status === "requested") {
+      result.push(item(
+        "branch_cleanup_reconciliation",
+        `Remote branch cleanup ${operation.operationId} needs reconciliation`,
+      ));
+    } else if (operation.status === "failed") {
+      result.push(item(
+        "branch_cleanup_approval",
+        `Remote branch cleanup ${operation.operationId} needs a new human approval`,
+      ));
+    }
+  }
   if (latestValidation?.passed === true && pushes.length === 0) {
     result.push(item(
       "git_push_approval",
@@ -538,6 +593,18 @@ function deriveAttention({
     result.push(item(
       "treehouse_return",
       "Verified landed work awaits Treehouse lease return",
+    ));
+  }
+  if (snapshot.state === "complete" && snapshot.worktree?.status === "returned" &&
+    branchCleanups.length === 0) {
+    const approved = (snapshot.branchCleanupApprovals || []).some(
+      ({ decision, consumedBy }) => decision === "approved" && consumedBy === null,
+    );
+    result.push(item(
+      approved ? "branch_cleanup_execution" : "branch_cleanup_approval",
+      approved
+        ? "Approved exact remote branch cleanup awaits execution"
+        : "Completed task awaits separate remote branch cleanup approval",
     ));
   }
   if (snapshot.state === "awaiting_human") {

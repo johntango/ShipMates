@@ -25,7 +25,9 @@ The reported stage is one of:
 - `awaiting_pr_ready`, `awaiting_merge_approval`, or `ready_to_merge`;
 - `merge_reconciliation_required` or `awaiting_post_merge_assurance`;
 - `treehouse_return_reconciliation_required`,
-  `ready_to_release_treehouse_lease`, or `complete`.
+  `ready_to_release_treehouse_lease`, or `awaiting_branch_cleanup_approval`;
+- `ready_to_cleanup_branch`, `branch_cleanup_reconciliation_required`, or
+  `complete`.
 
 The same commands are available through
 `npm run firstmate -- --delivery ...`. Delivery mode reads an existing task and
@@ -132,3 +134,26 @@ npm run firstmate:delivery -- reconcile-return TASK_ID
 ```
 
 See the [post-merge assurance guide](post-merge-assurance.md).
+
+## Separately approve remote branch cleanup
+
+After landed-work proof and Treehouse return, status awaits a fourth explicit
+human decision:
+
+```sh
+SHIPMATES_HUMAN_ACTOR=YOUR_NAME npm run firstmate:delivery -- \
+  approve-cleanup TASK_ID CLEANUP_APPROVAL_ID
+
+npm run firstmate:delivery -- \
+  cleanup-branch TASK_ID CLEANUP_OPERATION_ID CLEANUP_APPROVAL_ID
+```
+
+The deletion is atomically leased to the exact published branch SHA. An
+uncertain write must be reconciled, never repeated:
+
+```sh
+npm run firstmate:delivery -- \
+  reconcile-cleanup TASK_ID CLEANUP_OPERATION_ID
+```
+
+See the [branch cleanup guide](branch-cleanup.md).

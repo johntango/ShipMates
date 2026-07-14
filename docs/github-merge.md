@@ -86,5 +86,6 @@ advanced default branch require manual recovery.
 
 `landed` does not release the Treehouse lease. The separately bounded
 [post-merge assurance workflow](post-merge-assurance.md) requires merge-commit
-CI and exact-tree proof before returning it. Remote branch cleanup remains a
-later capability.
+CI and exact-tree proof before returning it. The separately human-approved
+[branch cleanup workflow](branch-cleanup.md) may then delete only the exact
+published task ref.

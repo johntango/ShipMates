@@ -33,6 +33,7 @@ export class RestartReconciler {
       draftPullRequestCheck(snapshot),
       mergeCheck(snapshot),
       postMergeCheck(snapshot),
+      branchCleanupCheck(snapshot),
       ...(await this.#githubChecks(snapshot)),
     ];
     const recoveryChecks = checks.filter(
@@ -528,7 +529,12 @@ function pushCheck(snapshot) {
       "inspect_remote_task_branch_manually",
     );
   }
-  return check("git-push", "pass", `Remote task branch is ${latest.headSha}`, {
+  const cleaned = (snapshot.branchCleanups || []).some(
+    ({ status, headSha }) => status === "completed" && headSha === latest.headSha,
+  );
+  return check("git-push", "pass", cleaned
+    ? `Task branch ${latest.headSha} was published and later cleaned up`
+    : `Remote task branch is ${latest.headSha}`, {
     source: { kind: "task-ledger", eventId: latest.completedEventId },
     observed: {
       operationId: latest.operationId,
@@ -667,6 +673,57 @@ function postMergeCheck(snapshot) {
         mergeCommitSha: assurance.mergeCommitSha,
         treeSha: proof.treeSha,
         leaseStatus: snapshot.worktree?.status,
+      },
+    },
+  );
+}
+
+function branchCleanupCheck(snapshot) {
+  const operations = snapshot.branchCleanups || [];
+  const pending = operations.find(({ status }) => status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "branch-cleanup",
+      `Remote branch cleanup ${pending.operationId} has durable intent but no result`,
+      "reconcile_branch_cleanup",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
+  const latest = operations.at(-1);
+  if (!latest) {
+    return check(
+      "branch-cleanup",
+      "not_applicable",
+      "Task has no approved remote branch cleanup operation",
+    );
+  }
+  if (latest.status === "failed") {
+    return recoveryCheck(
+      "branch-cleanup",
+      `Remote branch cleanup ${latest.operationId} did not delete the exact branch`,
+      "request_new_branch_cleanup_approval",
+      { source: { kind: "task-ledger", eventId: latest.failedEventId } },
+    );
+  }
+  if (latest.status !== "completed" || latest.result?.deleted !== true ||
+    latest.result?.deletedHeadSha !== latest.headSha ||
+    latest.result?.remoteHeadSha !== null) {
+    return recoveryCheck(
+      "branch-cleanup",
+      "Remote branch cleanup evidence is inconsistent",
+      "inspect_branch_cleanup_manually",
+    );
+  }
+  return check(
+    "branch-cleanup",
+    "pass",
+    `Remote task branch ${latest.branch} was deleted at ${latest.headSha}`,
+    {
+      source: { kind: "task-ledger", eventId: latest.completedEventId },
+      observed: {
+        operationId: latest.operationId,
+        branch: latest.branch,
+        deletedHeadSha: latest.result.deletedHeadSha,
       },
     },
   );

@@ -56,7 +56,8 @@ manual recovery condition.
 
 Branch deletion is not part of this workflow. Returning local execution
 authority and deleting a remote task branch are intentionally separate
-capabilities.
+capabilities; the latter is implemented by the independently approved
+[branch cleanup workflow](branch-cleanup.md).
 
 ## Durable evidence
 

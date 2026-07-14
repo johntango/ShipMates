@@ -326,7 +326,35 @@ test("shows merge approval, uncertain merge, and landed verification stages", ()
   assert.equal(complete.attention.some(({ code }) =>
     new Set(["post_merge_verification", "exact_tree_verification", "treehouse_return"])
       .has(code)), false);
+  assert.equal(complete.attention.some(
+    ({ code }) => code === "branch_cleanup_approval",
+  ), true);
   assert.match(renderHerdrView(complete), /assurance-001: checks=passing/u);
+
+  snapshot.branchCleanups = [{
+    operationId: "cleanup-001",
+    approvalId: "cleanup-approval-001",
+    status: "requested",
+    repository: snapshot.repo,
+    branch: snapshot.worktree.branch,
+    headSha,
+    requestEventId: "cleanup-request",
+    result: null,
+    failure: null,
+  }];
+  assert.equal(projectHerdrSnapshot(snapshot).attention.some(
+    ({ code }) => code === "branch_cleanup_reconciliation",
+  ), true);
+  snapshot.branchCleanups[0] = {
+    ...snapshot.branchCleanups[0],
+    status: "completed",
+    result: { deletedHeadSha: headSha },
+    completedEventId: "cleanup-completed",
+  };
+  const cleaned = projectHerdrSnapshot(snapshot);
+  assert.equal(cleaned.attention.some(({ code }) =>
+    code.startsWith("branch_cleanup")), false);
+  assert.match(renderHerdrView(cleaned), /cleanup-001: completed/u);
 });
 
 function richSnapshot() {

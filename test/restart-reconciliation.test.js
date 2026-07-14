@@ -31,6 +31,7 @@ test("records a safe audit when applicable durable and live state agree", async 
       { kind: "github-draft-pr", status: "not_applicable" },
     { kind: "github-merge", status: "not_applicable" },
     { kind: "post-merge", status: "not_applicable" },
+    { kind: "branch-cleanup", status: "not_applicable" },
     { kind: "github", status: "not_applicable" },
     ],
   );
@@ -327,6 +328,33 @@ test("requires post-merge assurance after a confirmed landed merge", async () =>
   assert.equal(
     result.report.checks.find(({ kind }) => kind === "post-merge").action,
     "complete_post_merge_assurance",
+  );
+});
+
+test("requires read-only reconciliation for uncertain branch cleanup", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.branchCleanups = [{
+    operationId: "cleanup-001",
+    status: "requested",
+    branch: "task-branch",
+    headSha: HEAD,
+    requestEventId: "cleanup-request",
+    result: null,
+  }];
+  const reconciler = new RestartReconciler({
+    store: new MemoryStore(snapshot),
+    clock: () => NOW,
+  });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-cleanup",
+  });
+
+  assert.equal(result.report.safeToResume, false);
+  assert.equal(
+    result.report.checks.find(({ kind }) => kind === "branch-cleanup").action,
+    "reconcile_branch_cleanup",
   );
 });
 

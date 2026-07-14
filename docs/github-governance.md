@@ -157,6 +157,11 @@ Only a matching Git tree proof can then authorize the existing crash-safe
 Treehouse return lifecycle. Remote task-branch deletion is not included; see
 the [post-merge assurance guide](post-merge-assurance.md).
 
+Remote task-branch deletion is a fourth approval boundary. It is authorized
+only after completed landed-work assurance and lease return, and it uses an
+expected-SHA Git ref lease rather than an unconditional GitHub DELETE. See the
+[branch cleanup guide](branch-cleanup.md).
+
 ## Setup checkpoint
 
 The original read-only planning checkpoint predated GitHub CLI authorization.
