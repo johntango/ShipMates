@@ -127,6 +127,11 @@ observations remain read-only. `.shipmates/` is local operational state and must
 not contain credentials or replace GitHub as the authority for remote
 repository facts.
 
+Mutating workers reuse the worker lifecycle with `mode=ship` and
+`sandbox=workspace-write`. Their terminal verification records the unchanged
+commit and branch plus the exact staged, unstaged, and untracked path set. It is
+not a no-mutation proof and does not authorize commit or publication.
+
 The Herdr adapter reads the replaceable task snapshot and creates an ephemeral
 operator projection. It never writes a status event back into the ledger; see
 the [Herdr status guide](herdr-status.md).

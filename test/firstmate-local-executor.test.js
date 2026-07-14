@@ -73,6 +73,50 @@ test("stops before external or destructive authority", async () => {
   assert.equal(result.status, "awaiting_human");
 });
 
+test("delegates local writes to the durable implementation workflow", async () => {
+  const runtimeCalls = [];
+  const implementationCalls = [];
+  const executor = new FirstmateLocalExecutor({
+    schemaPath: "schemas/codex-worker-report.schema.json",
+    runtime: {
+      async run(input) {
+        runtimeCalls.push(input);
+        const workerId = input.artifactDirectory.split("/").at(-1);
+        return {
+          threadId: `thread-${workerId}`,
+          report: report(input.taskId, workerId),
+        };
+      },
+    },
+    implementationWorkflow: {
+      async run(input) {
+        implementationCalls.push(input);
+        return {
+          worker: {
+            id: "implementer",
+            threadId: "thread-durable-implementer",
+            report: report(input.taskId, "implementer"),
+          },
+        };
+      },
+    },
+  });
+
+  const result = await executor.execute({
+    taskId: "task-001",
+    requestId: "request-001",
+    repoPath: "/tmp/treehouse/task/repo",
+    message: "Add a watch rotation API",
+    classification: classification("local_write"),
+  });
+
+  assert.equal(runtimeCalls.length, 2);
+  assert.equal(implementationCalls.length, 1);
+  assert.match(implementationCalls[0].brief, /Independent scout reports/u);
+  assert.equal(result.implementation.threadId, "thread-durable-implementer");
+  assert.equal(result.workspacePath, "/tmp/treehouse/task/repo");
+});
+
 function classification(requiredAuthority) {
   return {
     requiredAuthority,

@@ -157,6 +157,38 @@ export class TreehouseWorktreeManager {
     });
   }
 
+  async listChangedPaths({ worktreePath }) {
+    return (await this.inspectChangedPaths({ worktreePath })).all;
+  }
+
+  async inspectChangedPaths({ worktreePath }) {
+    assertAbsolutePath("worktreePath", worktreePath);
+    const [unstaged, staged, untracked, ignored] = await Promise.all([
+      this.#run("git", ["diff", "--name-only", "-z"], { cwd: worktreePath }),
+      this.#run("git", ["diff", "--cached", "--name-only", "-z"], {
+        cwd: worktreePath,
+      }),
+      this.#run("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+        cwd: worktreePath,
+      }),
+      this.#run(
+        "git",
+        ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+        { cwd: worktreePath },
+      ),
+    ]);
+    const result = {
+      staged: uniqueSorted(parseNullSeparated(staged.stdout)),
+      unstaged: uniqueSorted(parseNullSeparated(unstaged.stdout)),
+      untracked: uniqueSorted(parseNullSeparated(untracked.stdout)),
+      ignored: uniqueSorted(parseNullSeparated(ignored.stdout)),
+    };
+    return Object.freeze({
+      ...result,
+      all: uniqueSorted([...result.staged, ...result.unstaged, ...result.untracked]),
+    });
+  }
+
   async proveNoMutation({ worktreePath, expectedHeadSha }) {
     assertNonEmpty("expectedHeadSha", expectedHeadSha);
     const inspection = await this.inspect({ worktreePath });
@@ -326,4 +358,12 @@ function assertNonEmpty(label, value) {
   if (typeof value !== "string" || value.trim() === "") {
     throw new TypeError(`${label} must be a non-empty string`);
   }
+}
+
+function parseNullSeparated(value) {
+  return value.split("\0").filter(Boolean);
+}
+
+function uniqueSorted(values) {
+  return Object.freeze([...new Set(values)].sort());
 }

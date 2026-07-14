@@ -552,6 +552,11 @@ function applyEvent(snapshot, event, index) {
         requireNonEmpty(label, value);
       }
       if (paneId !== null) requireNonEmpty("paneId", paneId);
+      if (!new Set(["scout", "ship"]).has(mode) ||
+        (mode === "scout" && sandbox !== "read-only") ||
+        (mode === "ship" && sandbox !== "workspace-write")) {
+        throw new TaskStateError("Worker mode and sandbox authority are inconsistent");
+      }
       if (
         snapshot.state !== "running" ||
         snapshot.worktree?.status !== "leased" ||
@@ -605,17 +610,12 @@ function applyEvent(snapshot, event, index) {
       if (threadId !== worker.threadId) {
         throw new TaskStateError("Worker report thread does not match worker start");
       }
-      if (
-        !report ||
-        typeof report !== "object" ||
-        report.taskId !== snapshot.id ||
-        !verification ||
-        verification.noMutation !== true
-      ) {
-        throw new TaskStateError(
-          "Worker report requires the matching task and independent no-mutation verification",
-        );
+      if (!report || typeof report !== "object" || report.taskId !== snapshot.id ||
+        !verification) {
+        throw new TaskStateError("Worker report requires matching independent verification");
       }
+      if (worker.mode === "scout") validateScoutWorkerVerification(verification);
+      else validateShipWorkerVerification(snapshot, worker, report, verification);
       worker.status = "reported";
       worker.report = report;
       worker.verification = verification;
@@ -857,6 +857,71 @@ function validateScoutSynthesisRecord(snapshot, record) {
     first.worktreePath !== snapshot.worktree.worktreePath) {
     throw new TaskStateError("Scout synthesis workers have different worktree authority");
   }
+}
+
+function validateScoutWorkerVerification(verification) {
+  if (verification.noMutation !== true || verification.dirty !== false) {
+    throw new TaskStateError(
+      "Read-only worker report requires independent no-mutation verification",
+    );
+  }
+}
+
+function validateShipWorkerVerification(snapshot, worker, report, verification) {
+  const expectedKeys = [
+    "baseHeadSha", "branchAfter", "branchBefore", "changedPaths",
+    "commitCreated", "dirty", "headSha", "kind", "noMutation",
+    "ignoredPaths", "reportedPathsMatch", "stagedPaths", "unstagedPaths",
+    "untrackedPaths",
+  ];
+  if (Object.keys(verification).sort().join(",") !== expectedKeys.sort().join(",") ||
+    verification.kind !== "workspace-write" ||
+    verification.baseHeadSha !== snapshot.worktree?.headSha ||
+    verification.headSha !== snapshot.worktree?.headSha ||
+    verification.commitCreated !== false || verification.reportedPathsMatch !== true ||
+    verification.branchBefore !== snapshot.worktree?.branch ||
+    verification.branchAfter !== snapshot.worktree?.branch ||
+    typeof verification.dirty !== "boolean" ||
+    !Array.isArray(verification.changedPaths) ||
+    !Array.isArray(verification.stagedPaths) ||
+    !Array.isArray(verification.unstagedPaths) ||
+    !Array.isArray(verification.untrackedPaths) ||
+    !Array.isArray(verification.ignoredPaths) ||
+    verification.stagedPaths.length !== 0 || verification.ignoredPaths.length !== 0 ||
+    [...verification.stagedPaths, ...verification.unstagedPaths,
+      ...verification.untrackedPaths].some((value) =>
+      typeof value !== "string" || value.trim() === "" || pathIsUnsafe(value)) ||
+    !sameArray(verification.unstagedPaths, [...verification.unstagedPaths].sort()) ||
+    !sameArray(verification.untrackedPaths, [...verification.untrackedPaths].sort()) ||
+    new Set([
+      ...verification.unstagedPaths,
+      ...verification.untrackedPaths,
+    ]).size !== verification.unstagedPaths.length +
+      verification.untrackedPaths.length ||
+    verification.changedPaths.some((value) => typeof value !== "string" ||
+      value.trim() === "" || pathIsUnsafe(value)) ||
+    !sameArray(verification.changedPaths, [...verification.changedPaths].sort()) ||
+    new Set(verification.changedPaths).size !== verification.changedPaths.length ||
+    !sameArray(verification.changedPaths, [...new Set([
+      ...verification.unstagedPaths,
+      ...verification.untrackedPaths,
+    ])].sort()) ||
+    !sameArray(verification.changedPaths, [...report.files].sort()) ||
+    verification.dirty !== (verification.changedPaths.length > 0) ||
+    verification.noMutation !== !verification.dirty ||
+    (report.status === "completed" && verification.changedPaths.length === 0) ||
+    worker.sandbox !== "workspace-write") {
+    throw new TaskStateError(
+      "Mutating worker report lacks exact independently verified workspace changes",
+    );
+  }
+}
+
+function pathIsUnsafe(value) {
+  return value.startsWith("/") || value.split("/").includes("..") ||
+    /[\p{Cc}\p{Cf}]/u.test(value) ||
+    value === ".git" || value.startsWith(".git/") ||
+    value === ".shipmates" || value.startsWith(".shipmates/");
 }
 
 function validateScoutFollowUpSelection(snapshot, selection) {

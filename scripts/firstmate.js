@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { CodexWorkerRuntime } from "../src/adapters/codex-worker.js";
 import { HerdrExecutionObserver } from "../src/adapters/herdr-execution.js";
 import { HerdrPaneClient, HerdrPanePool } from "../src/adapters/herdr-pane.js";
+import { TreehouseWorktreeManager } from "../src/adapters/treehouse.js";
 import {
   createFirstmateId,
   discoverFirstmateContext,
@@ -12,6 +13,8 @@ import { readFirstmateMessage } from "../src/cli/firstmate-message.js";
 import { TaskStore } from "../src/storage/task-store.js";
 import { FirstmateShell } from "../src/workflows/firstmate.js";
 import { FirstmateLocalExecutor } from "../src/workflows/firstmate-local-executor.js";
+import { prepareFirstmateLocalWrite } from "../src/workflows/firstmate-local-write.js";
+import { CodexShipWorkflow } from "../src/workflows/codex-ship.js";
 
 const rawArgs = process.argv.slice(2);
 const classifyOnlyIndex = rawArgs.indexOf("--classify-only");
@@ -75,19 +78,42 @@ if (!classifyOnly) {
     );
   }
   repoPath = executionContext.repoPath;
+  const runtime = new CodexWorkerRuntime();
+  const schemaPath = fileURLToPath(
+    new URL("../schemas/codex-worker-report.schema.json", import.meta.url),
+  );
+  let implementationWorkflow = null;
+  if (result.classification.requiredAuthority === "local_write") {
+    const manager = new TreehouseWorktreeManager();
+    const prepared = await prepareFirstmateLocalWrite({
+      store,
+      manager,
+      taskId,
+      requestId,
+      repoPath,
+    });
+    repoPath = prepared.worktree.worktreePath;
+    implementationWorkflow = new CodexShipWorkflow({
+      store,
+      runtime,
+      worktreeManager: manager,
+      schemaPath,
+      actor: "firstmate",
+      observer: herdrObserver,
+    });
+  }
   console.error(
     result.classification.requiresHumanApproval
       ? `Firstmate stopped at ${result.classification.approvalBoundary}.`
       : "Firstmate is dispatching two independent scouts.",
   );
   const executor = new FirstmateLocalExecutor({
-    runtime: new CodexWorkerRuntime(),
-    schemaPath: fileURLToPath(
-      new URL("../schemas/codex-worker-report.schema.json", import.meta.url),
-    ),
+    runtime,
+    schemaPath,
     store,
     actor: "firstmate",
     observer: herdrObserver,
+    implementationWorkflow,
   });
   execution = await executor.execute({
     taskId,

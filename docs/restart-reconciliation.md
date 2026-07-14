@@ -17,6 +17,8 @@ The reconciler:
 - compares Treehouse state and holder with the durable worktree lifecycle;
 - independently checks the active worktree SHA and cleanliness;
 - identifies worker starts whose durable artifacts need reconciliation;
+- accepts a dirty active lease only when its exact Git path set matches a
+  terminal independently verified workspace-write worker;
 - distinguishes selected scout follow-ups that need safe dispatch, reply-artifact
   reconciliation, or resolution from an already verified reply;
 - checks whether validation evidence matches the active lease;

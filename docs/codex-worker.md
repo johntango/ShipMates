@@ -114,6 +114,10 @@ MCP workflow exposes `codex-reply` only through its separate crash-safe reply
 events, atomic reply artifact, exact thread/lease binding, and repeated sandbox
 revalidation. See [the Codex MCP specialist guide](codex-mcp-specialist.md).
 
+The same durable CLI artifact protocol now supports one Treehouse-bound
+workspace-write worker with exact independent mutation verification. See the
+[mutating worker guide](codex-ship.md).
+
 ## Live learning exercise
 
 Task `codex-scout-20260713` ran worker `scout-001` against the clean practice

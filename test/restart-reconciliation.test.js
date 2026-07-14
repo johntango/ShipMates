@@ -101,6 +101,57 @@ test("detects a dirty leased worktree", async () => {
   );
 });
 
+test("accepts an exact independently verified uncommitted mutation", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.state = "running";
+  snapshot.worktree = {
+    status: "leased",
+    repoPath: "/tmp/repo",
+    worktreePath: "/tmp/worktree",
+    headSha: HEAD,
+  };
+  snapshot.workers = [{
+    id: "implementer",
+    mode: "ship",
+    status: "reported",
+    threadId: "thread-ship",
+    replies: [],
+    verification: {
+      kind: "workspace-write",
+      headSha: HEAD,
+      dirty: true,
+      changedPaths: ["src/watch.js"],
+    },
+  }];
+  const store = new MemoryStore(snapshot);
+  const treehouseManager = {
+    findWorktree: async () => ({ state: "leased", leaseHolder: "recovery-001" }),
+    inspect: async () => ({
+      worktreePath: "/tmp/worktree",
+      headSha: HEAD,
+      dirty: true,
+      changes: [" M src/watch.js"],
+    }),
+    listChangedPaths: async () => ["src/watch.js"],
+  };
+  const reconciler = new RestartReconciler({
+    store,
+    treehouseManager,
+    clock: () => NOW,
+  });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-verified-mutation",
+  });
+
+  assert.equal(result.report.safeToResume, true);
+  assert.equal(
+    result.report.checks.find(({ kind }) => kind === "git-worktree").status,
+    "pass",
+  );
+});
+
 test("detects a moved GitHub PR head and does not read stale-head checks", async () => {
   const snapshot = baseSnapshot();
   snapshot.githubObservations = [githubObservation()];

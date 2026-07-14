@@ -29,6 +29,8 @@ The bounded Codex MCP integration is documented in the
 [Codex MCP specialist guide](docs/codex-mcp-specialist.md).
 Human-selected synthesis checks are documented in the
 [scout follow-up guide](docs/scout-follow-up.md).
+Durable workspace-write execution is documented in the
+[mutating Codex worker guide](docs/codex-ship.md).
 
 ## Current status
 
@@ -75,6 +77,8 @@ Implemented repository artifacts include:
 - a bounded local Firstmate executor that runs two independent read-only Codex
   scouts before local implementation and stops before external or destructive
   authority;
+- a durable Treehouse-bound mutating-worker supervisor with crash-recoverable
+  artifacts and exact staged, unstaged, and untracked path verification;
 - a local Codex MCP runtime wrapped as one strict, read-only Firstmate scout
   tool with no conversational handoff;
 - architecture and GitHub governance documentation;
@@ -453,6 +457,17 @@ leased SHA, worker thread, reply ID, and prompt digest before execution. The
 result is independently verified for no mutation and recorded by reply event
 and report digest. See the [scout follow-up guide](docs/scout-follow-up.md).
 
+### Step 26: Supervise one durable mutating worker
+
+Firstmate local-write tasks now acquire a task-bound Treehouse lease before
+execution and delegate implementation to one durable `workspace-write` Codex
+worker. Dispatch intent precedes execution, artifacts support crash
+reconciliation, and Firstmate independently proves that the worker did not
+commit or change branches and that Git's exact changed-path set matches the
+structured report. Verified uncommitted changes remain in the lease for the
+next commit and validation stage. See the
+[mutating worker guide](docs/codex-ship.md).
+
 ## Running the current checks
 
 Run the ShipMates tests after `npm install`:
@@ -493,9 +508,10 @@ at its expected head.
 ## Important current limitations
 
 - Firstmate classifies one request and executes bounded read-only or local-write
-  work, but it does not yet continue a multi-turn human conversation. Its local
-  executor launches Codex workers directly; it is not yet the durable,
-  MCP-backed supervisor described by the target architecture.
+  work, but it does not yet continue a multi-turn human conversation. Local
+  writes now use one durable Treehouse-bound Codex worker; the two preliminary
+  scouts still use the direct local runtime rather than the MCP-backed pane
+  workflow.
 - Agents SDK authentication was verified separately; routine tests do not call
   the API.
 - The legacy direct Codex adapter remains for comparison; the current bounded
@@ -520,9 +536,9 @@ at its expected head.
 
 The next sequence is:
 
-1. replace the direct local implementation launcher with a durable mutating
-   worker supervisor that uses Treehouse authority, crash-safe Codex artifacts,
-   independent validation, and restart reconciliation.
+1. add a Firstmate-controlled Git commit stage for the verified changed paths,
+   then run the pinned local-only no-mistakes gate against that exact commit
+   before requesting any publishing authority.
 
 We will keep using `Shipmates-Practice` for each stage and will not advance a
 sensitive transition without exact evidence and explicit human approval.

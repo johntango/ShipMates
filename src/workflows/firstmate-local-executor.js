@@ -8,6 +8,7 @@ const scoutPerspectives = Object.freeze([
 export class FirstmateLocalExecutor {
   constructor({
     runtime, schemaPath, store = null, actor = "firstmate", observer = null,
+    implementationWorkflow = null,
   } = {}) {
     if (!runtime || typeof runtime.run !== "function" || !schemaPath) {
       throw new TypeError("FirstmateLocalExecutor requires runtime and schemaPath");
@@ -17,6 +18,7 @@ export class FirstmateLocalExecutor {
     this.store = store;
     this.actor = actor;
     this.observer = observer;
+    this.implementationWorkflow = implementationWorkflow;
   }
 
   async execute({ taskId, requestId, repoPath, message, classification }) {
@@ -49,13 +51,15 @@ export class FirstmateLocalExecutor {
 
       if (classification.requiredAuthority === "local_write") {
         await this.observer?.prepareImplementer?.();
-        implementation = await this.#runWorker({
-          taskId,
-          repoPath,
-          workerId: "implementer",
-          sandbox: "workspace-write",
-          prompt: buildImplementationPrompt({ taskId, message, scouts }),
-        });
+        implementation = this.implementationWorkflow
+          ? await this.#runDurableImplementation({ taskId, message, scouts })
+          : await this.#runWorker({
+              taskId,
+              repoPath,
+              workerId: "implementer",
+              sandbox: "workspace-write",
+              prompt: buildImplementationPrompt({ taskId, message, scouts }),
+            });
         status = implementation.report.status;
       }
     } catch (error) {
@@ -67,6 +71,7 @@ export class FirstmateLocalExecutor {
       status,
       taskId,
       requestId,
+      workspacePath: repoPath,
       scouts: scouts.map(publicWorkerResult),
       implementation: implementation ? publicWorkerResult(implementation) : null,
     };
@@ -102,6 +107,19 @@ export class FirstmateLocalExecutor {
     }
   }
 
+  async #runDurableImplementation({ taskId, message, scouts }) {
+    const result = await this.implementationWorkflow.run({
+      taskId,
+      workerId: "implementer",
+      brief: buildImplementationPrompt({ taskId, message, scouts }),
+    });
+    return {
+      workerId: result.worker.id,
+      threadId: result.worker.threadId,
+      report: result.worker.report,
+    };
+  }
+
   async #recordResult(result) {
     if (!this.store) return;
     await this.store.recordEvidence({
@@ -111,6 +129,7 @@ export class FirstmateLocalExecutor {
       value: JSON.stringify({
         requestId: result.requestId,
         status: result.status,
+        workspacePath: result.workspacePath,
         scouts: result.scouts.map(({ workerId, threadId, report }) => ({
           workerId,
           threadId,

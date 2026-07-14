@@ -159,6 +159,43 @@ test("creates a no-mutation proof from a clean expected HEAD", async () => {
   });
 });
 
+test("lists staged, unstaged, and untracked paths without duplicates", async () => {
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async (file, args) => {
+      assert.equal(file, "git");
+      if (args[0] === "diff" && args.includes("--cached")) {
+        return { stdout: "src/staged.js\0src/shared.js\0", stderr: "" };
+      }
+      if (args[0] === "diff") {
+        return { stdout: "src/unstaged.js\0src/shared.js\0", stderr: "" };
+      }
+      if (args[0] === "ls-files") {
+        return {
+          stdout: args.includes("--ignored") ? ".env\0" : "test/new.test.js\0",
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    },
+  });
+
+  assert.deepEqual(
+    await manager.inspectChangedPaths({ worktreePath: "/tmp/worktree" }),
+    {
+      staged: ["src/shared.js", "src/staged.js"],
+      unstaged: ["src/shared.js", "src/unstaged.js"],
+      untracked: ["test/new.test.js"],
+      ignored: [".env"],
+      all: [
+        "src/shared.js",
+        "src/staged.js",
+        "src/unstaged.js",
+        "test/new.test.js",
+      ],
+    },
+  );
+});
+
 test("refuses to return a lease without matching proof", async () => {
   const manager = new TreehouseWorktreeManager({
     executeFile: async () => {

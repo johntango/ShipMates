@@ -181,7 +181,10 @@ function projectWorker(worker) {
     status: worker.status,
     threadId: worker.threadId,
     reportStatus: worker.report?.status ?? null,
+    verificationKind: worker.verification?.kind ??
+      (worker.verification?.noMutation === true ? "no-mutation" : null),
     noMutation: worker.verification?.noMutation ?? null,
+    changedPaths: worker.verification?.changedPaths?.length ?? 0,
     failure: worker.failure,
     replies: (worker.replies || []).map((reply) => ({
       id: reply.id,

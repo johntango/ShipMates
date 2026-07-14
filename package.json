@@ -9,6 +9,7 @@
 		"codex": "./codex-headr.sh",
 		"codex:mcp-scout": "node scripts/codex-mcp-scout.js",
 		"codex:mcp-pair": "node scripts/codex-mcp-pair.js",
+		"codex:ship": "node scripts/codex-ship.js",
 		"scout:synthesize": "node scripts/scout-synthesis.js",
 		"scout:follow-up": "node scripts/scout-follow-up.js",
 		"firstmate": "node --env-file=.env scripts/firstmate.js",

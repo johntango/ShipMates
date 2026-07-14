@@ -147,12 +147,47 @@ export class RestartReconciler {
       const inspection = await this.treehouseManager.inspect({
         worktreePath: worktree.worktreePath,
       });
-      if (inspection.headSha !== worktree.headSha || inspection.dirty) {
+      if (inspection.headSha !== worktree.headSha) {
         return [recoveryCheck(
           "git-worktree",
-          `Leased worktree expected clean ${worktree.headSha}, found ${inspection.headSha}${inspection.dirty ? " dirty" : ""}`,
+          `Leased worktree expected ${worktree.headSha}, found ${inspection.headSha}`,
           "inspect_unlanded_worktree_manually",
           { source: gitSource(worktree.worktreePath), observed: inspection },
+        )];
+      }
+      if (inspection.dirty) {
+        const verifiedMutation = [...snapshot.workers].reverse().find((worker) =>
+          worker.status === "reported" && worker.mode === "ship" &&
+          worker.verification?.kind === "workspace-write" &&
+          worker.verification.headSha === worktree.headSha &&
+          worker.verification.dirty === true);
+        if (!verifiedMutation || typeof this.treehouseManager.listChangedPaths !== "function") {
+          return [recoveryCheck(
+            "git-worktree",
+            `Leased worktree is dirty without a comparable verified mutation`,
+            "inspect_unlanded_worktree_manually",
+            { source: gitSource(worktree.worktreePath), observed: inspection },
+          )];
+        }
+        const changedPaths = await this.treehouseManager.listChangedPaths({
+          worktreePath: worktree.worktreePath,
+        });
+        if (!sameArray(changedPaths, verifiedMutation.verification.changedPaths)) {
+          return [recoveryCheck(
+            "git-worktree",
+            "Current changed paths differ from the verified mutating-worker report",
+            "inspect_unlanded_worktree_manually",
+            { source: gitSource(worktree.worktreePath), observed: inspection },
+          )];
+        }
+        return [check(
+          "git-worktree",
+          "pass",
+          `Verified uncommitted mutation from worker ${verifiedMutation.id}`,
+          {
+            source: gitSource(worktree.worktreePath),
+            observed: { inspection, changedPaths },
+          },
         )];
       }
       return [check("worktree", "pass", "Active lease holder, SHA, and cleanliness match", {
@@ -488,6 +523,11 @@ function validateAuditId(auditId) {
 
 function unique(values) {
   return [...new Set(values)];
+}
+
+function sameArray(left, right) {
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index]);
 }
 
 export class RestartReconciliationError extends Error {
