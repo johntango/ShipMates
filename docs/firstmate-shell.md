@@ -3,7 +3,9 @@
 ShipMates now has an OpenAI Agents SDK intake shell backed by a bounded local
 executor. It owns the first conversation boundary, classifies the requested
 work, records durable intent and result events, and can dispatch local Codex
-workers. It never writes to GitHub.
+workers. Intake mode never writes to GitHub. Explicit delivery mode can invoke
+the separately approved exact-head push and draft-PR gateways for an existing
+validated task.
 
 ## Runtime boundary
 
@@ -82,20 +84,52 @@ The classified authority controls execution:
 
 - read-only requests run two independent read-only Codex scouts;
 - local-write requests run both scouts, then one workspace-write implementation
-  worker with the scout reports as advisory context;
+  worker with the scout reports as advisory context. The local-write path first
+  acquires a task-bound Treehouse lease and records durable worker intent,
+  artifacts, and independently verified changed paths. Firstmate then creates
+  one exact task commit and runs the pinned local-only no-mistakes gate against
+  that commit. A passing run reports the repository, branch, and SHA awaiting a
+  separate human push approval;
 - external-write and destructive requests stop at their human-approval boundary
   before any local worker starts.
 
 Workers receive no `OPENAI_API_KEY`, `GH_TOKEN`, or `GITHUB_TOKEN`. The local
 implementation worker is told not to commit or publish and runs in Codex's
-`workspace-write` sandbox. Execution evidence is recorded under the task ledger
-and detailed worker artifacts remain under ignored `.shipmates/tasks/` state.
+`workspace-write` sandbox. Its exact Git changes must match its report before
+acceptance. Firstmate alone stages the verified paths with a fixed identity,
+records the resulting single-parent commit, and validates its exact SHA with a
+digest-verified no-mistakes binary. Execution evidence is recorded under the
+task ledger and detailed worker artifacts remain under ignored
+`.shipmates/tasks/` state. The committed lease is not copied into the primary
+checkout and is not pushed by the intake run. The separate
+[`firstmate:push` workflow](exact-head-push.md) owns that exact external write.
+
+When invoked from a Herdr pane, Firstmate also creates live worker-pane
+visibility for both scouts and the implementer. Sanitized status updates show
+tool type and lifecycle but never raw commands, arguments, prompt text, or tool
+output. See the [Herdr status guide](herdr-status.md#live-firstmate-execution).
 
 For classification without worker execution:
 
 ```sh
 npm run firstmate -- --classify-only
 ```
+
+## Continuing a validated task
+
+Delivery mode resumes an existing task without asking for a new prompt or
+dispatching workers:
+
+```sh
+npm run firstmate -- --delivery status TASK_ID
+```
+
+It coordinates ledger-derived exact-head push, separately approved draft-PR
+creation, read-only CI observation, a third separately approved exact-head
+squash merge, post-merge CI/tree assurance, crash-safe lease return, and a
+fourth separately approved exact remote branch cleanup. See the
+[Firstmate delivery guide](firstmate-delivery.md) for the approval and recovery
+commands.
 
 ## Explicit automation protocol
 

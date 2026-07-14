@@ -110,9 +110,10 @@ The exact repo and branch remain constrained.
 
 ### Human-confirmed writes
 
-Require an explicit confirmation for merge, non-draft public comments or reviews,
-closing another person's issue, marking a PR ready, rerunning privileged workflows,
-or publishing a prerelease.
+The current implementation requires exact-target human confirmation for a new
+task-branch push, draft-PR creation, and exact-head squash merge. Require an
+explicit confirmation for non-draft public comments or reviews, closing another person's issue,
+marking a PR ready, rerunning privileged workflows, or publishing a prerelease.
 
 ### High-risk administration
 
@@ -145,6 +146,21 @@ its trust implications are understood and tested.
 ```
 
 Record a second event with the GitHub response or refusal reason.
+
+The implemented merge gateway follows this contract with distinct
+`github.merge.approved`, `.requested`, `.completed`, and `.failed` events. See
+the [exact-head merge guide](github-merge.md).
+
+After merge, `github.post_merge.verified` records read-only proof that protected
+checks passed on the exact merge commit and the default branch has not advanced.
+Only a matching Git tree proof can then authorize the existing crash-safe
+Treehouse return lifecycle. Remote task-branch deletion is not included; see
+the [post-merge assurance guide](post-merge-assurance.md).
+
+Remote task-branch deletion is a fourth approval boundary. It is authorized
+only after completed landed-work assurance and lease return, and it uses an
+expected-SHA Git ref lease rather than an unconditional GitHub DELETE. See the
+[branch cleanup guide](branch-cleanup.md).
 
 ## Setup checkpoint
 

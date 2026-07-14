@@ -14,9 +14,11 @@ Creation requires a separate durable human approval. The approval binds:
 - SHA-256 digests of the PR title and body.
 
 The task must still be in `validating` with a passing local-only validation for
-the exact active Treehouse lease. Immediately before recording write intent,
-ShipMates reads the remote head branch and requires the approved SHA. One
-approval can be consumed by one creation operation.
+the exact active Treehouse lease. The ledger must also contain a completed
+[exact-head push](exact-head-push.md) for the same repository, branch, and SHA.
+Immediately before recording write intent, ShipMates reads the remote head
+branch and requires the approved SHA. One approval can be consumed by one
+creation operation.
 
 The title and body are read from files by the CLI. The ledger stores their
 digests, not the body. Credentials and raw GitHub failures are never stored.
@@ -38,7 +40,13 @@ requires exactly one matching draft. It never repeats the POST.
 CI uses the existing read-only status workflow. It re-reads the PR, branch
 protection, check runs, reviews, and workflow runs, then re-reads the PR head to
 reject moved-head evidence. Required checks are evaluated only against that
-exact SHA. This stage cannot rerun or modify a workflow.
+exact SHA. Delivery observations additionally require the stable PR head to
+equal the approved pushed SHA. Required names are the union of live
+default-branch protection and any explicit additional names. This stage cannot
+rerun or modify a workflow.
+
+Approval and creation also re-read repository metadata and require the approved
+base to be the active repository's current default branch.
 
 ## Commands
 
@@ -67,3 +75,5 @@ npm run github:draft-pr -- ci TASK_ID OPERATION_ID REQUIRED_CHECK ...
 ```
 
 Routine tests inject GitHub clients and perform no network calls or writes.
+The coordinated operator path is documented in the
+[Firstmate delivery guide](firstmate-delivery.md).

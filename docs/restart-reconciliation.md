@@ -17,6 +17,25 @@ The reconciler:
 - compares Treehouse state and holder with the durable worktree lifecycle;
 - independently checks the active worktree SHA and cleanliness;
 - identifies worker starts whose durable artifacts need reconciliation;
+- accepts a dirty active lease only when its exact Git path set matches a
+  terminal independently verified workspace-write worker;
+- distinguishes selected scout follow-ups that need safe dispatch, reply-artifact
+  reconciliation, or resolution from an already verified reply;
+- identifies controlled commit intent without a result and directs the operator
+  to read-only commit reconciliation;
+- identifies exact-head push intent without a result and directs the operator
+  to read-only remote reconciliation; a proven absent branch requires a new
+  human approval rather than a retry;
+- identifies merge intent without a result and directs the operator to read-only
+  GitHub reconciliation rather than a second merge request;
+- requires a completed merge to have passing exact-commit CI evidence, a
+  matching exact-tree proof, and a returned lease before cleanup is complete;
+- identifies a detached active Firstmate lease as `prepare_task_branch` and
+  durable branch intent without a result as `reconcile_task_branch`;
+- identifies uncertain remote branch deletion and directs the operator to
+  read-only ref reconciliation rather than a second delete;
+- identifies pinned local validation intent without a result and refuses an
+  automatic rerun;
 - checks whether validation evidence matches the active lease;
 - re-reads every recorded PR's immutable head, state, and required checks.
 

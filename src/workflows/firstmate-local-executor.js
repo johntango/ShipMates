@@ -6,7 +6,10 @@ const scoutPerspectives = Object.freeze([
 ]);
 
 export class FirstmateLocalExecutor {
-  constructor({ runtime, schemaPath, store = null, actor = "firstmate" } = {}) {
+  constructor({
+    runtime, schemaPath, store = null, actor = "firstmate", observer = null,
+    implementationWorkflow = null,
+  } = {}) {
     if (!runtime || typeof runtime.run !== "function" || !schemaPath) {
       throw new TypeError("FirstmateLocalExecutor requires runtime and schemaPath");
     }
@@ -14,11 +17,14 @@ export class FirstmateLocalExecutor {
     this.schemaPath = path.resolve(schemaPath);
     this.store = store;
     this.actor = actor;
+    this.observer = observer;
+    this.implementationWorkflow = implementationWorkflow;
   }
 
   async execute({ taskId, requestId, repoPath, message, classification }) {
     requireInputs({ taskId, requestId, repoPath, message, classification });
     if (classification.requiresHumanApproval) {
+      await this.observer?.end?.({ status: "awaiting-human" });
       return {
         status: "awaiting_human",
         taskId,
@@ -29,36 +35,48 @@ export class FirstmateLocalExecutor {
       };
     }
 
-    const scouts = await Promise.all(scoutPerspectives.map((perspective, index) =>
-      this.#runWorker({
-        taskId,
-        repoPath,
-        workerId: `scout-${index + 1}`,
-        sandbox: "read-only",
-        prompt: buildScoutPrompt({ taskId, message, perspective }),
-      })));
-
+    await this.observer?.begin?.({ taskId, repoPath });
+    let scouts;
     let implementation = null;
     let status = "inspected";
-    if (classification.requiredAuthority === "local_write") {
-      implementation = await this.#runWorker({
-        taskId,
-        repoPath,
-        workerId: "implementer",
-        sandbox: "workspace-write",
-        prompt: buildImplementationPrompt({ taskId, message, scouts }),
-      });
-      status = implementation.report.status;
+    try {
+      scouts = await Promise.all(scoutPerspectives.map((perspective, index) =>
+        this.#runWorker({
+          taskId,
+          repoPath,
+          workerId: `scout-${index + 1}`,
+          sandbox: "read-only",
+          prompt: buildScoutPrompt({ taskId, message, perspective }),
+        })));
+
+      if (classification.requiredAuthority === "local_write") {
+        await this.observer?.prepareImplementer?.();
+        implementation = this.implementationWorkflow
+          ? await this.#runDurableImplementation({ taskId, message, scouts })
+          : await this.#runWorker({
+              taskId,
+              repoPath,
+              workerId: "implementer",
+              sandbox: "workspace-write",
+              prompt: buildImplementationPrompt({ taskId, message, scouts }),
+            });
+        status = implementation.report.status;
+      }
+    } catch (error) {
+      await this.observer?.end?.({ status: "failed" });
+      throw error;
     }
 
     const result = {
       status,
       taskId,
       requestId,
+      workspacePath: repoPath,
       scouts: scouts.map(publicWorkerResult),
       implementation: implementation ? publicWorkerResult(implementation) : null,
     };
     await this.#recordResult(result);
+    await this.observer?.end?.({ status });
     return result;
   }
 
@@ -70,15 +88,36 @@ export class FirstmateLocalExecutor {
       "local-execution",
       workerId,
     );
-    const result = await this.runtime.run({
+    await this.observer?.workerStarted?.({ workerId, sandbox });
+    try {
+      const result = await this.runtime.run({
+        taskId,
+        workingDirectory: repoPath,
+        prompt,
+        schemaPath: this.schemaPath,
+        artifactDirectory,
+        sandbox,
+        onEvent: (event) => this.observer?.workerEvent?.({ workerId, event }),
+      });
+      await this.observer?.workerFinished?.({ workerId, report: result.report });
+      return { workerId, ...result };
+    } catch (error) {
+      await this.observer?.workerFailed?.({ workerId, error });
+      throw error;
+    }
+  }
+
+  async #runDurableImplementation({ taskId, message, scouts }) {
+    const result = await this.implementationWorkflow.run({
       taskId,
-      workingDirectory: repoPath,
-      prompt,
-      schemaPath: this.schemaPath,
-      artifactDirectory,
-      sandbox,
+      workerId: "implementer",
+      brief: buildImplementationPrompt({ taskId, message, scouts }),
     });
-    return { workerId, ...result };
+    return {
+      workerId: result.worker.id,
+      threadId: result.worker.threadId,
+      report: result.worker.report,
+    };
   }
 
   async #recordResult(result) {
@@ -90,6 +129,7 @@ export class FirstmateLocalExecutor {
       value: JSON.stringify({
         requestId: result.requestId,
         status: result.status,
+        workspacePath: result.workspacePath,
         scouts: result.scouts.map(({ workerId, threadId, report }) => ({
           workerId,
           threadId,

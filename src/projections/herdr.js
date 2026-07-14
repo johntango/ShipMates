@@ -18,19 +18,35 @@ export function projectHerdrSnapshot(snapshot) {
   const latestRecovery = snapshot.recoveryAudits.at(-1) || null;
   const recoveryCurrent = latestRecovery?.eventId === snapshot.lastEventId;
   const syntheses = (snapshot.scoutSyntheses || []).map(projectScoutSynthesis);
+  const followUps = (snapshot.scoutFollowUps || []).map(projectScoutFollowUp);
   const workers = snapshot.workers.map(projectWorker);
   const draftPullRequests = (snapshot.githubDraftPullRequests || []).map(
     projectDraftPullRequest,
   );
+  const commits = (snapshot.gitCommits || []).map(projectGitCommit);
+  const pushes = (snapshot.gitPushes || []).map(projectGitPush);
+  const merges = (snapshot.githubMerges || []).map(projectGitHubMerge);
+  const postMerge = (snapshot.postMergeAssurances || []).map(
+    (assurance) => projectPostMergeAssurance(assurance, snapshot),
+  );
+  const branchCleanups = (snapshot.branchCleanups || []).map(
+    projectBranchCleanup,
+  );
   const attention = deriveAttention({
     snapshot,
     workers,
+    commits,
+    pushes,
+    merges,
+    postMerge,
+    branchCleanups,
     draftPullRequests,
     latestValidation,
     latestGitHub,
     latestRecovery,
     recoveryCurrent,
     syntheses,
+    followUps,
   });
   return {
     schemaVersion: 1,
@@ -51,19 +67,30 @@ export function projectHerdrSnapshot(snapshot) {
     },
     worktree: projectWorktree(snapshot.worktree),
     workers,
+    commits,
+    pushes,
+    merges,
+    postMerge,
+    branchCleanups,
     validation: projectValidation(latestValidation),
     github: {
       draftPullRequests,
       ci: projectCi(latestGitHub),
+      postMerge,
     },
     approvals: {
-      merge: snapshot.approvals.map((approval) => ({
+      merge: [
+        ...(snapshot.approvals || []),
+        ...(snapshot.githubMergeApprovals || []),
+      ].map((approval) => ({
+        approvalId: approval.approvalId || null,
         eventId: approval.eventId,
         actor: approval.actor,
-        repository: approval.repo,
+        repository: approval.repository || approval.repo,
         prNumber: approval.prNumber,
         headSha: approval.headSha,
         decision: approval.decision,
+        consumedBy: approval.consumedBy ?? null,
       })),
       draftPullRequest: (snapshot.githubDraftPrApprovals || []).map(
         (approval) => ({
@@ -76,6 +103,24 @@ export function projectHerdrSnapshot(snapshot) {
           consumedBy: approval.consumedBy,
         }),
       ),
+      push: (snapshot.gitPushApprovals || []).map((approval) => ({
+        approvalId: approval.approvalId,
+        actor: approval.actor,
+        repository: approval.repository,
+        branch: approval.branch,
+        headSha: approval.headSha,
+        decision: approval.decision,
+        consumedBy: approval.consumedBy,
+      })),
+      branchCleanup: (snapshot.branchCleanupApprovals || []).map((approval) => ({
+        approvalId: approval.approvalId,
+        actor: approval.actor,
+        repository: approval.repository,
+        branch: approval.branch,
+        headSha: approval.headSha,
+        decision: approval.decision,
+        consumedBy: approval.consumedBy,
+      })),
     },
     recovery: latestRecovery === null ? null : {
       auditId: latestRecovery.auditId,
@@ -85,6 +130,7 @@ export function projectHerdrSnapshot(snapshot) {
       current: recoveryCurrent,
     },
     syntheses,
+    followUps,
     attention,
     summary: {
       workers: workers.length,
@@ -100,9 +146,20 @@ export function projectHerdrSnapshot(snapshot) {
       pendingDraftPullRequests: draftPullRequests.filter(
         ({ status }) => status === "requested",
       ).length,
+      pushes: pushes.length,
+      pendingPushes: pushes.filter(({ status }) => status === "requested").length,
+      merges: merges.length,
+      pendingMerges: merges.filter(({ status }) => status === "requested").length,
+      postMergeAssurances: postMerge.length,
+      branchCleanups: branchCleanups.length,
+      pendingBranchCleanups: branchCleanups.filter(
+        ({ status }) => status === "requested",
+      ).length,
       requiredChecksSatisfied: latestGitHub?.requiredChecks?.satisfied ?? null,
       attentionItems: attention.length,
       syntheses: syntheses.length,
+      followUps: followUps.length,
+      pendingFollowUps: followUps.filter(({ status }) => status === "selected").length,
     },
   };
 }
@@ -116,10 +173,15 @@ export function renderHerdrView(projection) {
     `${safe(projection.task.repository)}  events=${projection.source.eventsCount}  last=${safe(projection.source.lastEventId)}`,
     `worktree: ${projection.worktree ? `${safe(projection.worktree.status)} ${safe(projection.worktree.headSha)}` : "none"}`,
     `workers: ${projection.summary.workers} (${projection.summary.activeWorkers} active, ${projection.summary.pendingReplies} replies pending)`,
+    `pushes: ${projection.summary.pushes} (${projection.summary.pendingPushes} pending)`,
+    `merges: ${projection.summary.merges} (${projection.summary.pendingMerges} pending)`,
+    `post-merge assurances: ${projection.summary.postMergeAssurances}`,
+    `branch cleanups: ${projection.summary.branchCleanups} (${projection.summary.pendingBranchCleanups} pending)`,
     `draft PRs: ${projection.summary.draftPullRequests} (${projection.summary.pendingDraftPullRequests} pending)`,
     `CI required checks: ${formatNullableBoolean(projection.summary.requiredChecksSatisfied)}`,
     `recovery: ${projection.recovery ? (!projection.recovery.current ? "stale" : projection.recovery.safeToResume ? "safe" : "required") : "not audited"}`,
     `scout syntheses: ${projection.summary.syntheses}`,
+    `scout follow-ups: ${projection.summary.followUps} (${projection.summary.pendingFollowUps} pending)`,
   ];
   if (projection.workers.length > 0) {
     lines.push("", "Workers");
@@ -140,11 +202,51 @@ export function renderHerdrView(projection) {
       );
     }
   }
+  if (projection.pushes.length > 0) {
+    lines.push("", "Git pushes");
+    for (const operation of projection.pushes) {
+      lines.push(
+        `- ${safe(operation.operationId)}: ${safe(operation.status)}; branch=${safe(operation.branch)}; head=${safe(operation.headSha)}`,
+      );
+    }
+  }
+  if (projection.merges.length > 0) {
+    lines.push("", "GitHub merges");
+    for (const operation of projection.merges) {
+      lines.push(
+        `- ${safe(operation.operationId)}: ${safe(operation.status)}; PR=${operation.prNumber}; head=${safe(operation.headSha)}; merge=${safe(operation.mergeCommitSha || "none")}`,
+      );
+    }
+  }
+  if (projection.postMerge.length > 0) {
+    lines.push("", "Post-merge assurance");
+    for (const assurance of projection.postMerge) {
+      lines.push(
+        `- ${safe(assurance.operationId)}: checks=${assurance.requiredChecksSatisfied ? "passing" : "not passing"}; merge=${safe(assurance.mergeCommitSha)}; tree=${safe(assurance.treeProofEventId || "pending")}; lease=${safe(assurance.leaseStatus)}`,
+      );
+    }
+  }
+  if (projection.branchCleanups.length > 0) {
+    lines.push("", "Remote branch cleanup");
+    for (const cleanup of projection.branchCleanups) {
+      lines.push(
+        `- ${safe(cleanup.operationId)}: ${safe(cleanup.status)}; branch=${safe(cleanup.branch)}; head=${safe(cleanup.headSha)}`,
+      );
+    }
+  }
   if (projection.syntheses.length > 0) {
     lines.push("", "Scout syntheses");
     for (const synthesis of projection.syntheses) {
       lines.push(
         `- ${safe(synthesis.id)}: ${safe(synthesis.outcome)}; agreements=${synthesis.counts.agreements}; disagreements=${synthesis.counts.disagreements}; unsupported=${synthesis.counts.unsupportedClaims}; follow-ups=${synthesis.counts.followUpChecks}`,
+      );
+    }
+  }
+  if (projection.followUps.length > 0) {
+    lines.push("", "Scout follow-ups");
+    for (const followUp of projection.followUps) {
+      lines.push(
+        `- ${safe(followUp.id)}: ${safe(followUp.status)}; synthesis=${safe(followUp.synthesisId)}; check=${followUp.checkIndex}; action=${safe(followUp.action)}; worker=${safe(followUp.workerId)}; outcome=${safe(followUp.outcome || "pending")}`,
       );
     }
   }
@@ -167,7 +269,10 @@ function projectWorker(worker) {
     status: worker.status,
     threadId: worker.threadId,
     reportStatus: worker.report?.status ?? null,
+    verificationKind: worker.verification?.kind ??
+      (worker.verification?.noMutation === true ? "no-mutation" : null),
     noMutation: worker.verification?.noMutation ?? null,
+    changedPaths: worker.verification?.changedPaths?.length ?? 0,
     failure: worker.failure,
     replies: (worker.replies || []).map((reply) => ({
       id: reply.id,
@@ -192,6 +297,28 @@ function projectScoutSynthesis(synthesis) {
   };
 }
 
+function projectScoutFollowUp(followUp) {
+  return {
+    id: followUp.followUpId,
+    status: followUp.status,
+    synthesisId: followUp.synthesisId,
+    synthesisEventId: followUp.synthesisEventId,
+    synthesisArtifactSha256: followUp.synthesisArtifactSha256,
+    leaseHeadSha: followUp.leaseHeadSha,
+    checkIndex: followUp.checkIndex,
+    checkSha256: followUp.checkSha256,
+    action: followUp.action,
+    workerId: followUp.workerId,
+    replyId: followUp.replyId,
+    selectionEventId: followUp.selectionEventId,
+    selectedBy: followUp.selectedBy,
+    outcome: followUp.outcome,
+    counts: followUp.counts === null ? null : { ...followUp.counts },
+    replyEventId: followUp.replyEventId,
+    resolvedEventId: followUp.resolvedEventId,
+  };
+}
+
 function projectWorktree(worktree) {
   if (worktree === null) return null;
   return {
@@ -199,6 +326,15 @@ function projectWorktree(worktree) {
     worktreePath: worktree.worktreePath ?? null,
     headSha: worktree.headSha ?? worktree.baseSha ?? null,
     branch: worktree.branch ?? null,
+    branchPreparation: worktree.branchPreparation === null ||
+      worktree.branchPreparation === undefined ? null : {
+        branch: worktree.branchPreparation.branch,
+        status: worktree.branchPreparation.status,
+        expectedHeadSha: worktree.branchPreparation.expectedHeadSha,
+        expectedChangedPaths: worktree.branchPreparation.expectedChangedPaths.length,
+        requestEventId: worktree.branchPreparation.requestEventId,
+        completedEventId: worktree.branchPreparation.completedEventId || null,
+      },
     leaseHolder: worktree.leaseHolder ?? null,
   };
 }
@@ -211,6 +347,81 @@ function projectValidation(validation) {
     outcome: validation.outcome,
     headSha: validation.finalHeadSha,
     completedAt: validation.completedAt,
+  };
+}
+
+function projectGitCommit(operation) {
+  return {
+    operationId: operation.operationId,
+    status: operation.status,
+    baseHeadSha: operation.baseHeadSha,
+    branch: operation.branch,
+    changedPaths: operation.changedPaths.length,
+    headSha: operation.result?.headSha || null,
+    treeSha: operation.result?.treeSha || null,
+    requestEventId: operation.requestEventId,
+    completedEventId: operation.completedEventId || null,
+  };
+}
+
+function projectGitPush(operation) {
+  return {
+    operationId: operation.operationId,
+    approvalId: operation.approvalId,
+    status: operation.status,
+    repository: operation.repository,
+    branch: operation.branch,
+    headSha: operation.headSha,
+    remoteHeadSha: operation.result?.remoteHeadSha || null,
+    evidenceKind: operation.result?.evidenceKind || null,
+    failure: operation.failure,
+    requestEventId: operation.requestEventId,
+    completedEventId: operation.completedEventId || null,
+  };
+}
+
+function projectGitHubMerge(operation) {
+  return {
+    operationId: operation.operationId,
+    approvalId: operation.approvalId,
+    status: operation.status,
+    repository: operation.repository,
+    prNumber: operation.prNumber,
+    headSha: operation.headSha,
+    mergeMethod: operation.mergeMethod,
+    mergeCommitSha: operation.result?.mergeCommitSha || null,
+    failure: operation.failure,
+    requestEventId: operation.requestEventId,
+    completedEventId: operation.completedEventId || null,
+  };
+}
+
+function projectPostMergeAssurance(assurance, snapshot) {
+  return {
+    operationId: assurance.operationId,
+    mergeOperationId: assurance.mergeOperationId,
+    mergeCommitSha: assurance.mergeCommitSha,
+    observedAt: assurance.observedAt,
+    requiredChecksSatisfied: assurance.requiredChecks.satisfied,
+    requiredChecks: [...assurance.requiredChecks.names],
+    treeProofEventId: snapshot.worktree?.proof?.kind === "exact-tree-landing"
+      ? snapshot.worktree.proof.eventId
+      : null,
+    leaseStatus: snapshot.worktree?.status || null,
+  };
+}
+
+function projectBranchCleanup(operation) {
+  return {
+    operationId: operation.operationId,
+    approvalId: operation.approvalId,
+    status: operation.status,
+    repository: operation.repository,
+    branch: operation.branch,
+    headSha: operation.headSha,
+    failure: operation.failure,
+    requestEventId: operation.requestEventId,
+    completedEventId: operation.completedEventId || null,
   };
 }
 
@@ -255,12 +466,26 @@ function projectCi(observation) {
 }
 
 function deriveAttention({
-  snapshot, workers, draftPullRequests, latestValidation, latestGitHub,
-  latestRecovery, recoveryCurrent, syntheses,
+  snapshot, workers, commits, pushes, merges, postMerge, branchCleanups,
+  draftPullRequests,
+  latestValidation, latestGitHub,
+  latestRecovery, recoveryCurrent, syntheses, followUps,
 }) {
   const result = [];
   if (new Set(["lease_requested", "return_requested"]).has(snapshot.worktree?.status)) {
     result.push(item("worktree_reconciliation", `Worktree is ${snapshot.worktree.status}`));
+  }
+  if (snapshot.worktree?.branchPreparation?.status === "requested") {
+    result.push(item(
+      "task_branch_reconciliation",
+      `Task branch ${snapshot.worktree.branchPreparation.branch} needs reconciliation`,
+    ));
+  } else if (snapshot.kind === "firstmate-intake" &&
+    snapshot.worktree?.status === "leased" && snapshot.worktree.branch === null) {
+    result.push(item(
+      "task_branch_preparation",
+      "Active local-write lease needs a deterministic task branch",
+    ));
   }
   for (const worker of workers) {
     if (new Set(["dispatch_requested", "started"]).has(worker.status)) {
@@ -283,11 +508,125 @@ function deriveAttention({
       ));
     }
   }
+  for (const operation of commits) {
+    if (operation.status === "requested") {
+      result.push(item(
+        "git_commit_reconciliation",
+        `Git commit operation ${operation.operationId} needs reconciliation`,
+      ));
+    }
+  }
+  for (const operation of pushes) {
+    if (operation.status === "requested") {
+      result.push(item(
+        "git_push_reconciliation",
+        `Git push operation ${operation.operationId} needs remote reconciliation`,
+      ));
+    } else if (operation.status === "failed") {
+      result.push(item(
+        "git_push_approval",
+        `Git push operation ${operation.operationId} needs a new human approval`,
+      ));
+    }
+  }
+  for (const operation of merges) {
+    if (operation.status === "requested") {
+      result.push(item(
+        "merge_reconciliation",
+        `GitHub merge ${operation.operationId} needs remote reconciliation`,
+      ));
+    } else if (operation.status === "failed") {
+      result.push(item(
+        "merge_approval",
+        `GitHub merge ${operation.operationId} needs a new human approval`,
+      ));
+    }
+  }
+  for (const operation of branchCleanups) {
+    if (operation.status === "requested") {
+      result.push(item(
+        "branch_cleanup_reconciliation",
+        `Remote branch cleanup ${operation.operationId} needs reconciliation`,
+      ));
+    } else if (operation.status === "failed") {
+      result.push(item(
+        "branch_cleanup_approval",
+        `Remote branch cleanup ${operation.operationId} needs a new human approval`,
+      ));
+    }
+  }
+  if (latestValidation?.passed === true && pushes.length === 0) {
+    result.push(item(
+      "git_push_approval",
+      "Validated task commit awaits exact-head push approval",
+    ));
+  }
+  const completedPush = [...pushes].reverse().find(({ status }) => status === "completed");
+  if (latestValidation?.passed === true && completedPush && draftPullRequests.length === 0) {
+    result.push(item(
+      "draft_pr_approval",
+      "Pushed exact task head awaits separate draft-PR approval",
+    ));
+  }
+  const completedDraft = [...draftPullRequests].reverse().find(
+    ({ status }) => status === "completed",
+  );
+  if (completedDraft && (!latestGitHub ||
+    latestGitHub.pullRequest.number !== completedDraft.pullRequest?.number ||
+    latestGitHub.pullRequest.head.sha !== completedDraft.headSha)) {
+    result.push(item(
+      "ci_observation_required",
+      "Completed draft PR awaits exact-head CI observation",
+    ));
+  }
+  if ((snapshot.validationRequests || []).some(({ status }) => status === "requested")) {
+    result.push(item(
+      "validation_reconciliation",
+      "Pinned local validation needs manual reconciliation",
+    ));
+  }
   if (latestValidation && latestValidation.passed !== true) {
     result.push(item("validation_not_passing", "Latest local validation is not passing"));
   }
   if (latestGitHub && latestGitHub.requiredChecks.satisfied !== true) {
     result.push(item("ci_not_satisfied", "Required GitHub checks are not satisfied"));
+  }
+  const exactCompletedDraft = [...draftPullRequests].reverse().find(
+    ({ status }) => status === "completed",
+  );
+  if (exactCompletedDraft && latestGitHub?.requiredChecks.satisfied === true &&
+    latestGitHub.pullRequest.head.sha === exactCompletedDraft.headSha &&
+    latestGitHub.pullRequest.draft === false && merges.length === 0) {
+    result.push(item("merge_approval", "Exact-head PR awaits separate human merge approval"));
+  }
+  if (merges.some(({ status }) => status === "completed") && postMerge.length === 0) {
+    result.push(item(
+      "post_merge_verification",
+      "Landed merge awaits post-merge CI and exact-tree landing proof",
+    ));
+  } else if (postMerge.length > 0 && snapshot.worktree?.proof?.kind !==
+      "exact-tree-landing") {
+    result.push(item(
+      "exact_tree_verification",
+      "Passing merge-commit CI awaits exact-tree landed-work proof",
+    ));
+  } else if (postMerge.length > 0 && snapshot.worktree?.status === "leased") {
+    result.push(item(
+      "treehouse_return",
+      "Verified landed work awaits Treehouse lease return",
+    ));
+  }
+  if (snapshot.state === "complete" && snapshot.worktree?.status === "returned" &&
+    branchCleanups.length === 0) {
+    const approved = (snapshot.branchCleanupApprovals || []).some(
+      ({ decision, consumedBy }) => decision === "approved" && consumedBy === null,
+    );
+    result.push(item(
+      approved ? "branch_cleanup_execution" : "branch_cleanup_approval",
+      approved
+        ? "Approved exact remote branch cleanup awaits execution"
+        : "Completed task awaits separate remote branch cleanup approval",
+    ));
   }
   if (snapshot.state === "awaiting_human") {
     result.push(item("human_decision", "Task is awaiting a human decision"));
@@ -297,6 +636,19 @@ function deriveAttention({
       result.push(item(
         "scout_synthesis_review",
         `Scout synthesis ${synthesis.id} has disagreements or uncorroborated claims`,
+      ));
+    }
+  }
+  for (const followUp of followUps) {
+    if (followUp.status === "selected") {
+      result.push(item(
+        "scout_follow_up_pending",
+        `Scout follow-up ${followUp.id} needs execution or reconciliation`,
+      ));
+    } else if (followUp.outcome !== "completed") {
+      result.push(item(
+        "scout_follow_up_unresolved",
+        `Scout follow-up ${followUp.id} ended ${followUp.outcome}`,
       ));
     }
   }

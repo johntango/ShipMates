@@ -27,6 +27,12 @@ The human-facing intake boundary is documented in the
 [one-agent Firstmate shell guide](docs/firstmate-shell.md).
 The bounded Codex MCP integration is documented in the
 [Codex MCP specialist guide](docs/codex-mcp-specialist.md).
+Human-selected synthesis checks are documented in the
+[scout follow-up guide](docs/scout-follow-up.md).
+Durable workspace-write execution is documented in the
+[mutating Codex worker guide](docs/codex-ship.md).
+Controlled commit creation and pinned exact-head validation are documented in
+the [commit and validation guide](docs/controlled-commit-validation.md).
 
 ## Current status
 
@@ -73,12 +79,35 @@ Implemented repository artifacts include:
 - a bounded local Firstmate executor that runs two independent read-only Codex
   scouts before local implementation and stops before external or destructive
   authority;
+- a durable Treehouse-bound mutating-worker supervisor with crash-recoverable
+  artifacts and exact staged, unstaged, and untracked path verification;
+- a durable Firstmate-controlled Git commit stage with fixed identity,
+  single-parent verification, exact changed-path binding, and read-only crash
+  reconciliation;
+- runtime verification of the pinned no-mistakes binary, plus durable
+  exact-head validation intent and result evidence before publication;
+- a separately human-approved exact-head push gateway for new task branches,
+  with durable intent and read-only remote reconciliation;
+- a Firstmate delivery continuation that derives exact targets from the ledger,
+  preserves separate push and draft-PR approvals, and observes protected CI at
+  the approved head;
+- a separately human-approved exact-head squash-merge gateway with fresh
+  compare-and-act checks, resolved-thread evidence, and read-only recovery;
+- post-merge assurance that requires protected CI on the exact merge commit,
+  proves the squash tree equals the approved task tree, and returns the
+  Treehouse lease through a crash-safe intent/result boundary;
+- a fourth separately human-approved cleanup gateway that atomically deletes
+  only the exact published remote task-branch SHA and reconciles uncertain
+  transport without repeating deletion;
 - a local Codex MCP runtime wrapped as one strict, read-only Firstmate scout
   tool with no conversational handoff;
-- architecture and GitHub governance documentation.
+- architecture and GitHub governance documentation;
+- live, sanitized Herdr execution visibility for Firstmate scouts and the local
+  implementation worker.
 
-Crash-safe Codex thread continuation and the multi-worker supervisor are still
-planned work.
+Crash-safe Codex thread continuation, exactly two concurrent read-only scouts,
+one durable mutating worker, controlled commit creation, and pinned local
+validation are implemented.
 
 ## How we developed ShipMates
 
@@ -439,13 +468,96 @@ Herdr panes, validation, or GitHub. Herdr displays only its outcome and counts
 and now marks a restart audit stale when later evidence is appended. See the
 [synthesis guide](docs/scout-synthesis.md).
 
+### Step 25: Run one human-selected read-only follow-up
+
+A human can now select one exact proposed check from a bound synthesis and
+continue either source scout through the existing crash-safe Codex MCP reply
+path. The selection binds the synthesis event, artifact digest, check digest,
+leased SHA, worker thread, reply ID, and prompt digest before execution. The
+result is independently verified for no mutation and recorded by reply event
+and report digest. See the [scout follow-up guide](docs/scout-follow-up.md).
+
+### Step 26: Supervise one durable mutating worker
+
+Firstmate local-write tasks now acquire a task-bound Treehouse lease before
+execution and delegate implementation to one durable `workspace-write` Codex
+worker. Dispatch intent precedes execution, artifacts support crash
+reconciliation, and Firstmate independently proves that the worker did not
+commit or change branches and that Git's exact changed-path set matches the
+structured report. Verified uncommitted changes remain in the lease for the
+next commit and validation stage. See the
+[mutating worker guide](docs/codex-ship.md).
+
+### Step 27: Create and validate the exact task commit
+
+Firstmate now records commit intent before staging the independently verified
+worker paths. It creates one fixed-identity, single-parent task commit, verifies
+the message, parent, tree, branch, cleanliness, and exact base-to-head path set,
+then advances the leased authoritative SHA. A digest-verified no-mistakes
+binary validates that exact clean commit with every remote-capable step
+disabled. Both commit and validation crash windows fail closed without an
+automatic repeat. See the
+[commit and validation guide](docs/controlled-commit-validation.md).
+
+### Step 28: Publish one exact task head
+
+Firstmate can now consume a separate human approval bound to one repository,
+new task branch, and full validated SHA. It records intent before a fixed
+full-SHA refspec push, independently confirms the remote head, and refuses the
+default branch, existing remote branches, force updates, dirty worktrees, and
+implicit retry. An uncertain transport result is resolved only by read-only
+remote reconciliation. See the [exact-head push guide](docs/exact-head-push.md).
+
+### Step 29: Continue delivery through draft PR and exact-head CI
+
+Firstmate can now resume an existing validated task in delivery mode without a
+new classification or worker dispatch. It derives the exact repository, branch,
+and SHA from the ledger, coordinates the separately approved push and draft-PR
+workflows, requires the repository's live default branch as the PR base, and
+immediately observes CI at the approved head. Required checks come from live
+branch protection plus any explicitly requested checks. See the
+[Firstmate delivery guide](docs/firstmate-delivery.md).
+
+### Step 30: Merge only the exact approved head
+
+Firstmate can now record a separate human merge approval and consume it once for
+one exact-head squash merge. Approval and mutation each refresh repository,
+PR, branch-policy, check, review, workflow, and paginated review-thread evidence.
+The write supplies GitHub's atomic expected-head SHA, and completion requires
+both the merged PR and default branch to confirm the returned merge commit.
+Uncertain results reconcile by reads without repeating the merge. See the
+[exact-head merge guide](docs/github-merge.md).
+
+### Step 31: Prove landed work before releasing the lease
+
+Firstmate now re-observes the merged PR, default branch, current protection,
+checks, and workflow runs at the exact merge commit. It preserves every
+pre-merge required check while accepting newly protected checks only as added
+requirements. After passing CI, it fetches the confirmed commit, proves its Git
+tree is identical to the approved task tree, records that proof, and returns
+the Treehouse lease through the existing crash-safe lifecycle. It refuses an
+advanced default branch and never repeats an uncertain return. See the
+[post-merge assurance guide](docs/post-merge-assurance.md).
+
+### Step 32: Delete only the completed exact task branch
+
+Firstmate now treats remote branch cleanup as a fourth distinct human decision.
+Approval binds the completed repository, task branch, published SHA,
+post-merge assurance, tree proof, and returned-lease events. Mutation uses an
+atomic Git `--force-with-lease` deletion for the full remote ref, so any branch
+movement refuses the write. Uncertain transport is reconciled by `ls-remote`
+without a second deletion. See the [branch cleanup guide](docs/branch-cleanup.md).
+
 ## Running the current checks
 
 Run the ShipMates tests after `npm install`:
 
 ```sh
-node --test
+npm test
 ```
+
+Pull requests run the same test command in GitHub Actions. The workflow also
+checks the complete pull-request diff for whitespace errors.
 
 Exercise the ledger from this repository root:
 
@@ -475,10 +587,11 @@ at its expected head.
 
 ## Important current limitations
 
-- Firstmate currently classifies one request; it has no specialist tools and
-  does not yet continue a multi-turn human conversation. The MCP-enabled agent
-  factory can receive the bounded scout tool, but the intake CLI remains
-  classification-only.
+- Firstmate classifies one request and executes bounded read-only or local-write
+  work, but it does not yet continue a multi-turn human conversation. Local
+  writes now use one durable Treehouse-bound Codex worker; the two preliminary
+  scouts still use the direct local runtime rather than the MCP-backed pane
+  workflow.
 - Agents SDK authentication was verified separately; routine tests do not call
   the API.
 - The legacy direct Codex adapter remains for comparison; the current bounded
@@ -487,12 +600,21 @@ at its expected head.
   as a production dependency.
 - Exact-tree proof refuses concurrent changes to `main`; patch-based
   reconciliation is future work.
-- The draft-PR gateway does not push branches, update PRs, rerun workflows, mark
-  PRs ready, comment, merge, or delete anything. Its live write path has not
-  been exercised in this stage.
-- no-mistakes and lavish-axi review are not yet wired into the full executable
-  path. Herdr is currently a local read-only projection, not an external pane
-  publisher.
+- Branch publication and draft-PR creation remain separate human-approved
+  operations even though Firstmate now coordinates them. Neither gateway
+  updates PRs, reruns workflows, marks PRs ready, comments, merges, or deletes
+  anything; their live write paths have not been exercised in this stage.
+- The exact-head merge gateway is implemented but has not been exercised against
+  a live PR. It supports only squash merge and intentionally refuses code-owner
+  or last-pusher review policies until their identities can be proven directly.
+- Post-merge assurance deliberately requires the default branch to remain at
+  the confirmed merge commit until proof completes; it does not yet reconcile
+  later commits that contain the same landed tree.
+- The branch-cleanup gateway is implemented and tested with injected Git
+  transports but has not deleted a live task branch through Firstmate.
+- lavish-axi review is not yet wired into the full executable path. Herdr
+  receives best-effort live worker, commit, and validation status in addition
+  to its deterministic read-only projection, but it remains non-authoritative.
 - Mutating-worker concurrency remains deliberately disabled; the only parallel
   path is exactly two read-only scouts.
 - Synthesis is exact and deliberately non-semantic. Similar claims with
@@ -503,9 +625,25 @@ at its expected head.
 
 The next sequence is:
 
-1. add a human-selected, read-only follow-up gate that can bind one proposed
-   synthesis check to the existing scout evidence and record its resolution
-   without granting edit or GitHub authority.
+1. run an explicitly approved, instrumented end-to-end practice exercise for
+   merge, post-merge assurance, lease return, and branch cleanup, then use its
+   evidence to harden operator recovery and release readiness.
+
+The July 14 exercise is in progress as task `task-live-e2e-20260714` at practice
+head `4adfed664b1c00d6d1fd879f9cd906d7a4840b5c`. Its local phase exposed and
+repaired two fail-closed gaps before any GitHub write:
+
+- Treehouse leases are detached, so Firstmate now records durable intent before
+  creating deterministic `agent/<task-id>` branches. Uncertain creation is
+  reconciled by inspection and is never automatically repeated.
+- the pinned no-mistakes daemon could not bind a Unix socket beneath the long
+  ledger path. It now receives a short temporary symlink whose target remains
+  the durable per-task state directory. Explicit validation reconciliation
+  resumes the original exact request instead of creating another operation.
+
+Recovered pinned validation passed with zero findings while `rebase`, `push`,
+`pr`, and `ci` remained skipped. The task is stopped at its first external-write
+boundary awaiting a separate exact-head push approval.
 
 We will keep using `Shipmates-Practice` for each stage and will not advance a
 sensitive transition without exact evidence and explicit human approval.

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -9,15 +12,26 @@ import {
 
 const HEAD = "a".repeat(40);
 const NOW = new Date("2026-07-13T19:00:00.000Z");
+const BINARY = Buffer.from("pinned-no-mistakes-test-binary");
+const PIN = Object.freeze({
+  version: "v1.37.0",
+  sourceCommit: "78e4dcb234274199717acafa90abca5cf7013993",
+  binarySha256: createHash("sha256").update(BINARY).digest("hex"),
+});
+const PIN_OPTIONS = Object.freeze({
+  binaryReader: async () => BINARY,
+  pin: PIN,
+});
 
 test("runs a passing validator with remote-capable steps disabled", async () => {
   const calls = [];
   const runner = fakeRunner({ calls, output: passingOutput() });
   const gate = new NoMistakesLocalGate({
     binaryPath: "/private/tmp/no-mistakes",
-    stateRoot: "/private/tmp/nm-state",
+    stateRoot: path.join(tmpdir(), "shipmates-no-mistakes-test"),
     runner,
     clock: () => NOW,
+    ...PIN_OPTIONS,
   });
 
   const report = await gate.run({
@@ -30,7 +44,14 @@ test("runs a passing validator with remote-capable steps disabled", async () => 
   assert.equal(report.passed, true);
   assert.equal(report.remoteOperations, false);
   assert.equal(report.finalHeadSha, HEAD);
-  const invocation = calls.find(({ command }) => command.endsWith("no-mistakes"));
+  assert.deepEqual(report.tool, {
+    name: "no-mistakes",
+    binary: "/private/tmp/no-mistakes",
+    pinned: true,
+    ...PIN,
+  });
+  const invocation = calls.find(({ args }) => args[0] === "axi");
+  assert.equal(calls.some(({ args }) => args[0] === "init"), true);
   assert.deepEqual(invocation.args, [
     "axi",
     "run",
@@ -50,6 +71,7 @@ test("records an approval gate as not passed without advancing remote steps", as
     binaryPath: "/private/tmp/no-mistakes",
     runner: fakeRunner({ output: gateOutput() }),
     clock: () => NOW,
+    ...PIN_OPTIONS,
   });
 
   const report = await gate.run({
@@ -77,6 +99,7 @@ test("rejects malformed output and a remote-capable step that ran", async () => 
     binaryPath: "/private/tmp/no-mistakes",
     runner: fakeRunner({ output }),
     clock: () => NOW,
+    ...PIN_OPTIONS,
   });
   await assert.rejects(
     gate.run({
@@ -96,6 +119,7 @@ test("does not accept a changed head as a passing local validation", async () =>
     binaryPath: "/private/tmp/no-mistakes",
     runner: fakeRunner({ output, afterHead: changed }),
     clock: () => NOW,
+    ...PIN_OPTIONS,
   });
   const report = await gate.run({
     taskId: "validation-001",
@@ -108,10 +132,59 @@ test("does not accept a changed head as a passing local validation", async () =>
   assert.equal(report.passed, false);
 });
 
+test("rejects an unpinned binary digest or reported version before validation", async () => {
+  const wrongDigest = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes",
+    runner: fakeRunner({ output: passingOutput() }),
+    binaryReader: async () => Buffer.from("wrong"),
+    pin: PIN,
+  });
+  await assert.rejects(
+    wrongDigest.run({
+      taskId: "validation-001",
+      worktreePath: "/private/tmp/worktree",
+      expectedHeadSha: HEAD,
+      intent: "Validate locally",
+    }),
+    /binary digest does not match/u,
+  );
+
+  const wrongVersion = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes",
+    runner: async (command, args, options) => {
+      if (args[0] === "--version") {
+        return {
+          exitCode: 0,
+          stdout: "no-mistakes version v9.9.9 (78e4dcb) test\n",
+          stderr: "",
+        };
+      }
+      return fakeRunner({ output: passingOutput() })(command, args, options);
+    },
+    ...PIN_OPTIONS,
+  });
+  await assert.rejects(
+    wrongVersion.run({
+      taskId: "validation-001",
+      worktreePath: "/private/tmp/worktree",
+      expectedHeadSha: HEAD,
+      intent: "Validate locally",
+    }),
+    /version does not match/u,
+  );
+});
+
 function fakeRunner({ calls = [], output, afterHead = HEAD }) {
   let inspections = 0;
   return async (command, args, options) => {
     calls.push({ command, args, options });
+    if (args[0] === "--version") {
+      return {
+        exitCode: 0,
+        stdout: "no-mistakes version v1.37.0 (78e4dcb) test\n",
+        stderr: "",
+      };
+    }
     if (command.endsWith("no-mistakes")) {
       return { exitCode: 0, stdout: output, stderr: "" };
     }

@@ -79,15 +79,12 @@ node scripts/task-ledger.js show ledger-practice-001
 node scripts/task-ledger.js events ledger-practice-001
 ```
 
-Record an exact-SHA merge approval only after the human has supplied it:
+Generic ledger events cannot authorize a merge. After a complete delivery task
+has a ready, passing exact-head PR, use the compare-and-act approval workflow:
 
 ```sh
-node scripts/task-ledger.js approve-merge \
-  ledger-practice-001 \
-  johntango/Shipmates-Practice \
-  3 \
-  APPROVED_HEAD_SHA \
-  squash
+SHIPMATES_HUMAN_ACTOR=YOUR_NAME npm run firstmate:delivery -- \
+  approve-merge TASK_ID MERGE_APPROVAL_ID
 ```
 
 For isolated exercises or tests, redirect state outside the repository:
@@ -119,11 +116,59 @@ we have a recovery protocol with stronger process-identity evidence.
 
 The Treehouse workflow appends typed lease request, lease result, proof, return
 request, and return result events automatically. The Codex scout workflow adds
-dispatch, thread, report, and independent-verification events. The approved
-draft-PR workflow adds human approval, pre-write intent, confirmed result, and
-recovery events; CI observations remain read-only. `.shipmates/` is local
-operational state and must not contain credentials or replace GitHub as the
-authority for remote repository facts.
+dispatch, thread, report, reply, and independent-verification events. Scout
+follow-ups add a human selection bound to a synthesis artifact and a resolution
+bound to one verified read-only reply. The approved draft-PR workflow adds human
+approval, pre-write intent, confirmed result, and recovery events; CI
+observations remain read-only. `.shipmates/` is local operational state and must
+not contain credentials or replace GitHub as the authority for remote
+repository facts.
+
+Mutating workers reuse the worker lifecycle with `mode=ship` and
+`sandbox=workspace-write`. Their terminal verification records the unchanged
+commit and branch plus the exact staged, unstaged, and untracked path set. It is
+not a no-mutation proof and does not authorize commit or publication.
+
+The controlled commit stage adds `git.commit.requested` before staging and
+`git.commit.completed` only after independent single-parent, identity, message,
+tree, cleanliness, and changed-path verification. Completion advances the
+active lease's authoritative head. The validation stage similarly records
+`validation.local.requested` before invoking the pinned local-only gate and
+binds its result to that exact head, branch, intent digest, and binary pin.
+
+Branch publication adds `git.push.approved`, `git.push.requested`, and either a
+confirmed `git.push.completed` or proven-absence `git.push.failed` event. The
+approval is bound to one repository, new task branch, and full validated SHA.
+Uncertain requested operations remain durable and must be reconciled remotely
+without repeating the push.
+
+Firstmate delivery mode adds no competing state store. It derives its stage
+from these push events, the existing separately approved draft-PR events, and
+`github.status.recorded` observations. CI evidence is accepted for delivery only
+when the PR number and head match the completed draft operation's approved SHA.
+
+Merge delivery adds `github.merge.approved` for one human-bound repository, PR,
+head, default branch, and squash method. `github.merge.requested` consumes it
+before mutation and moves the task to `merging`; confirmed or reconciled success
+records `github.merge.completed` and moves to `landed`. A proven open-unmerged
+result records `.failed`, returns to `awaiting_human`, and requires a new
+approval. The legacy generic `task.approval.recorded` event is not accepted by
+the merge gateway.
+
+Post-merge completion records `github.post_merge.verified` only after the
+confirmed merge commit is still the default-branch head and every protected or
+pre-merge-required check passes on that commit. The subsequent
+`worktree.proof.recorded` event must bind an `exact-tree-landing` proof to that
+assurance event before `worktree.return.requested` can advance through
+`cleaning` to `complete`. An uncertain return remains durable and is reconciled
+without repeating Treehouse mutation.
+
+Remote task-branch cleanup adds `git.branch_cleanup.approved`, `.requested`,
+`.completed`, and `.failed`. Approval binds the exact published repository,
+branch, head, assurance, tree-proof, and returned-lease events. Requested intent
+consumes the approval before atomic deletion. An absent ref completes; the
+original ref still present fails and requires new approval; a changed ref is
+never accepted as either outcome.
 
 The Herdr adapter reads the replaceable task snapshot and creates an ephemeral
 operator projection. It never writes a status event back into the ledger; see

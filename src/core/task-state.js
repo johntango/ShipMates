@@ -94,10 +94,20 @@ export function replayTaskEvents(events) {
     githubObservations: [],
     githubDraftPrApprovals: [],
     githubDraftPullRequests: [],
+    githubMergeApprovals: [],
+    githubMerges: [],
+    postMergeAssurances: [],
+    gitCommits: [],
+    gitPushApprovals: [],
+    gitPushes: [],
+    branchCleanupApprovals: [],
+    branchCleanups: [],
+    validationRequests: [],
     validationRuns: [],
     recoveryAudits: [],
     firstmateRuns: [],
     scoutSyntheses: [],
+    scoutFollowUps: [],
   };
   const eventIds = new Set();
 
@@ -179,6 +189,20 @@ function applyEvent(snapshot, event, index) {
           );
         }
       }
+      if (to === "validating") {
+        const mutation = [...snapshot.workers].reverse().find((worker) =>
+          worker.mode === "ship" && worker.status === "reported" &&
+          worker.verification?.dirty === true);
+        const commit = snapshot.gitCommits.at(-1);
+        if (mutation && (commit?.status !== "completed" ||
+          commit.result?.headSha !== snapshot.worktree?.headSha ||
+          !sameArray(commit.result?.changedPaths || [],
+            mutation.verification.changedPaths))) {
+          throw new TaskStateError(
+            "Mutating work must have an exact controlled commit before validation",
+          );
+        }
+      }
       snapshot.state = to;
       break;
     }
@@ -225,6 +249,104 @@ function applyEvent(snapshot, event, index) {
         at: event.at,
         actor: event.actor,
       });
+      break;
+    }
+
+    case "github.merge.approved": {
+      requireCreated(snapshot, event);
+      const approval = event.data;
+      validateGitHubMergeApproval(snapshot, approval);
+      if (snapshot.githubMergeApprovals.some(({ approvalId }) =>
+        approvalId === approval.approvalId)) {
+        throw new TaskStateError(`GitHub merge approval already exists: ${approval.approvalId}`);
+      }
+      snapshot.githubMergeApprovals.push({
+        ...approval,
+        eventId: event.id,
+        at: event.at,
+        actor: event.actor,
+        consumedBy: null,
+      });
+      snapshot.state = "ready_to_merge";
+      break;
+    }
+
+    case "github.merge.requested": {
+      requireCreated(snapshot, event);
+      const request = event.data;
+      validateGitHubMergeRequest(snapshot, request);
+      if (snapshot.githubMerges.some(({ operationId }) =>
+        operationId === request.operationId)) {
+        throw new TaskStateError(`GitHub merge operation already exists: ${request.operationId}`);
+      }
+      const approval = snapshot.githubMergeApprovals.find(({ eventId }) =>
+        eventId === request.approvalEventId);
+      approval.consumedBy = request.operationId;
+      snapshot.githubMerges.push({
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+        failure: null,
+      });
+      snapshot.state = "merging";
+      break;
+    }
+
+    case "github.merge.completed": {
+      requireCreated(snapshot, event);
+      const operation = requireGitHubMergeOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId) {
+        throw new TaskStateError("GitHub merge result does not match its request");
+      }
+      validateGitHubMergeResult(operation, event.data.result);
+      operation.status = "completed";
+      operation.result = { ...event.data.result };
+      operation.completedEventId = event.id;
+      snapshot.state = "landed";
+      break;
+    }
+
+    case "github.post_merge.verified": {
+      requireCreated(snapshot, event);
+      const { report } = event.data;
+      validatePostMergeAssurance(snapshot, report, event);
+      if (snapshot.postMergeAssurances.some(({ operationId }) =>
+        operationId === report.operationId)) {
+        throw new TaskStateError(
+          `Post-merge assurance already exists: ${report.operationId}`,
+        );
+      }
+      if (snapshot.postMergeAssurances.some(({ mergeOperationId }) =>
+        mergeOperationId === report.mergeOperationId)) {
+        throw new TaskStateError(
+          `Completed merge already has post-merge assurance: ${report.mergeOperationId}`,
+        );
+      }
+      snapshot.postMergeAssurances.push({
+        ...report,
+        eventId: event.id,
+        at: event.at,
+        actor: event.actor,
+      });
+      break;
+    }
+
+    case "github.merge.failed": {
+      requireCreated(snapshot, event);
+      const operation = requireGitHubMergeOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId ||
+        event.data.code !== "pull_request_not_merged") {
+        throw new TaskStateError("GitHub merge failure does not match its request");
+      }
+      operation.status = "failed";
+      operation.failure = event.data.code;
+      operation.failedEventId = event.id;
+      snapshot.state = "awaiting_human";
       break;
     }
 
@@ -314,16 +436,235 @@ function applyEvent(snapshot, event, index) {
       break;
     }
 
+    case "git.push.approved": {
+      requireCreated(snapshot, event);
+      const approval = event.data;
+      validateGitPushApproval(snapshot, approval);
+      if (snapshot.gitPushApprovals.some(({ approvalId }) =>
+        approvalId === approval.approvalId)) {
+        throw new TaskStateError(`Git push approval already exists: ${approval.approvalId}`);
+      }
+      snapshot.gitPushApprovals.push({
+        ...approval,
+        eventId: event.id,
+        at: event.at,
+        actor: event.actor,
+        consumedBy: null,
+      });
+      break;
+    }
+
+    case "git.push.requested": {
+      requireCreated(snapshot, event);
+      const request = event.data;
+      validateGitPushRequest(snapshot, request);
+      if (snapshot.gitPushes.some(({ operationId }) =>
+        operationId === request.operationId)) {
+        throw new TaskStateError(`Git push operation already exists: ${request.operationId}`);
+      }
+      const approval = snapshot.gitPushApprovals.find(({ eventId }) =>
+        eventId === request.approvalEventId);
+      if (!approval || approval.consumedBy !== null ||
+        !sameGitPushBinding(approval, request)) {
+        throw new TaskStateError("Git push request lacks a matching unused approval");
+      }
+      approval.consumedBy = request.operationId;
+      snapshot.gitPushes.push({
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+        failure: null,
+      });
+      break;
+    }
+
+    case "git.push.completed": {
+      requireCreated(snapshot, event);
+      const operation = requireGitPushOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId) {
+        throw new TaskStateError("Git push result does not match its request");
+      }
+      validateGitPushResult(operation, event.data.result);
+      operation.status = "completed";
+      operation.result = { ...event.data.result };
+      operation.completedEventId = event.id;
+      break;
+    }
+
+    case "git.push.failed": {
+      requireCreated(snapshot, event);
+      const operation = requireGitPushOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId ||
+        event.data.code !== "remote_branch_absent") {
+        throw new TaskStateError("Git push failure does not match its request");
+      }
+      operation.status = "failed";
+      operation.failure = event.data.code;
+      operation.failedEventId = event.id;
+      break;
+    }
+
+    case "git.branch_cleanup.approved": {
+      requireCreated(snapshot, event);
+      const approval = event.data;
+      validateBranchCleanupApproval(snapshot, approval);
+      if (snapshot.branchCleanupApprovals.some(({ approvalId }) =>
+        approvalId === approval.approvalId)) {
+        throw new TaskStateError(
+          `Branch cleanup approval already exists: ${approval.approvalId}`,
+        );
+      }
+      snapshot.branchCleanupApprovals.push({
+        ...approval,
+        eventId: event.id,
+        at: event.at,
+        actor: event.actor,
+        consumedBy: null,
+      });
+      break;
+    }
+
+    case "git.branch_cleanup.requested": {
+      requireCreated(snapshot, event);
+      const request = event.data;
+      validateBranchCleanupRequest(snapshot, request);
+      if (snapshot.branchCleanups.some(({ operationId }) =>
+        operationId === request.operationId)) {
+        throw new TaskStateError(
+          `Branch cleanup operation already exists: ${request.operationId}`,
+        );
+      }
+      const approval = snapshot.branchCleanupApprovals.find(
+        ({ eventId }) => eventId === request.approvalEventId,
+      );
+      approval.consumedBy = request.operationId;
+      snapshot.branchCleanups.push({
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+        failure: null,
+      });
+      break;
+    }
+
+    case "git.branch_cleanup.completed": {
+      requireCreated(snapshot, event);
+      const operation = requireBranchCleanupOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId) {
+        throw new TaskStateError("Branch cleanup result does not match its request");
+      }
+      validateBranchCleanupResult(operation, event.data.result);
+      operation.status = "completed";
+      operation.result = { ...event.data.result };
+      operation.completedEventId = event.id;
+      break;
+    }
+
+    case "git.branch_cleanup.failed": {
+      requireCreated(snapshot, event);
+      const operation = requireBranchCleanupOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId ||
+        event.data.code !== "remote_branch_not_deleted") {
+        throw new TaskStateError("Branch cleanup failure does not match its request");
+      }
+      operation.status = "failed";
+      operation.failure = event.data.code;
+      operation.failedEventId = event.id;
+      break;
+    }
+
+    case "git.commit.requested": {
+      requireCreated(snapshot, event);
+      const request = event.data;
+      validateCommitRequest(snapshot, request);
+      if (snapshot.gitCommits.some(({ operationId }) =>
+        operationId === request.operationId)) {
+        throw new TaskStateError(`Git commit operation already exists: ${request.operationId}`);
+      }
+      snapshot.gitCommits.push({
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+      });
+      break;
+    }
+
+    case "git.commit.completed": {
+      requireCreated(snapshot, event);
+      const operation = snapshot.gitCommits.find(({ operationId }) =>
+        operationId === event.data.operationId);
+      if (!operation || operation.status !== "requested" ||
+        event.data.requestEventId !== operation.requestEventId) {
+        throw new TaskStateError("Git commit result does not match a pending request");
+      }
+      validateCommitResult(operation, event.data.result);
+      operation.status = "completed";
+      operation.result = { ...event.data.result };
+      operation.completedEventId = event.id;
+      snapshot.worktree.headSha = event.data.result.headSha;
+      snapshot.worktree.proof = null;
+      break;
+    }
+
+    case "validation.local.requested": {
+      requireCreated(snapshot, event);
+      validateLocalValidationRequest(snapshot, event.data);
+      if (snapshot.validationRequests.some(({ operationId }) =>
+        operationId === event.data.operationId)) {
+        throw new TaskStateError(
+          `Local validation operation already exists: ${event.data.operationId}`,
+        );
+      }
+      snapshot.validationRequests.push({
+        ...event.data,
+        status: "requested",
+        requestEventId: event.id,
+      });
+      break;
+    }
+
     case "validation.local.recorded": {
       requireCreated(snapshot, event);
       const { report } = event.data;
       validateLocalValidationReport(snapshot, report);
+      const request = snapshot.validationRequests.find(({ operationId }) =>
+        operationId === event.data.operationId);
+      if (snapshot.validationRequests.length > 0 &&
+        (!request || request.status !== "requested" ||
+          event.data.requestEventId !== request.requestEventId ||
+          request.headSha !== report.initialHeadSha ||
+          request.branch !== report.branch ||
+          request.intentSha256 !== report.intentSha256 ||
+          request.tool.binarySha256 !== report.tool.binarySha256 ||
+          request.tool.sourceCommit !== report.tool.sourceCommit ||
+          request.tool.version !== report.tool.version)) {
+        throw new TaskStateError(
+          "Local validation result does not match its durable exact-head request",
+        );
+      }
       snapshot.validationRuns.push({
         ...report,
         eventId: event.id,
         at: event.at,
         actor: event.actor,
       });
+      if (request) {
+        request.status = "completed";
+        request.completedEventId = event.id;
+        request.runId = report.runId;
+        request.passed = report.passed;
+      }
       break;
     }
 
@@ -439,10 +780,66 @@ function applyEvent(snapshot, event, index) {
         worktreePath: null,
         headSha: null,
         branch: null,
+        branchPreparation: null,
         proof: null,
         returnRequestEventId: null,
         returnedEventId: null,
       };
+      break;
+    }
+
+    case "worktree.branch.requested": {
+      requireWorktreeStatus(snapshot, event, "leased");
+      const request = event.data;
+      requireIdentifier("branch preparation attempt ID", request.attemptId);
+      requireNonEmpty("task branch", request.branch);
+      requireFullSha("branch preparation head", request.expectedHeadSha);
+      if (snapshot.state !== "running" || snapshot.worktree.branch !== null ||
+        snapshot.worktree.branchPreparation !== null ||
+        request.branch !== taskBranchName(snapshot.id) ||
+        request.expectedHeadSha !== snapshot.worktree.headSha ||
+        !safePathList(request.expectedChangedPaths)) {
+        throw new TaskStateError(
+          "Task branch request does not match the active detached lease",
+        );
+      }
+      const worker = [...snapshot.workers].reverse().find((candidate) =>
+        candidate.mode === "ship" && candidate.status === "reported" &&
+        candidate.verification?.dirty === true);
+      const expectedPaths = worker ? worker.verification.changedPaths : [];
+      if (!sameArray(request.expectedChangedPaths, expectedPaths)) {
+        throw new TaskStateError(
+          "Task branch request does not match verified workspace changes",
+        );
+      }
+      snapshot.worktree.branchPreparation = {
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+      };
+      break;
+    }
+
+    case "worktree.branch.prepared": {
+      requireWorktreeStatus(snapshot, event, "leased");
+      const operation = snapshot.worktree.branchPreparation;
+      const { requestEventId, result } = event.data;
+      if (!operation || operation.status !== "requested" ||
+        requestEventId !== operation.requestEventId || !result ||
+        result.branch !== operation.branch ||
+        result.headSha !== operation.expectedHeadSha ||
+        result.dirty !== (operation.expectedChangedPaths.length > 0) ||
+        !safePathList(result.changedPaths) ||
+        !sameArray(result.changedPaths, operation.expectedChangedPaths)) {
+        throw new TaskStateError(
+          "Task branch result does not match its exact preparation request",
+        );
+      }
+      operation.status = "completed";
+      operation.result = { ...result };
+      operation.completedEventId = event.id;
+      snapshot.worktree.branch = result.branch;
       break;
     }
 
@@ -486,6 +883,23 @@ function applyEvent(snapshot, event, index) {
         throw new TaskStateError("A worktree proof must be verified");
       }
       requireMatchingWorktree(snapshot, worktreePath, headSha);
+      if (kind === "exact-tree-landing") {
+        const assurance = snapshot.postMergeAssurances.find(
+          ({ eventId }) => eventId === event.data.assuranceEventId,
+        );
+        requireFullSha("landed merge commit SHA", event.data.mergedCommitSha);
+        requireFullSha("landed remote base SHA", event.data.remoteMainSha);
+        requireFullSha("landed tree SHA", event.data.treeSha);
+        if (snapshot.state !== "landed" || !assurance ||
+          assurance.requiredChecks.satisfied !== true ||
+          assurance.approvedHeadSha !== headSha ||
+          assurance.mergeCommitSha !== event.data.mergedCommitSha ||
+          assurance.baseHeadSha !== event.data.remoteMainSha) {
+          throw new TaskStateError(
+            "Exact-tree proof lacks matching passing post-merge assurance",
+          );
+        }
+      }
       snapshot.worktree.proof = {
         ...event.data,
         eventId: event.id,
@@ -551,6 +965,11 @@ function applyEvent(snapshot, event, index) {
         requireNonEmpty(label, value);
       }
       if (paneId !== null) requireNonEmpty("paneId", paneId);
+      if (!new Set(["scout", "ship"]).has(mode) ||
+        (mode === "scout" && sandbox !== "read-only") ||
+        (mode === "ship" && sandbox !== "workspace-write")) {
+        throw new TaskStateError("Worker mode and sandbox authority are inconsistent");
+      }
       if (
         snapshot.state !== "running" ||
         snapshot.worktree?.status !== "leased" ||
@@ -604,17 +1023,12 @@ function applyEvent(snapshot, event, index) {
       if (threadId !== worker.threadId) {
         throw new TaskStateError("Worker report thread does not match worker start");
       }
-      if (
-        !report ||
-        typeof report !== "object" ||
-        report.taskId !== snapshot.id ||
-        !verification ||
-        verification.noMutation !== true
-      ) {
-        throw new TaskStateError(
-          "Worker report requires the matching task and independent no-mutation verification",
-        );
+      if (!report || typeof report !== "object" || report.taskId !== snapshot.id ||
+        !verification) {
+        throw new TaskStateError("Worker report requires matching independent verification");
       }
+      if (worker.mode === "scout") validateScoutWorkerVerification(verification);
+      else validateShipWorkerVerification(snapshot, worker, report, verification);
       worker.status = "reported";
       worker.report = report;
       worker.verification = verification;
@@ -649,6 +1063,32 @@ function applyEvent(snapshot, event, index) {
         eventId: event.id,
         at: event.at,
         actor: event.actor,
+      });
+      break;
+    }
+
+    case "scout.follow_up.selected": {
+      requireCreated(snapshot, event);
+      const selection = event.data;
+      validateScoutFollowUpSelection(snapshot, selection);
+      if (snapshot.scoutFollowUps.some(({ followUpId }) =>
+        followUpId === selection.followUpId)) {
+        throw new TaskStateError(
+          `Scout follow-up already exists: ${selection.followUpId}`,
+        );
+      }
+      snapshot.scoutFollowUps.push({
+        ...selection,
+        status: "selected",
+        selectionEventId: event.id,
+        selectedAt: event.at,
+        selectedBy: event.actor,
+        outcome: null,
+        reportSha256: null,
+        counts: null,
+        replyEventId: null,
+        resolvedEventId: null,
+        resolvedAt: null,
       });
       break;
     }
@@ -731,6 +1171,29 @@ function applyEvent(snapshot, event, index) {
       break;
     }
 
+    case "scout.follow_up.resolved": {
+      requireCreated(snapshot, event);
+      const resolution = event.data;
+      const followUp = snapshot.scoutFollowUps.find(({ followUpId }) =>
+        followUpId === resolution.followUpId);
+      if (!followUp || followUp.status !== "selected") {
+        throw new TaskStateError(
+          `Scout follow-up cannot be resolved: ${resolution.followUpId}`,
+        );
+      }
+      validateScoutFollowUpResolution(snapshot, followUp, resolution);
+      Object.assign(followUp, {
+        status: "resolved",
+        outcome: resolution.outcome,
+        reportSha256: resolution.reportSha256,
+        counts: { ...resolution.counts },
+        replyEventId: resolution.replyEventId,
+        resolvedEventId: event.id,
+        resolvedAt: event.at,
+      });
+      break;
+    }
+
     default:
       throw new TaskStateError(`Unknown event type: ${event.type}`);
   }
@@ -806,6 +1269,177 @@ function validateScoutSynthesisRecord(snapshot, record) {
   if (first.worktreePath !== second.worktreePath ||
     first.worktreePath !== snapshot.worktree.worktreePath) {
     throw new TaskStateError("Scout synthesis workers have different worktree authority");
+  }
+}
+
+function validateScoutWorkerVerification(verification) {
+  if (verification.noMutation !== true || verification.dirty !== false) {
+    throw new TaskStateError(
+      "Read-only worker report requires independent no-mutation verification",
+    );
+  }
+}
+
+function validateShipWorkerVerification(snapshot, worker, report, verification) {
+  const expectedKeys = [
+    "baseHeadSha", "branchAfter", "branchBefore", "changedPaths",
+    "commitCreated", "dirty", "headSha", "kind", "noMutation",
+    "ignoredPaths", "reportedPathsMatch", "stagedPaths", "unstagedPaths",
+    "untrackedPaths",
+  ];
+  if (Object.keys(verification).sort().join(",") !== expectedKeys.sort().join(",") ||
+    verification.kind !== "workspace-write" ||
+    verification.baseHeadSha !== snapshot.worktree?.headSha ||
+    verification.headSha !== snapshot.worktree?.headSha ||
+    verification.commitCreated !== false || verification.reportedPathsMatch !== true ||
+    verification.branchBefore !== snapshot.worktree?.branch ||
+    verification.branchAfter !== snapshot.worktree?.branch ||
+    typeof verification.dirty !== "boolean" ||
+    !Array.isArray(verification.changedPaths) ||
+    !Array.isArray(verification.stagedPaths) ||
+    !Array.isArray(verification.unstagedPaths) ||
+    !Array.isArray(verification.untrackedPaths) ||
+    !Array.isArray(verification.ignoredPaths) ||
+    verification.stagedPaths.length !== 0 || verification.ignoredPaths.length !== 0 ||
+    [...verification.stagedPaths, ...verification.unstagedPaths,
+      ...verification.untrackedPaths].some((value) =>
+      typeof value !== "string" || value.trim() === "" || pathIsUnsafe(value)) ||
+    !sameArray(verification.unstagedPaths, [...verification.unstagedPaths].sort()) ||
+    !sameArray(verification.untrackedPaths, [...verification.untrackedPaths].sort()) ||
+    new Set([
+      ...verification.unstagedPaths,
+      ...verification.untrackedPaths,
+    ]).size !== verification.unstagedPaths.length +
+      verification.untrackedPaths.length ||
+    verification.changedPaths.some((value) => typeof value !== "string" ||
+      value.trim() === "" || pathIsUnsafe(value)) ||
+    !sameArray(verification.changedPaths, [...verification.changedPaths].sort()) ||
+    new Set(verification.changedPaths).size !== verification.changedPaths.length ||
+    !sameArray(verification.changedPaths, [...new Set([
+      ...verification.unstagedPaths,
+      ...verification.untrackedPaths,
+    ])].sort()) ||
+    !sameArray(verification.changedPaths, [...report.files].sort()) ||
+    verification.dirty !== (verification.changedPaths.length > 0) ||
+    verification.noMutation !== !verification.dirty ||
+    (report.status === "completed" && verification.changedPaths.length === 0) ||
+    worker.sandbox !== "workspace-write") {
+    throw new TaskStateError(
+      "Mutating worker report lacks exact independently verified workspace changes",
+    );
+  }
+}
+
+function pathIsUnsafe(value) {
+  return value.startsWith("/") || value.startsWith(":") ||
+    value.split("/").includes("..") ||
+    /[\p{Cc}\p{Cf}]/u.test(value) ||
+    value === ".git" || value.startsWith(".git/") ||
+    value === ".shipmates" || value.startsWith(".shipmates/");
+}
+
+function safePathList(values) {
+  return Array.isArray(values) &&
+    sameArray(values, [...values].sort()) &&
+    new Set(values).size === values.length &&
+    values.every((value) => typeof value === "string" && !pathIsUnsafe(value));
+}
+
+function taskBranchName(taskId) {
+  return `agent/${taskId}`;
+}
+
+function validateScoutFollowUpSelection(snapshot, selection) {
+  if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
+    throw new TaskStateError("Scout follow-up selection must be an object");
+  }
+  const expectedKeys = [
+    "action", "checkIndex", "checkSha256", "followUpId", "leaseHeadSha",
+    "promptSha256", "replyId", "selectorType", "synthesisArtifactSha256",
+    "synthesisEventId", "synthesisId", "workerId",
+  ];
+  if (Object.keys(selection).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Scout follow-up selection fields are invalid");
+  }
+  for (const field of [
+    "followUpId", "synthesisId", "synthesisEventId", "leaseHeadSha", "action",
+    "workerId", "replyId",
+  ]) requireNonEmpty(`follow-up ${field}`, selection[field]);
+  requireIdentifier("followUpId", selection.followUpId);
+  requireIdentifier("replyId", selection.replyId);
+  requireSha256("follow-up synthesis digest", selection.synthesisArtifactSha256);
+  requireSha256("follow-up check digest", selection.checkSha256);
+  requireSha256("follow-up prompt digest", selection.promptSha256);
+  if (selection.selectorType !== "human") {
+    throw new TaskStateError("Scout follow-up selection requires a human selector");
+  }
+  const synthesis = snapshot.scoutSyntheses.find(({ synthesisId }) =>
+    synthesisId === selection.synthesisId);
+  if (!synthesis || synthesis.eventId !== selection.synthesisEventId ||
+    synthesis.artifactSha256 !== selection.synthesisArtifactSha256 ||
+    synthesis.leaseHeadSha !== selection.leaseHeadSha ||
+    !synthesis.workerIds.includes(selection.workerId)) {
+    throw new TaskStateError("Scout follow-up does not match its synthesis authority");
+  }
+  if (!Number.isSafeInteger(selection.checkIndex) || selection.checkIndex < 0 ||
+    selection.checkIndex >= synthesis.counts.followUpChecks) {
+    throw new TaskStateError("Scout follow-up check index is invalid");
+  }
+  if (snapshot.state !== "running" || snapshot.worktree?.status !== "leased" ||
+    snapshot.worktree.headSha !== selection.leaseHeadSha) {
+    throw new TaskStateError(
+      "Scout follow-up requires a running task with its matching active lease",
+    );
+  }
+  const worker = snapshot.workers.find(({ id }) => id === selection.workerId);
+  if (!worker || worker.status !== "reported" || worker.mode !== "scout" ||
+    worker.sandbox !== "read-only" || worker.verification?.noMutation !== true ||
+    worker.verification?.dirty !== false ||
+    worker.verification?.headSha !== selection.leaseHeadSha ||
+    worker.replies?.some(({ id }) => id === selection.replyId)) {
+    throw new TaskStateError("Scout follow-up worker lacks matching read-only authority");
+  }
+}
+
+function validateScoutFollowUpResolution(snapshot, followUp, resolution) {
+  const expectedKeys = [
+    "counts", "followUpId", "leaseHeadSha", "outcome", "replyEventId",
+    "replyId", "reportSha256", "selectionEventId", "workerId",
+  ];
+  if (!resolution || typeof resolution !== "object" || Array.isArray(resolution) ||
+    Object.keys(resolution).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Scout follow-up resolution fields are invalid");
+  }
+  if (resolution.selectionEventId !== followUp.selectionEventId ||
+    resolution.workerId !== followUp.workerId ||
+    resolution.replyId !== followUp.replyId ||
+    resolution.leaseHeadSha !== followUp.leaseHeadSha) {
+    throw new TaskStateError("Scout follow-up resolution changed its selection binding");
+  }
+  requireNonEmpty("follow-up reply event", resolution.replyEventId);
+  requireSha256("follow-up report digest", resolution.reportSha256);
+  const worker = snapshot.workers.find(({ id }) => id === followUp.workerId);
+  const reply = worker?.replies?.find(({ id }) => id === followUp.replyId);
+  if (!reply || reply.status !== "completed" ||
+    reply.completedEventId !== resolution.replyEventId ||
+    reply.promptSha256 !== followUp.promptSha256 ||
+    reply.leaseHeadSha !== followUp.leaseHeadSha ||
+    reply.verification?.noMutation !== true || reply.verification?.dirty !== false ||
+    reply.verification?.headSha !== followUp.leaseHeadSha ||
+    resolution.reportSha256 !== digestText(stableStringify(reply.report)) ||
+    resolution.outcome !== reply.report.status) {
+    throw new TaskStateError("Scout follow-up resolution lacks its verified reply evidence");
+  }
+  const countKeys = ["files", "risks", "tests"];
+  if (!resolution.counts || typeof resolution.counts !== "object" ||
+    Array.isArray(resolution.counts) ||
+    Object.keys(resolution.counts).sort().join(",") !== countKeys.join(",") ||
+    countKeys.some((key) => !Number.isSafeInteger(resolution.counts[key]) ||
+      resolution.counts[key] < 0) ||
+    resolution.counts.files !== reply.report.files.length ||
+    resolution.counts.tests !== reply.report.tests.length ||
+    resolution.counts.risks !== reply.report.risks.length) {
+    throw new TaskStateError("Scout follow-up resolution counts are invalid");
   }
 }
 
@@ -904,6 +1538,15 @@ function validateDraftPrBinding(snapshot, value) {
   if (value.headSha !== snapshot.worktree?.headSha) {
     throw new TaskStateError("Draft PR head SHA does not match the active lease");
   }
+  if (!(snapshot.gitPushes || []).some((operation) =>
+    operation.status === "completed" &&
+    operation.repository.toLowerCase() === value.repository.toLowerCase() &&
+    operation.branch === value.headBranch && operation.headSha === value.headSha &&
+    operation.result?.remoteHeadSha === value.headSha)) {
+    throw new TaskStateError(
+      "Draft PR target requires a completed exact-head branch push",
+    );
+  }
 }
 
 function requirePassingActiveValidation(snapshot) {
@@ -916,6 +1559,597 @@ function requirePassingActiveValidation(snapshot) {
   ) {
     throw new TaskStateError(
       "Draft PR creation requires passing validation for the active leased head",
+    );
+  }
+}
+
+function validateCommitRequest(snapshot, request) {
+  const expectedKeys = [
+    "attemptId", "baseHeadSha", "branch", "changedPaths", "message", "messageSha256",
+    "operationId", "workerId", "workerReportEventId",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git commit request fields are invalid");
+  }
+  requireIdentifier("Git commit operation ID", request.operationId);
+  requireIdentifier("Git commit attempt ID", request.attemptId);
+  requireNonEmpty("Git commit worker ID", request.workerId);
+  requireNonEmpty("Git commit worker report event ID", request.workerReportEventId);
+  requireFullSha("Git commit base SHA", request.baseHeadSha);
+  requireNonEmpty("Git commit branch", request.branch);
+  requireNonEmpty("Git commit message", request.message);
+  requireSha256("Git commit message digest", request.messageSha256);
+  if (request.message !== `ShipMates task ${snapshot.id}` ||
+    digestText(request.message) !== request.messageSha256 ||
+    snapshot.state !== "running" || snapshot.worktree?.status !== "leased" ||
+    snapshot.worktree.headSha !== request.baseHeadSha ||
+    snapshot.worktree.branch !== request.branch || snapshot.gitCommits.length !== 0) {
+    throw new TaskStateError("Git commit request does not match active task authority");
+  }
+  if (!Array.isArray(request.changedPaths) || request.changedPaths.length === 0 ||
+    !sameArray(request.changedPaths, [...request.changedPaths].sort()) ||
+    new Set(request.changedPaths).size !== request.changedPaths.length ||
+    request.changedPaths.some((value) => typeof value !== "string" || pathIsUnsafe(value))) {
+    throw new TaskStateError("Git commit paths are not a safe exact set");
+  }
+  const worker = snapshot.workers.find(({ id }) => id === request.workerId);
+  if (!worker || worker.status !== "reported" || worker.mode !== "ship" ||
+    worker.report?.status !== "completed" ||
+    worker.reportEventId !== request.workerReportEventId ||
+    worker.verification?.kind !== "workspace-write" ||
+    worker.verification?.baseHeadSha !== request.baseHeadSha ||
+    worker.verification?.headSha !== request.baseHeadSha ||
+    worker.verification?.commitCreated !== false ||
+    worker.verification?.dirty !== true ||
+    !sameArray(worker.verification.changedPaths, request.changedPaths)) {
+    throw new TaskStateError("Git commit request lacks exact verified worker changes");
+  }
+}
+
+function validateCommitResult(operation, result) {
+  const expectedKeys = [
+    "author", "baseHeadSha", "branch", "changedPaths", "clean",
+    "commitCreated", "committer", "headSha", "messageSha256", "parentSha",
+    "treeSha",
+  ];
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+    Object.keys(result).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git commit result fields are invalid");
+  }
+  for (const [label, value] of [
+    ["Git commit base SHA", result.baseHeadSha],
+    ["Git commit head SHA", result.headSha],
+    ["Git commit parent SHA", result.parentSha],
+    ["Git commit tree SHA", result.treeSha],
+  ]) requireFullSha(label, value);
+  const expectedIdentity = {
+    name: "ShipMates Firstmate",
+    email: "firstmate@shipmates.local",
+  };
+  if (result.baseHeadSha !== operation.baseHeadSha ||
+    result.parentSha !== operation.baseHeadSha ||
+    result.headSha === operation.baseHeadSha || result.branch !== operation.branch ||
+    result.messageSha256 !== operation.messageSha256 ||
+    !Array.isArray(result.changedPaths) ||
+    !sameArray(result.changedPaths, operation.changedPaths) ||
+    result.clean !== true || result.commitCreated !== true ||
+    JSON.stringify(result.author) !== JSON.stringify(expectedIdentity) ||
+    JSON.stringify(result.committer) !== JSON.stringify(expectedIdentity)) {
+    throw new TaskStateError("Git commit result does not match its durable request");
+  }
+}
+
+function validateGitPushApproval(snapshot, approval) {
+  const expectedKeys = [
+    "approvalId", "approverType", "branch", "decision", "headSha",
+    "repository",
+  ];
+  if (!approval || typeof approval !== "object" || Array.isArray(approval) ||
+    Object.keys(approval).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git push approval fields are invalid");
+  }
+  requireIdentifier("Git push approval ID", approval.approvalId);
+  requireNonEmpty("Git push repository", approval.repository);
+  requireNonEmpty("Git push branch", approval.branch);
+  requireFullSha("Git push head SHA", approval.headSha);
+  if (approval.decision !== "approved" || approval.approverType !== "human") {
+    throw new TaskStateError("Git push requires explicit human approval");
+  }
+  validateGitPushTaskTarget(snapshot, approval);
+  if (snapshot.gitPushes.some(({ status }) => status === "completed")) {
+    throw new TaskStateError("Task already has a completed Git push");
+  }
+}
+
+function validateGitPushRequest(snapshot, request) {
+  const expectedKeys = [
+    "approvalEventId", "approvalId", "attemptId", "branch",
+    "expectedRemoteHeadSha", "headSha", "operationId", "remoteName",
+    "remoteRef", "repository",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git push request fields are invalid");
+  }
+  requireIdentifier("Git push operation ID", request.operationId);
+  requireIdentifier("Git push attempt ID", request.attemptId);
+  requireIdentifier("Git push approval ID", request.approvalId);
+  requireNonEmpty("Git push approval event", request.approvalEventId);
+  if (request.remoteName !== "origin" ||
+    request.remoteRef !== `refs/heads/${request.branch}` ||
+    request.expectedRemoteHeadSha !== null ||
+    snapshot.gitPushes.some(({ status }) =>
+      new Set(["requested", "completed"]).has(status))) {
+    throw new TaskStateError("Git push request is not a new exact task branch");
+  }
+  validateGitPushTaskTarget(snapshot, request);
+  const approval = snapshot.gitPushApprovals.find(({ approvalId }) =>
+    approvalId === request.approvalId);
+  if (!approval || approval.eventId !== request.approvalEventId ||
+    !sameGitPushBinding(approval, request)) {
+    throw new TaskStateError("Git push request changed its approved target");
+  }
+}
+
+function validateGitPushTaskTarget(snapshot, value) {
+  const validation = snapshot.validationRuns.at(-1);
+  const commit = snapshot.gitCommits.at(-1);
+  if (snapshot.repo.toLowerCase() !== value.repository.toLowerCase() ||
+    snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    snapshot.worktree.branch !== value.branch ||
+    snapshot.worktree.headSha !== value.headSha || validation?.passed !== true ||
+    validation.finalHeadSha !== value.headSha || commit?.status !== "completed" ||
+    commit.result?.headSha !== value.headSha) {
+    throw new TaskStateError(
+      "Git push target must match the controlled commit and passing validation",
+    );
+  }
+}
+
+function validateGitPushResult(operation, result) {
+  const expectedKeys = [
+    "branch", "evidenceKind", "headSha", "previousHeadSha", "pushed",
+    "remoteHeadSha", "remoteName", "remoteRef", "repository",
+    "transportOutputSha256",
+  ];
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+    Object.keys(result).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git push result fields are invalid");
+  }
+  if (!new Set(["push-confirmation", "remote-reconciliation"]).has(
+    result.evidenceKind)) {
+    throw new TaskStateError("Git push evidence kind is invalid");
+  }
+  if (result.repository !== operation.repository ||
+    result.remoteName !== "origin" || result.branch !== operation.branch ||
+    result.remoteRef !== operation.remoteRef || result.headSha !== operation.headSha ||
+    result.previousHeadSha !== null || result.remoteHeadSha !== operation.headSha ||
+    result.pushed !== true ||
+    (result.evidenceKind === "push-confirmation" &&
+      !/^[a-f0-9]{64}$/u.test(result.transportOutputSha256)) ||
+    (result.evidenceKind === "remote-reconciliation" &&
+      result.transportOutputSha256 !== null)) {
+    throw new TaskStateError("Git push result does not match its approved request");
+  }
+}
+
+function requireGitPushOperation(snapshot, operationId, status) {
+  requireIdentifier("Git push operation ID", operationId);
+  const operation = snapshot.gitPushes.find(({ operationId: id }) =>
+    id === operationId);
+  if (!operation || operation.status !== status) {
+    throw new TaskStateError(
+      `Git push operation ${operationId} requires status ${status}`,
+    );
+  }
+  return operation;
+}
+
+function sameGitPushBinding(left, right) {
+  return ["repository", "branch", "headSha"].every((field) =>
+    left[field] === right[field]);
+}
+
+function validateBranchCleanupApproval(snapshot, approval) {
+  const expectedKeys = [
+    "approvalId", "approverType", "branch", "decision", "headSha",
+    "postMergeAssuranceEventId", "repository", "treeProofEventId",
+    "worktreeReturnedEventId",
+  ];
+  if (!approval || typeof approval !== "object" || Array.isArray(approval) ||
+    Object.keys(approval).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Branch cleanup approval fields are invalid");
+  }
+  requireIdentifier("Branch cleanup approval ID", approval.approvalId);
+  requireNonEmpty("Branch cleanup repository", approval.repository);
+  requireNonEmpty("Branch cleanup branch", approval.branch);
+  requireFullSha("Branch cleanup head SHA", approval.headSha);
+  requireNonEmpty("Branch cleanup assurance event", approval.postMergeAssuranceEventId);
+  requireNonEmpty("Branch cleanup tree proof event", approval.treeProofEventId);
+  requireNonEmpty("Branch cleanup returned event", approval.worktreeReturnedEventId);
+  if (approval.decision !== "approved" || approval.approverType !== "human") {
+    throw new TaskStateError("Branch cleanup requires explicit human approval");
+  }
+  validateBranchCleanupTaskTarget(snapshot, approval);
+  if (snapshot.branchCleanups.some(({ status }) =>
+    new Set(["requested", "completed"]).has(status))) {
+    throw new TaskStateError(
+      "Task already has an active or completed branch cleanup",
+    );
+  }
+}
+
+function validateBranchCleanupRequest(snapshot, request) {
+  const expectedKeys = [
+    "approvalEventId", "approvalId", "attemptId", "branch",
+    "expectedRemoteHeadSha", "headSha", "operationId", "remoteName",
+    "remoteRef", "repository",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Branch cleanup request fields are invalid");
+  }
+  requireIdentifier("Branch cleanup operation ID", request.operationId);
+  requireIdentifier("Branch cleanup attempt ID", request.attemptId);
+  requireIdentifier("Branch cleanup approval ID", request.approvalId);
+  requireNonEmpty("Branch cleanup approval event", request.approvalEventId);
+  requireFullSha("Branch cleanup expected remote head", request.expectedRemoteHeadSha);
+  if (request.remoteName !== "origin" ||
+    request.remoteRef !== `refs/heads/${request.branch}` ||
+    request.expectedRemoteHeadSha !== request.headSha ||
+    snapshot.branchCleanups.some(({ status }) =>
+      new Set(["requested", "completed"]).has(status))) {
+    throw new TaskStateError("Branch cleanup request is not a new exact deletion");
+  }
+  validateBranchCleanupTaskTarget(snapshot, request);
+  const approval = snapshot.branchCleanupApprovals.find(
+    ({ approvalId }) => approvalId === request.approvalId,
+  );
+  if (!approval || approval.eventId !== request.approvalEventId ||
+    approval.consumedBy !== null || !sameBranchCleanupBinding(approval, request)) {
+    throw new TaskStateError(
+      "Branch cleanup request lacks a matching unused human approval",
+    );
+  }
+}
+
+function validateBranchCleanupTaskTarget(snapshot, value) {
+  const assurance = (snapshot.postMergeAssurances || []).at(-1);
+  const proof = snapshot.worktree?.proof;
+  const pushed = [...snapshot.gitPushes].reverse().find((operation) =>
+    operation.status === "completed" &&
+    operation.repository.toLowerCase() === value.repository.toLowerCase() &&
+    operation.branch === value.branch && operation.headSha === value.headSha);
+  if (snapshot.state !== "complete" || snapshot.worktree?.status !== "returned" ||
+    snapshot.repo.toLowerCase() !== value.repository.toLowerCase() ||
+    snapshot.worktree.branch !== value.branch ||
+    snapshot.worktree.headSha !== value.headSha || !pushed ||
+    assurance?.requiredChecks?.satisfied !== true ||
+    assurance.approvedHeadSha !== value.headSha ||
+    proof?.kind !== "exact-tree-landing" ||
+    proof.assuranceEventId !== assurance.eventId ||
+    snapshot.worktree.returnedEventId === null ||
+    (value.postMergeAssuranceEventId !== undefined &&
+      value.postMergeAssuranceEventId !== assurance.eventId) ||
+    (value.treeProofEventId !== undefined && value.treeProofEventId !== proof.eventId) ||
+    (value.worktreeReturnedEventId !== undefined &&
+      value.worktreeReturnedEventId !== snapshot.worktree.returnedEventId)) {
+    throw new TaskStateError(
+      "Branch cleanup target lacks completed landed-work and lease-return evidence",
+    );
+  }
+}
+
+function validateBranchCleanupResult(operation, result) {
+  const expectedKeys = [
+    "branch", "deleted", "deletedHeadSha", "evidenceKind", "remoteHeadSha",
+    "remoteName", "remoteRef", "repository", "transportOutputSha256",
+  ];
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+    Object.keys(result).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Branch cleanup result fields are invalid");
+  }
+  if (!new Set(["delete-confirmation", "remote-reconciliation"]).has(
+    result.evidenceKind)) {
+    throw new TaskStateError("Branch cleanup evidence kind is invalid");
+  }
+  if (result.repository !== operation.repository ||
+    result.remoteName !== "origin" || result.branch !== operation.branch ||
+    result.remoteRef !== operation.remoteRef ||
+    result.deletedHeadSha !== operation.headSha || result.remoteHeadSha !== null ||
+    result.deleted !== true ||
+    (result.evidenceKind === "delete-confirmation" &&
+      !/^[a-f0-9]{64}$/u.test(result.transportOutputSha256)) ||
+    (result.evidenceKind === "remote-reconciliation" &&
+      result.transportOutputSha256 !== null)) {
+    throw new TaskStateError(
+      "Branch cleanup result does not match its approved exact deletion",
+    );
+  }
+}
+
+function requireBranchCleanupOperation(snapshot, operationId, status) {
+  requireIdentifier("Branch cleanup operation ID", operationId);
+  const operation = snapshot.branchCleanups.find(
+    ({ operationId: id }) => id === operationId,
+  );
+  if (!operation || operation.status !== status) {
+    throw new TaskStateError(
+      `Branch cleanup operation ${operationId} requires status ${status}`,
+    );
+  }
+  return operation;
+}
+
+function sameBranchCleanupBinding(left, right) {
+  return ["repository", "branch", "headSha"].every(
+    (field) => left[field] === right[field],
+  );
+}
+
+function validateGitHubMergeApproval(snapshot, approval) {
+  const expectedKeys = [
+    "approvalId", "approverType", "baseBranch", "decision", "headSha",
+    "mergeMethod", "prNumber", "repository", "reviewThreadsCount",
+    "reviewThreadsSha256", "statusEventId", "unresolvedThreads",
+  ];
+  if (!approval || typeof approval !== "object" || Array.isArray(approval) ||
+    Object.keys(approval).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("GitHub merge approval fields are invalid");
+  }
+  requireIdentifier("GitHub merge approval ID", approval.approvalId);
+  requireNonEmpty("GitHub merge repository", approval.repository);
+  requireNonEmpty("GitHub merge base branch", approval.baseBranch);
+  requireFullSha("GitHub merge head SHA", approval.headSha);
+  requireNonEmpty("GitHub merge status event", approval.statusEventId);
+  requireSha256("GitHub merge review-thread digest", approval.reviewThreadsSha256);
+  if (!Number.isSafeInteger(approval.prNumber) || approval.prNumber < 1 ||
+    !Number.isSafeInteger(approval.reviewThreadsCount) ||
+    approval.reviewThreadsCount < 0 || approval.unresolvedThreads !== 0 ||
+    approval.mergeMethod !== "squash" || approval.decision !== "approved" ||
+    approval.approverType !== "human" || snapshot.state !== "validating") {
+    throw new TaskStateError("GitHub merge requires an exact human-approved squash target");
+  }
+  validateGitHubMergeTaskTarget(snapshot, approval, approval.statusEventId);
+  if (snapshot.githubMerges.some(({ status }) => status === "completed")) {
+    throw new TaskStateError("Task already has a completed GitHub merge");
+  }
+}
+
+function validateGitHubMergeRequest(snapshot, request) {
+  const expectedKeys = [
+    "approvalEventId", "approvalId", "attemptId", "baseBranch", "headSha",
+    "mergeMethod", "operationId", "prNumber", "preMergeReviewThreadsCount",
+    "preMergeReviewThreadsSha256", "preMergeStatusEventId",
+    "preMergeUnresolvedThreads", "repository",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("GitHub merge request fields are invalid");
+  }
+  requireIdentifier("GitHub merge operation ID", request.operationId);
+  requireIdentifier("GitHub merge attempt ID", request.attemptId);
+  requireIdentifier("GitHub merge approval ID", request.approvalId);
+  requireNonEmpty("GitHub merge approval event", request.approvalEventId);
+  requireNonEmpty("GitHub merge status event", request.preMergeStatusEventId);
+  requireSha256(
+    "GitHub pre-merge review-thread digest",
+    request.preMergeReviewThreadsSha256,
+  );
+  if (snapshot.state !== "ready_to_merge" || request.mergeMethod !== "squash" ||
+    !Number.isSafeInteger(request.preMergeReviewThreadsCount) ||
+    request.preMergeReviewThreadsCount < 0 || request.preMergeUnresolvedThreads !== 0 ||
+    snapshot.githubMerges.some(({ status }) =>
+      new Set(["requested", "completed"]).has(status))) {
+    throw new TaskStateError("GitHub merge request is not a new ready squash merge");
+  }
+  validateGitHubMergeTaskTarget(snapshot, request, request.preMergeStatusEventId);
+  const approval = snapshot.githubMergeApprovals.find(({ approvalId }) =>
+    approvalId === request.approvalId);
+  if (!approval || approval.eventId !== request.approvalEventId ||
+    approval.consumedBy !== null || !sameGitHubMergeBinding(approval, request)) {
+    throw new TaskStateError("GitHub merge request changed its approved target");
+  }
+}
+
+function validateGitHubMergeTaskTarget(snapshot, value, statusEventId) {
+  const draft = [...snapshot.githubDraftPullRequests].reverse().find((operation) =>
+    operation.status === "completed" && operation.pullRequest?.number === value.prNumber &&
+    operation.repository.toLowerCase() === value.repository.toLowerCase() &&
+    operation.headSha === value.headSha && operation.baseBranch === value.baseBranch);
+  const status = snapshot.githubObservations.find(({ eventId }) =>
+    eventId === statusEventId);
+  if (snapshot.repo.toLowerCase() !== value.repository.toLowerCase() || !draft ||
+    !status || status.pullRequest.number !== value.prNumber ||
+    status.pullRequest.head.sha !== value.headSha ||
+    status.pullRequest.base.branch !== value.baseBranch ||
+    status.pullRequest.state !== "open" || status.pullRequest.draft !== false ||
+    status.pullRequest.merged !== false || status.pullRequest.mergeable !== true ||
+    status.requiredChecks.satisfied !== true ||
+    status.repository.allowSquashMerge !== true ||
+    status.branchProtection.requiredConversationResolution !== true ||
+    status.repository.defaultBranch !== value.baseBranch ||
+    snapshot.worktree?.headSha !== value.headSha) {
+    throw new TaskStateError(
+      "GitHub merge target lacks matching open exact-head passing evidence",
+    );
+  }
+}
+
+function validateGitHubMergeResult(operation, result) {
+  const expectedKeys = [
+    "baseBranch", "baseHeadSha", "evidenceKind", "headSha", "mergeCommitSha",
+    "mergeMethod", "merged", "prNumber", "repository",
+  ];
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+    Object.keys(result).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("GitHub merge result fields are invalid");
+  }
+  if (!new Set(["merge-confirmation", "remote-reconciliation"]).has(
+    result.evidenceKind)) {
+    throw new TaskStateError("GitHub merge evidence kind is invalid");
+  }
+  requireFullSha("GitHub merge commit SHA", result.mergeCommitSha);
+  requireFullSha("GitHub merge base head SHA", result.baseHeadSha);
+  if (!sameGitHubMergeBinding(operation, result) ||
+    result.mergeCommitSha !== result.baseHeadSha || result.merged !== true) {
+    throw new TaskStateError("GitHub merge result does not match its approved request");
+  }
+}
+
+function validatePostMergeAssurance(snapshot, report, event) {
+  if (!report || typeof report !== "object" || Array.isArray(report) ||
+    report.schemaVersion !== 1) {
+    throw new TaskStateError("Post-merge assurance report is malformed");
+  }
+  requireIdentifier("post-merge operation ID", report.operationId);
+  requireIdentifier("post-merge observation ID", report.observationId);
+  requireIdentifier("post-merge merge operation ID", report.mergeOperationId);
+  requireNonEmpty("post-merge repository", report.repository);
+  requireNonEmpty("post-merge base branch", report.baseBranch);
+  requireTimestamp("post-merge observedAt", report.observedAt);
+  requireFullSha("post-merge approved head", report.approvedHeadSha);
+  requireFullSha("post-merge commit", report.mergeCommitSha);
+  requireFullSha("post-merge base head", report.baseHeadSha);
+  if (Date.parse(report.observedAt) !== Date.parse(event.at) ||
+    snapshot.state !== "landed" || snapshot.worktree?.status !== "leased" ||
+    report.repository.toLowerCase() !== snapshot.repo.toLowerCase() ||
+    report.approvedHeadSha !== snapshot.worktree.headSha ||
+    report.mergeCommitSha !== report.baseHeadSha ||
+    !Number.isSafeInteger(report.prNumber) || report.prNumber < 1) {
+    throw new TaskStateError(
+      "Post-merge assurance is not pinned to the landed task and active lease",
+    );
+  }
+  const merge = snapshot.githubMerges.find(({ operationId }) =>
+    operationId === report.mergeOperationId);
+  if (!merge || merge.status !== "completed" ||
+    merge.repository !== report.repository || merge.prNumber !== report.prNumber ||
+    merge.headSha !== report.approvedHeadSha ||
+    merge.result?.mergeCommitSha !== report.mergeCommitSha ||
+    merge.result?.baseBranch !== report.baseBranch) {
+    throw new TaskStateError(
+      "Post-merge assurance does not match the completed merge",
+    );
+  }
+  requireObservation(report.repositoryObservation, "post-merge repository");
+  requireObservation(report.pullRequest, "post-merge pullRequest");
+  requireObservation(report.branchHead, "post-merge branchHead");
+  requireObservation(report.branchProtection, "post-merge branchProtection");
+  if (report.repositoryObservation.nameWithOwner?.toLowerCase() !==
+      snapshot.repo.toLowerCase() ||
+    report.repositoryObservation.defaultBranch !== report.baseBranch ||
+    report.pullRequest.number !== report.prNumber ||
+    report.pullRequest.merged !== true ||
+    report.pullRequest.head?.sha !== report.approvedHeadSha ||
+    report.pullRequest.mergeCommitSha !== report.mergeCommitSha ||
+    report.pullRequest.base?.branch !== report.baseBranch ||
+    report.branchHead.branch !== report.baseBranch ||
+    report.branchHead.sha !== report.mergeCommitSha) {
+    throw new TaskStateError("Post-merge GitHub observations changed the landed target");
+  }
+  for (const [label, observations] of Object.entries({
+    checks: report.checks,
+    workflowRuns: report.workflowRuns,
+  })) {
+    if (!Array.isArray(observations)) {
+      throw new TaskStateError(`Post-merge ${label} must be an array`);
+    }
+    for (const observation of observations) requireObservation(observation, label);
+    if (observations.some(({ headSha }) => headSha !== report.mergeCommitSha)) {
+      throw new TaskStateError(`Post-merge ${label} does not match the merge commit`);
+    }
+  }
+  validateRequiredCheckEvidence(report.checks, report.requiredChecks, {
+    label: "post-merge",
+    requireSatisfied: true,
+  });
+}
+
+function validateRequiredCheckEvidence(checks, required, {
+  label,
+  requireSatisfied = false,
+}) {
+  if (!required || !Array.isArray(required.names) ||
+    !Array.isArray(required.missing) || !Array.isArray(required.unsuccessful) ||
+    typeof required.satisfied !== "boolean") {
+    throw new TaskStateError(`${label} required-check summary is malformed`);
+  }
+  for (const [field, names] of Object.entries({
+    names: required.names,
+    missing: required.missing,
+    unsuccessful: required.unsuccessful,
+  })) {
+    if (names.some((name) => typeof name !== "string" || name.trim() === "") ||
+      new Set(names).size !== names.length) {
+      throw new TaskStateError(`${label} required-check ${field} is invalid`);
+    }
+  }
+  const byName = new Map();
+  for (const check of checks) {
+    requireNonEmpty(`${label} check name`, check.name);
+    if (byName.has(check.name)) {
+      throw new TaskStateError(`${label} check name is ambiguous: ${check.name}`);
+    }
+    byName.set(check.name, check);
+  }
+  const missing = required.names.filter((name) => !byName.has(name));
+  const unsuccessful = required.names.filter((name) => {
+    const check = byName.get(name);
+    return check && (check.status !== "completed" || check.conclusion !== "success");
+  });
+  if (!sameArray(required.missing, missing) ||
+    !sameArray(required.unsuccessful, unsuccessful) ||
+    required.satisfied !== (missing.length === 0 && unsuccessful.length === 0) ||
+    requireSatisfied && required.satisfied !== true) {
+    throw new TaskStateError(`${label} required-check summary is inconsistent`);
+  }
+}
+
+function requireGitHubMergeOperation(snapshot, operationId, status) {
+  requireIdentifier("GitHub merge operation ID", operationId);
+  const operation = snapshot.githubMerges.find(({ operationId: id }) =>
+    id === operationId);
+  if (!operation || operation.status !== status) {
+    throw new TaskStateError(
+      `GitHub merge operation ${operationId} requires status ${status}`,
+    );
+  }
+  return operation;
+}
+
+function sameGitHubMergeBinding(left, right) {
+  return [
+    "repository", "prNumber", "headSha", "baseBranch", "mergeMethod",
+  ].every((field) => left[field] === right[field]);
+}
+
+function validateLocalValidationRequest(snapshot, request) {
+  const expectedKeys = [
+    "attemptId", "branch", "headSha", "intentSha256", "operationId", "tool",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Local validation request fields are invalid");
+  }
+  requireIdentifier("Local validation operation ID", request.operationId);
+  requireIdentifier("Local validation attempt ID", request.attemptId);
+  requireFullSha("Local validation requested head", request.headSha);
+  requireNonEmpty("Local validation requested branch", request.branch);
+  requireSha256("Local validation intent digest", request.intentSha256);
+  requireNonEmpty("Local validation tool version", request.tool?.version);
+  requireFullSha("Local validation tool source commit", request.tool?.sourceCommit);
+  requireSha256("Local validation tool binary digest", request.tool?.binarySha256);
+  const toolKeys = ["binarySha256", "name", "pinned", "sourceCommit", "version"];
+  if (Object.keys(request.tool || {}).sort().join(",") !== toolKeys.join(",") ||
+    request.tool?.name !== "no-mistakes" || request.tool?.pinned !== true ||
+    snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    snapshot.worktree.headSha !== request.headSha ||
+    snapshot.worktree.branch !== request.branch ||
+    snapshot.validationRequests.length !== 0) {
+    throw new TaskStateError(
+      "Local validation request is not pinned to the active committed lease",
     );
   }
 }
@@ -963,6 +2197,19 @@ function validateCreatedDraftPullRequest(snapshot, operation, pullRequest) {
 
 function digestText(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function stableStringify(value) {
+  return JSON.stringify(sortValue(value));
+}
+
+function sortValue(value) {
+  if (Array.isArray(value)) return value.map(sortValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) =>
+      [key, sortValue(value[key])]));
+  }
+  return value;
 }
 
 function requireSha256(label, value) {
@@ -1221,6 +2468,24 @@ function validateLocalValidationReport(snapshot, report) {
   requireNonEmpty("Local validation branch", report.branch);
   requireNonEmpty("Local validation run ID", report.runId);
   requireNonEmpty("Local validation run status", report.runStatus);
+  requireSha256("Local validation intent digest", report.intentSha256);
+  requireNonEmpty("Local validation tool version", report.tool?.version);
+  requireNonEmpty("Local validation tool binary", report.tool?.binary);
+  requireFullSha("Local validation tool source commit", report.tool?.sourceCommit);
+  requireSha256("Local validation tool binary digest", report.tool?.binarySha256);
+  const reportToolKeys = [
+    "binary", "binarySha256", "name", "pinned", "sourceCommit", "version",
+  ];
+  if (Object.keys(report.tool || {}).sort().join(",") !== reportToolKeys.join(",") ||
+    report.tool?.name !== "no-mistakes" || report.tool?.pinned !== true ||
+    snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    report.branch !== snapshot.worktree.branch ||
+    report.initialHeadSha !== snapshot.worktree.headSha ||
+    report.finalHeadSha !== snapshot.worktree.headSha) {
+    throw new TaskStateError(
+      "Local validation is not pinned to the exact active committed lease",
+    );
+  }
   const expectedSteps = [
     "intent",
     "rebase",
@@ -1250,7 +2515,12 @@ function validateLocalValidationReport(snapshot, report) {
   }
   if (
     report.command?.skipSteps?.join(",") !== "rebase,push,pr,ci" ||
-    !Array.isArray(report.command?.args) ||
+    !Array.isArray(report.command?.args) || report.command.args.length !== 6 ||
+    report.command.args[0] !== "axi" || report.command.args[1] !== "run" ||
+    report.command.args[2] !== "--intent" ||
+    digestText(report.command.args[3]) !== report.intentSha256 ||
+    report.command.args[4] !== "--skip" ||
+    report.command.args[5] !== "rebase,push,pr,ci" ||
     report.command.args.includes("--yes")
   ) {
     throw new TaskStateError("Local validation command is not capability-limited");

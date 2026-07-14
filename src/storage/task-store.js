@@ -99,6 +99,65 @@ export class TaskStore {
     });
   }
 
+  async recordGitHubMergeApproval({ taskId, actor, approval, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.merge.approved",
+      at,
+      actor,
+      data: approval,
+    });
+  }
+
+  async requestGitHubMerge({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.merge.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordGitHubMergeCompleted({
+    taskId, actor, operationId, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.merge.completed",
+      at,
+      actor,
+      data: { operationId, requestEventId, result },
+    });
+  }
+
+  async recordGitHubMergeFailure({
+    taskId, actor, operationId, requestEventId, code, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.merge.failed",
+      at,
+      actor,
+      data: { operationId, requestEventId, code },
+    });
+  }
+
+  async recordPostMergeAssurance({ taskId, actor, report, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.post_merge.verified",
+      at,
+      actor,
+      data: { report },
+    });
+  }
+
   async recordDraftPullRequestApproval({ taskId, actor, approval, eventId, at }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),
@@ -147,14 +206,150 @@ export class TaskStore {
     });
   }
 
-  async recordLocalValidation({ taskId, actor, report, eventId, at }) {
+  async recordGitPushApproval({ taskId, actor, approval, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.push.approved",
+      at,
+      actor,
+      data: approval,
+    });
+  }
+
+  async requestGitPush({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.push.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordGitPushCompleted({
+    taskId, actor, operationId, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.push.completed",
+      at,
+      actor,
+      data: { operationId, requestEventId, result },
+    });
+  }
+
+  async recordGitPushFailure({
+    taskId, actor, operationId, requestEventId, code, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.push.failed",
+      at,
+      actor,
+      data: { operationId, requestEventId, code },
+    });
+  }
+
+  async recordBranchCleanupApproval({ taskId, actor, approval, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.branch_cleanup.approved",
+      at,
+      actor,
+      data: approval,
+    });
+  }
+
+  async requestBranchCleanup({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.branch_cleanup.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordBranchCleanupCompleted({
+    taskId, actor, operationId, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.branch_cleanup.completed",
+      at,
+      actor,
+      data: { operationId, requestEventId, result },
+    });
+  }
+
+  async recordBranchCleanupFailure({
+    taskId, actor, operationId, requestEventId, code, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.branch_cleanup.failed",
+      at,
+      actor,
+      data: { operationId, requestEventId, code },
+    });
+  }
+
+  async requestGitCommit({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.commit.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordGitCommitCompleted({
+    taskId, actor, operationId, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.commit.completed",
+      at,
+      actor,
+      data: { operationId, requestEventId, result },
+    });
+  }
+
+  async requestLocalValidation({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "validation.local.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordLocalValidation({
+    taskId, actor, report, operationId, requestEventId, eventId, at,
+  }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),
       taskId,
       type: "validation.local.recorded",
       at,
       actor,
-      data: { report },
+      data: {
+        report,
+        ...(operationId ? { operationId, requestEventId } : {}),
+      },
     });
   }
 
@@ -282,6 +477,30 @@ export class TaskStore {
         headSha,
         branch,
       },
+    });
+  }
+
+  async requestWorktreeBranch({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "worktree.branch.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordWorktreeBranch({
+    taskId, actor, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "worktree.branch.prepared",
+      at,
+      actor,
+      data: { requestEventId, result },
     });
   }
 
@@ -436,6 +655,28 @@ export class TaskStore {
       at,
       actor,
       data: synthesis,
+    });
+  }
+
+  async recordScoutFollowUpSelection({ taskId, actor, selection, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "scout.follow_up.selected",
+      at,
+      actor,
+      data: selection,
+    });
+  }
+
+  async recordScoutFollowUpResolution({ taskId, actor, resolution, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "scout.follow_up.resolved",
+      at,
+      actor,
+      data: resolution,
     });
   }
 

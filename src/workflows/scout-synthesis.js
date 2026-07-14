@@ -25,7 +25,11 @@ export class ScoutSynthesisWorkflow {
       }
       return {
         snapshot,
-        artifact: await this.#loadBoundArtifact(snapshot, existing),
+        artifact: await loadScoutSynthesisArtifact({
+          store: this.store,
+          snapshot,
+          record: existing,
+        }),
         reused: true,
       };
     }
@@ -68,29 +72,33 @@ export class ScoutSynthesisWorkflow {
     return { snapshot, artifact, reused: false };
   }
 
-  async #loadBoundArtifact(snapshot, record) {
-    let content;
-    try {
-      content = await readFile(path.join(this.store.rootDir, record.artifactPath), "utf8");
-    } catch (cause) {
-      throw new ScoutSynthesisArtifactError("Bound synthesis artifact is missing", {
-        cause,
-      });
-    }
-    if (digest(content) !== record.artifactSha256) {
-      throw new ScoutSynthesisArtifactError("Bound synthesis artifact digest changed");
-    }
-    let artifact;
-    try {
-      artifact = JSON.parse(content);
-    } catch (cause) {
-      throw new ScoutSynthesisArtifactError("Bound synthesis artifact is invalid JSON", {
-        cause,
-      });
-    }
-    validateLoadedArtifact(artifact, snapshot, record);
-    return artifact;
+}
+
+export async function loadScoutSynthesisArtifact({ store, snapshot, record }) {
+  if (!store?.rootDir || !snapshot || !record) {
+    throw new TypeError("Loading a synthesis artifact requires store, snapshot, and record");
   }
+  let content;
+  try {
+    content = await readFile(path.join(store.rootDir, record.artifactPath), "utf8");
+  } catch (cause) {
+    throw new ScoutSynthesisArtifactError("Bound synthesis artifact is missing", {
+      cause,
+    });
+  }
+  if (digest(content) !== record.artifactSha256) {
+    throw new ScoutSynthesisArtifactError("Bound synthesis artifact digest changed");
+  }
+  let artifact;
+  try {
+    artifact = JSON.parse(content);
+  } catch (cause) {
+    throw new ScoutSynthesisArtifactError("Bound synthesis artifact is invalid JSON", {
+      cause,
+    });
+  }
+  validateLoadedArtifact(artifact, snapshot, record);
+  return artifact;
 }
 
 export function buildScoutSynthesis({ taskId, synthesisId, leaseHeadSha, workers }) {
@@ -342,7 +350,7 @@ function relativeArtifactPath(taskId, synthesisId) {
   return `tasks/${taskId}/syntheses/${synthesisId}.json`;
 }
 
-function stableStringify(value) {
+export function stableStringify(value) {
   return JSON.stringify(sortValue(value));
 }
 

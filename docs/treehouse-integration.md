@@ -83,6 +83,24 @@ with `scripts/treehouse-recover-no-mutation.js`.
 
 ## Mutating Codex exercise
 
+### Deterministic task-branch preparation
+
+Treehouse deliberately returns detached worktrees. Before a local-write worker
+is dispatched, Firstmate now prepares `agent/<task-id>` through a separate
+durable intent/result pair. The adapter requires the exact leased head and exact
+current changed-path set, creates only that branch, and verifies that neither
+the head nor workspace paths changed.
+
+If branch creation returns an uncertain result, do not issue it again. Use:
+
+```sh
+npm run firstmate:branch -- reconcile TASK_ID
+```
+
+Read-only reconciliation accepts only the exact prepared branch, head, and
+changed paths. Restart audits and Herdr expose `prepare_task_branch` or
+`reconcile_task_branch` when this boundary is incomplete.
+
 Task `shipmates-mutating-001` completed the first mutating lifecycle:
 
 ```text
@@ -117,6 +135,11 @@ The adapter accepts two proof types:
 proof or if GitHub's merged tree differs from the approved tree. A later
 reconciliation slice may add patch-based proof for concurrent, non-overlapping
 main-branch changes, but it must not weaken the current fail-closed behavior.
+
+Firstmate delivery now invokes this proof only after durable merge-commit CI
+assurance. It fetches the confirmed full commit without updating a branch,
+binds the proof to that assurance event, records return intent, and then calls
+Treehouse. See the [post-merge assurance guide](post-merge-assurance.md).
 
 ## Ledger-backed lifecycle
 

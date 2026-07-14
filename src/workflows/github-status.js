@@ -1,15 +1,28 @@
+import { randomUUID } from "node:crypto";
+
 export class GitHubStatusWorkflow {
-  constructor({ store, gateway, actor = "firstmate", clock = () => new Date() }) {
+  constructor({
+    store,
+    gateway,
+    actor = "firstmate",
+    clock = () => new Date(),
+    idFactory = randomUUID,
+  }) {
     if (!store || !gateway) throw new TypeError("GitHubStatusWorkflow requires store and gateway");
+    if (typeof idFactory !== "function") throw new TypeError("idFactory must be a function");
     this.store = store;
     this.gateway = gateway;
     this.actor = actor;
     this.clock = clock;
+    this.idFactory = idFactory;
   }
 
-  async inspectPullRequest({ taskId, repository, prNumber, requiredChecks = [] }) {
+  async inspectPullRequest({
+    taskId, repository, prNumber, requiredChecks = [], expectedHeadSha = null,
+  }) {
     const { owner, repo } = parseRepository(repository);
     validateRequiredChecks(requiredChecks);
+    if (expectedHeadSha !== null) requireFullSha(expectedHeadSha);
     const snapshot = await this.store.getSnapshot(taskId);
     if (snapshot.repo.toLowerCase() !== repository.toLowerCase()) {
       throw new GitHubStatusError(`Task repository ${snapshot.repo} does not match ${repository}`);
@@ -17,6 +30,11 @@ export class GitHubStatusWorkflow {
 
     const repositoryObservation = await this.gateway.readRepository({ owner, repo });
     const pullRequest = await this.gateway.readPullRequest({ owner, repo, number: prNumber });
+    if (expectedHeadSha !== null && pullRequest.head.sha !== expectedHeadSha) {
+      throw new GitHubHeadMovedError(
+        `Pull request ${repository}#${prNumber} is ${pullRequest.head.sha}, expected ${expectedHeadSha}`,
+      );
+    }
     const [branchProtection, checks, reviews, workflowRuns] = await Promise.all([
       this.gateway.readBranchProtection({ owner, repo, branch: pullRequest.base.branch }),
       this.gateway.listCheckRuns({ owner, repo, headSha: pullRequest.head.sha }),
@@ -30,7 +48,10 @@ export class GitHubStatusWorkflow {
       );
     }
 
-    const checkSummary = summarizeChecks(checks, requiredChecks);
+    const checkSummary = summarizeChecks(
+      checks,
+      effectiveRequiredChecks(branchProtection, requiredChecks),
+    );
     const report = {
       schemaVersion: 1,
       actor: this.actor,
@@ -47,7 +68,7 @@ export class GitHubStatusWorkflow {
       taskId,
       actor: this.actor,
       report,
-      eventId: `${taskId}:github:${prNumber}:${confirmed.head.sha}:status:v1`,
+      eventId: `${taskId}:github:${prNumber}:${confirmed.head.sha}:status:${this.idFactory()}:v1`,
       at: report.observedAt,
     });
   }
@@ -86,6 +107,22 @@ function validateRequiredChecks(requiredChecks) {
   }
   if (new Set(requiredChecks).size !== requiredChecks.length) {
     throw new TypeError("requiredChecks contains duplicate names");
+  }
+}
+
+function effectiveRequiredChecks(branchProtection, requested) {
+  const policy = branchProtection.requiredStatusChecks;
+  const names = [
+    ...(policy?.contexts || []),
+    ...(policy?.checks || []).map(({ context }) => context),
+    ...requested,
+  ];
+  return [...new Set(names)];
+}
+
+function requireFullSha(value) {
+  if (typeof value !== "string" || !/^[a-f0-9]{40}$/iu.test(value)) {
+    throw new TypeError("expectedHeadSha must be a full 40-character hexadecimal SHA");
   }
 }
 

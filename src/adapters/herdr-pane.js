@@ -86,7 +86,16 @@ export class HerdrPaneClient {
         args.push(flag, String(value));
       }
     }
-    await this.#plain(args, `Herdr agent report failed for ${paneId}`);
+    try {
+      await this.#plain(args, `Herdr agent report failed for ${paneId}`);
+    } catch (error) {
+      if (!customStatus || !String(error.cause?.stderr || "").includes("--custom-status")) {
+        throw error;
+      }
+      const flagIndex = args.indexOf("--custom-status");
+      args.splice(flagIndex, 2);
+      await this.#plain(args, `Herdr agent report failed for ${paneId}`);
+    }
   }
 
   async releaseAgent({ paneId, source, agent, seq }) {

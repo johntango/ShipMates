@@ -26,6 +26,7 @@ export class GitHubReadGateway {
       visibility: requiredString(value, "visibility", endpoint),
       archived: requiredBoolean(value, "archived", endpoint),
       disabled: requiredBoolean(value, "disabled", endpoint),
+      allowSquashMerge: requiredBoolean(value, "allow_squash_merge", endpoint),
       url: requiredString(value, "html_url", endpoint),
     });
   }
@@ -177,6 +178,52 @@ export class GitHubReadGateway {
     ));
   }
 
+  async listReviewThreads({ owner, repo, number }) {
+    const target = repositoryTarget(owner, repo);
+    const prNumber = positiveInteger(number, "pull request number");
+    if (typeof this.client.graphql !== "function") {
+      throw new GitHubReadError("GitHub client cannot read review threads");
+    }
+    const query = `query($owner:String!,$repo:String!,$number:Int!,$cursor:String){
+      repository(owner:$owner,name:$repo){
+        pullRequest(number:$number){
+          reviewThreads(first:100,after:$cursor){
+            nodes{id isResolved isOutdated}
+            pageInfo{hasNextPage endCursor}
+          }
+        }
+      }
+    }`;
+    const threads = [];
+    let cursor = null;
+    do {
+      const response = await this.client.graphql({
+        query,
+        variables: { owner, repo, number: prNumber, cursor },
+      });
+      const connection = response?.data?.repository?.pullRequest?.reviewThreads;
+      if (!connection || !Array.isArray(connection.nodes) ||
+        typeof connection.pageInfo?.hasNextPage !== "boolean") {
+        throw new GitHubReadError("GitHub review-thread response is malformed");
+      }
+      for (const node of connection.nodes) {
+        const id = requiredString(node, "id", "graphql:reviewThreads");
+        if (threads.some((thread) => thread.id === id)) {
+          throw new GitHubReadError(`Ambiguous review thread ${id}`);
+        }
+        threads.push(this.#observation(`graphql:${target}#${prNumber}:${id}`, {
+          id,
+          resolved: requiredBoolean(node, "isResolved", "graphql:reviewThreads"),
+          outdated: requiredBoolean(node, "isOutdated", "graphql:reviewThreads"),
+        }));
+      }
+      cursor = connection.pageInfo.hasNextPage
+        ? requiredString(connection.pageInfo, "endCursor", "graphql:reviewThreads")
+        : null;
+    } while (cursor !== null);
+    return threads;
+  }
+
   async listWorkflowRuns({ owner, repo, headSha }) {
     const target = repositoryTarget(owner, repo);
     const sha = fullSha(headSha);
@@ -233,6 +280,31 @@ export class GhApiReadClient {
       throw new GitHubReadError(`GitHub returned malformed JSON for ${endpoint}`, { cause });
     }
   }
+
+  async graphql({ query, variables }) {
+    requiredNonEmpty(query, "query");
+    if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
+      throw new TypeError("variables must be an object");
+    }
+    const args = ["api", "graphql", "-f", `query=${query}`];
+    for (const [name, value] of Object.entries(variables)) {
+      if (value !== null) args.push("-F", `${name}=${value}`);
+    }
+    let stdout;
+    try {
+      ({ stdout } = await execFileAsync(this.command, args, {
+        env: this.env,
+        maxBuffer: 10 * 1024 * 1024,
+      }));
+    } catch (cause) {
+      throw new GitHubReadError("GitHub GraphQL request failed", { cause });
+    }
+    try {
+      return JSON.parse(stdout);
+    } catch (cause) {
+      throw new GitHubReadError("GitHub GraphQL returned malformed JSON", { cause });
+    }
+  }
 }
 
 export class GitHubReadError extends Error {
@@ -257,6 +329,7 @@ function normalizePullRequest(value, endpoint, target, number) {
     draft: requiredBoolean(value, "draft", endpoint),
     title: requiredString(value, "title", endpoint),
     merged: requiredBoolean(value, "merged", endpoint),
+    mergeCommitSha: optionalFullSha(value.merge_commit_sha, `${endpoint}.merge_commit_sha`),
     mergeable: value.mergeable === null ? null : requiredBoolean(value, "mergeable", endpoint),
     mergeableState: requiredString(value, "mergeable_state", endpoint),
     base: {
@@ -334,7 +407,9 @@ function fullSha(value) {
 }
 
 function optionalFullSha(value, label) {
-  return value === null ? null : fullSha(requiredNonEmpty(value, label));
+  return value === null || value === undefined
+    ? null
+    : fullSha(requiredNonEmpty(value, label));
 }
 
 function positiveInteger(value, label) {

@@ -25,9 +25,16 @@ export class RestartReconciler {
     const checks = [
       ledgerCheck(snapshot),
       ...(await this.#worktreeChecks(snapshot)),
+      taskBranchCheck(snapshot),
       workerCheck(snapshot),
+      ...scoutFollowUpChecks(snapshot),
+      commitCheck(snapshot),
+      pushCheck(snapshot),
       validationCheck(snapshot),
       draftPullRequestCheck(snapshot),
+      mergeCheck(snapshot),
+      postMergeCheck(snapshot),
+      branchCleanupCheck(snapshot),
       ...(await this.#githubChecks(snapshot)),
     ];
     const recoveryChecks = checks.filter(
@@ -146,12 +153,47 @@ export class RestartReconciler {
       const inspection = await this.treehouseManager.inspect({
         worktreePath: worktree.worktreePath,
       });
-      if (inspection.headSha !== worktree.headSha || inspection.dirty) {
+      if (inspection.headSha !== worktree.headSha) {
         return [recoveryCheck(
           "git-worktree",
-          `Leased worktree expected clean ${worktree.headSha}, found ${inspection.headSha}${inspection.dirty ? " dirty" : ""}`,
+          `Leased worktree expected ${worktree.headSha}, found ${inspection.headSha}`,
           "inspect_unlanded_worktree_manually",
           { source: gitSource(worktree.worktreePath), observed: inspection },
+        )];
+      }
+      if (inspection.dirty) {
+        const verifiedMutation = [...snapshot.workers].reverse().find((worker) =>
+          worker.status === "reported" && worker.mode === "ship" &&
+          worker.verification?.kind === "workspace-write" &&
+          worker.verification.headSha === worktree.headSha &&
+          worker.verification.dirty === true);
+        if (!verifiedMutation || typeof this.treehouseManager.listChangedPaths !== "function") {
+          return [recoveryCheck(
+            "git-worktree",
+            `Leased worktree is dirty without a comparable verified mutation`,
+            "inspect_unlanded_worktree_manually",
+            { source: gitSource(worktree.worktreePath), observed: inspection },
+          )];
+        }
+        const changedPaths = await this.treehouseManager.listChangedPaths({
+          worktreePath: worktree.worktreePath,
+        });
+        if (!sameArray(changedPaths, verifiedMutation.verification.changedPaths)) {
+          return [recoveryCheck(
+            "git-worktree",
+            "Current changed paths differ from the verified mutating-worker report",
+            "inspect_unlanded_worktree_manually",
+            { source: gitSource(worktree.worktreePath), observed: inspection },
+          )];
+        }
+        return [check(
+          "git-worktree",
+          "pass",
+          `Verified uncommitted mutation from worker ${verifiedMutation.id}`,
+          {
+            source: gitSource(worktree.worktreePath),
+            observed: { inspection, changedPaths },
+          },
         )];
       }
       return [check("worktree", "pass", "Active lease holder, SHA, and cleanliness match", {
@@ -208,7 +250,14 @@ export class RestartReconciler {
           ));
           continue;
         }
-        if (live.state !== recorded.pullRequest.state) {
+        const completedMerge = [...(snapshot.githubMerges || [])].reverse().find(
+          (operation) => operation.status === "completed" &&
+            operation.prNumber === live.number && operation.headSha === live.head.sha,
+        );
+        const expectedMergedState = completedMerge && live.state === "closed" &&
+          live.merged === true &&
+          live.mergeCommitSha === completedMerge.result.mergeCommitSha;
+        if (live.state !== recorded.pullRequest.state && !expectedMergedState) {
           checks.push(recoveryCheck(
             "github-pull-request",
             `PR #${live.number} state changed from ${recorded.pullRequest.state} to ${live.state}`,
@@ -240,7 +289,9 @@ export class RestartReconciler {
         checks.push(check(
           "github-pull-request",
           "pass",
-          `PR #${live.number} head, state, and required checks match`,
+          expectedMergedState
+            ? `PR #${live.number} confirms the recorded exact-head merge`
+            : `PR #${live.number} head, state, and required checks match`,
           {
             source: live.source,
             observed: {
@@ -261,6 +312,36 @@ export class RestartReconciler {
     }
     return checks;
   }
+}
+
+function taskBranchCheck(snapshot) {
+  const worktree = snapshot.worktree;
+  if (worktree === null || worktree.status === "returned" ||
+    snapshot.kind !== "firstmate-intake") {
+    return check("task-branch", "not_applicable", "Task has no active local-write branch");
+  }
+  if (worktree.branchPreparation?.status === "requested") {
+    return recoveryCheck(
+      "task-branch",
+      `Task branch ${worktree.branchPreparation.branch} has durable intent but no result`,
+      "reconcile_task_branch",
+    );
+  }
+  if (worktree.status === "leased" && worktree.branch === null) {
+    return recoveryCheck(
+      "task-branch",
+      "Active Firstmate local-write lease is still detached",
+      "prepare_task_branch",
+    );
+  }
+  if (worktree.status === "leased" && worktree.branch === `agent/${snapshot.id}`) {
+    return check("task-branch", "pass", "Deterministic task branch is prepared");
+  }
+  return recoveryCheck(
+    "task-branch",
+    `Unexpected active task branch: ${worktree.branch || "none"}`,
+    "inspect_task_branch_manually",
+  );
 }
 
 function ledgerCheck(snapshot) {
@@ -318,7 +399,64 @@ function workerCheck(snapshot) {
   );
 }
 
+function scoutFollowUpChecks(snapshot) {
+  const followUps = snapshot.scoutFollowUps || [];
+  const pending = followUps.filter(({ status }) => status === "selected");
+  if (pending.length === 0) {
+    return [check(
+      "scout-follow-ups",
+      followUps.length === 0 ? "not_applicable" : "pass",
+      followUps.length === 0
+        ? "Task has no human-selected scout follow-up"
+        : "Every selected scout follow-up has a durable resolution",
+    )];
+  }
+  const withCompletedReply = [];
+  const withoutReplyIntent = [];
+  const withUncertainReply = [];
+  for (const followUp of pending) {
+    const worker = snapshot.workers.find(({ id }) => id === followUp.workerId);
+    const reply = worker?.replies?.find(({ id }) => id === followUp.replyId);
+    if (reply?.status === "completed") withCompletedReply.push(followUp.followUpId);
+    else if (reply?.status === "requested") withUncertainReply.push(followUp.followUpId);
+    else withoutReplyIntent.push(followUp.followUpId);
+  }
+  const checks = [];
+  if (withUncertainReply.length > 0) {
+    checks.push(recoveryCheck(
+      "scout-follow-ups",
+      `Selected follow-ups have uncertain replies: ${withUncertainReply.join(", ")}`,
+      "reconcile_worker_replies",
+    ));
+  }
+  if (withCompletedReply.length > 0) {
+    checks.push(recoveryCheck(
+      "scout-follow-ups",
+      `Verified replies need follow-up resolution: ${withCompletedReply.join(", ")}`,
+      "resolve_scout_follow_ups",
+    ));
+  }
+  if (withoutReplyIntent.length > 0) {
+    checks.push(recoveryCheck(
+      "scout-follow-ups",
+      `Selected checks have no reply intent: ${withoutReplyIntent.join(", ")}`,
+      "resume_scout_follow_ups",
+    ));
+  }
+  return checks;
+}
+
 function validationCheck(snapshot) {
+  const pending = (snapshot.validationRequests || []).find(({ status }) =>
+    status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "validation",
+      `Local validation ${pending.operationId} has intent but no durable result`,
+      "reconcile_local_validation_manually",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
   const latest = snapshot.validationRuns.at(-1);
   const requiresPass = new Set([
     "awaiting_human",
@@ -358,6 +496,85 @@ function validationCheck(snapshot) {
   });
 }
 
+function commitCheck(snapshot) {
+  const operations = snapshot.gitCommits || [];
+  const pending = operations.find(({ status }) => status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "git-commit",
+      `Git commit ${pending.operationId} has durable intent but no result`,
+      "reconcile_git_commit",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
+  const completed = operations.at(-1);
+  if (!completed) {
+    return check("git-commit", "not_applicable", "Task has no controlled commit");
+  }
+  if (snapshot.worktree?.status !== "leased" ||
+    completed.result?.headSha !== snapshot.worktree.headSha ||
+    completed.result?.clean !== true) {
+    return recoveryCheck(
+      "git-commit",
+      "Controlled commit evidence does not match the active lease",
+      "inspect_controlled_commit_manually",
+    );
+  }
+  return check("git-commit", "pass", `Controlled commit ${completed.result.headSha} recorded`, {
+    source: { kind: "task-ledger", eventId: completed.completedEventId },
+    observed: {
+      operationId: completed.operationId,
+      headSha: completed.result.headSha,
+      treeSha: completed.result.treeSha,
+    },
+  });
+}
+
+function pushCheck(snapshot) {
+  const operations = snapshot.gitPushes || [];
+  const pending = operations.find(({ status }) => status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "git-push",
+      `Git push ${pending.operationId} has durable intent but no result`,
+      "reconcile_git_push",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
+  const latest = operations.at(-1);
+  if (!latest) return check("git-push", "not_applicable", "Task has no Git push");
+  if (latest.status === "failed") {
+    return recoveryCheck(
+      "git-push",
+      `Git push ${latest.operationId} did not publish a branch`,
+      "request_new_git_push_approval",
+      { source: { kind: "task-ledger", eventId: latest.failedEventId } },
+    );
+  }
+  if (latest.status !== "completed" ||
+    latest.result?.remoteHeadSha !== latest.headSha ||
+    latest.headSha !== snapshot.worktree?.headSha) {
+    return recoveryCheck(
+      "git-push",
+      "Git push evidence does not match the active leased head",
+      "inspect_remote_task_branch_manually",
+    );
+  }
+  const cleaned = (snapshot.branchCleanups || []).some(
+    ({ status, headSha }) => status === "completed" && headSha === latest.headSha,
+  );
+  return check("git-push", "pass", cleaned
+    ? `Task branch ${latest.headSha} was published and later cleaned up`
+    : `Remote task branch is ${latest.headSha}`, {
+    source: { kind: "task-ledger", eventId: latest.completedEventId },
+    observed: {
+      operationId: latest.operationId,
+      branch: latest.branch,
+      headSha: latest.headSha,
+    },
+  });
+}
+
 function draftPullRequestCheck(snapshot) {
   const operations = snapshot.githubDraftPullRequests || [];
   const uncertain = operations.filter(({ status }) => status === "requested");
@@ -388,6 +605,157 @@ function draftPullRequestCheck(snapshot) {
         status,
         prNumber: pullRequest?.number ?? null,
       })),
+    },
+  );
+}
+
+function mergeCheck(snapshot) {
+  const operations = snapshot.githubMerges || [];
+  const pending = operations.find(({ status }) => status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "github-merge",
+      `GitHub merge ${pending.operationId} has durable intent but no result`,
+      "reconcile_github_merge",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
+  const latest = operations.at(-1);
+  if (!latest) return check("github-merge", "not_applicable", "Task has no merge operation");
+  if (latest.status === "failed") {
+    return recoveryCheck(
+      "github-merge",
+      `GitHub merge ${latest.operationId} did not land`,
+      "request_new_merge_approval",
+      { source: { kind: "task-ledger", eventId: latest.failedEventId } },
+    );
+  }
+  if (latest.status !== "completed" ||
+    latest.result?.mergeCommitSha !== latest.result?.baseHeadSha ||
+    !new Set(["landed", "cleaning", "complete"]).has(snapshot.state)) {
+    return recoveryCheck(
+      "github-merge",
+      "Merge evidence does not match the landed task state",
+      "inspect_github_merge_manually",
+    );
+  }
+  return check("github-merge", "pass", `Merge landed at ${latest.result.mergeCommitSha}`, {
+    source: { kind: "task-ledger", eventId: latest.completedEventId },
+    observed: {
+      operationId: latest.operationId,
+      prNumber: latest.prNumber,
+      mergeCommitSha: latest.result.mergeCommitSha,
+    },
+  });
+}
+
+function postMergeCheck(snapshot) {
+  const merge = [...(snapshot.githubMerges || [])].reverse().find(
+    ({ status }) => status === "completed",
+  );
+  if (!merge) {
+    return check("post-merge", "not_applicable", "Task has no completed merge");
+  }
+  const assurance = [...(snapshot.postMergeAssurances || [])].reverse().find(
+    ({ mergeOperationId }) => mergeOperationId === merge.operationId,
+  );
+  if (!assurance) {
+    return recoveryCheck(
+      "post-merge",
+      `Merge ${merge.operationId} lacks merge-commit CI and landed-tree assurance`,
+      "complete_post_merge_assurance",
+    );
+  }
+  if (assurance.requiredChecks?.satisfied !== true ||
+    assurance.approvedHeadSha !== merge.headSha ||
+    assurance.mergeCommitSha !== merge.result.mergeCommitSha ||
+    assurance.baseHeadSha !== merge.result.mergeCommitSha) {
+    return recoveryCheck(
+      "post-merge",
+      "Post-merge assurance does not match the completed merge",
+      "inspect_post_merge_evidence_manually",
+    );
+  }
+  const proof = snapshot.worktree?.proof;
+  if (proof?.kind !== "exact-tree-landing" ||
+    proof.assuranceEventId !== assurance.eventId ||
+    proof.mergedCommitSha !== assurance.mergeCommitSha) {
+    return recoveryCheck(
+      "post-merge",
+      "Passing merge-commit CI lacks its exact-tree landed-work proof",
+      "resume_post_merge_assurance",
+    );
+  }
+  if (snapshot.state === "complete" && snapshot.worktree?.status !== "returned") {
+    return recoveryCheck(
+      "post-merge",
+      "Completed task did not record a returned Treehouse lease",
+      "inspect_treehouse_return_manually",
+    );
+  }
+  return check(
+    "post-merge",
+    "pass",
+    `Merge-commit checks and exact tree ${proof.treeSha} are verified`,
+    {
+      source: { kind: "task-ledger", eventId: assurance.eventId },
+      observed: {
+        operationId: assurance.operationId,
+        mergeCommitSha: assurance.mergeCommitSha,
+        treeSha: proof.treeSha,
+        leaseStatus: snapshot.worktree?.status,
+      },
+    },
+  );
+}
+
+function branchCleanupCheck(snapshot) {
+  const operations = snapshot.branchCleanups || [];
+  const pending = operations.find(({ status }) => status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "branch-cleanup",
+      `Remote branch cleanup ${pending.operationId} has durable intent but no result`,
+      "reconcile_branch_cleanup",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
+  const latest = operations.at(-1);
+  if (!latest) {
+    return check(
+      "branch-cleanup",
+      "not_applicable",
+      "Task has no approved remote branch cleanup operation",
+    );
+  }
+  if (latest.status === "failed") {
+    return recoveryCheck(
+      "branch-cleanup",
+      `Remote branch cleanup ${latest.operationId} did not delete the exact branch`,
+      "request_new_branch_cleanup_approval",
+      { source: { kind: "task-ledger", eventId: latest.failedEventId } },
+    );
+  }
+  if (latest.status !== "completed" || latest.result?.deleted !== true ||
+    latest.result?.deletedHeadSha !== latest.headSha ||
+    latest.result?.remoteHeadSha !== null) {
+    return recoveryCheck(
+      "branch-cleanup",
+      "Remote branch cleanup evidence is inconsistent",
+      "inspect_branch_cleanup_manually",
+    );
+  }
+  return check(
+    "branch-cleanup",
+    "pass",
+    `Remote task branch ${latest.branch} was deleted at ${latest.headSha}`,
+    {
+      source: { kind: "task-ledger", eventId: latest.completedEventId },
+      observed: {
+        operationId: latest.operationId,
+        branch: latest.branch,
+        deletedHeadSha: latest.result.deletedHeadSha,
+      },
     },
   );
 }
@@ -440,6 +808,11 @@ function validateAuditId(auditId) {
 
 function unique(values) {
   return [...new Set(values)];
+}
+
+function sameArray(left, right) {
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index]);
 }
 
 export class RestartReconciliationError extends Error {

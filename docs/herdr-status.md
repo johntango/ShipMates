@@ -15,12 +15,21 @@ The projection includes:
 
 - task lifecycle and ledger watermark;
 - Treehouse worktree status and exact head;
-- worker backend, pane, status, thread, verification, and reply status;
+- deterministic task-branch preparation status and reconciliation need;
+- worker backend, pane, status, thread, verification kind, changed-path count,
+  and reply status;
+- controlled commit status, exact head, tree, and changed-path count;
+- exact-head push approval, operation status, remote head, and recovery need;
 - latest local validation;
 - draft-PR creation and latest exact-head CI observation;
 - merge and draft-PR approvals;
+- exact-head merge operation, merge commit, and recovery status;
+- merge-commit check assurance, exact-tree proof event, and lease-return status;
+- branch-cleanup approval, exact remote head, mutation status, and recovery need;
 - latest restart audit and recommended recovery actions;
 - two-scout synthesis identity, exact-head binding, outcome, and counts;
+- human-selected follow-up binding, read-only reply lifecycle, outcome, and
+  evidence counts;
 - deterministic attention items and summary counts.
 
 Worker briefs, prompts, report prose, PR bodies, API keys, GitHub tokens, and raw
@@ -31,7 +40,20 @@ JSON.
 If any event is appended after the latest restart audit, Herdr displays that
 audit as `stale` and adds an attention item. A synthesis with outcome
 `review_required` also becomes an attention item, while its report prose and
-proposed-check text remain outside the projection.
+proposed-check text remain outside the projection. Selected follow-ups remain
+attention items until their verified replies are durably resolved.
+Incomplete commit, push, or validation intent also appears as a reconciliation
+attention item. A passing validated head with no push is shown as awaiting
+exact-head push approval. A completed push with no draft PR is shown as awaiting
+the separate draft-PR approval, and a completed draft with no matching
+observation is shown as awaiting exact-head CI evidence.
+Passing non-draft exact-head CI is shown as awaiting separate merge approval.
+Uncertain merge intent requires reconciliation. A landed merge remains visible
+as awaiting post-merge CI, then exact-tree proof, then lease return. After lease
+return, those assurance items clear and Herdr shows the separate remote
+branch-cleanup approval;
+uncertain deletion becomes a reconciliation item and confirmed deletion clears
+that attention.
 
 ## Commands
 
@@ -63,6 +85,24 @@ and snapshot SHA-256 hashes were identical before and after the view.
 The live two-scout synthesis demonstrated the stale-audit indicator before a
 fresh read-only audit restored current `safe` status.
 
-This stage does not publish to an external Herdr pane. The existing user-edited
-`agent.js` pane reporter remains untouched; connecting this projection to that
-sink would be a separate, bounded status-publication stage.
+## Live Firstmate execution
+
+When `npm run firstmate` runs inside a Herdr pane (`HERDR_PANE_ID` is set), it
+now publishes live execution status in addition to the deterministic ledger
+projection:
+
+- the current pane shows Firstmate classification and overall execution state;
+- two vacant panes are selected or created for `scout-1` and `scout-2`;
+- the first scout pane is reused for the workspace-write implementer;
+- each worker reports started, completed, or failed state;
+- sanitized Codex JSONL activity reports shell, file-edit, MCP, and web-search
+  tool lifecycle without exposing commands, arguments, prompts, or outputs;
+- skill activity is shown when Codex emits a `skill` or `skill_invocation`
+  item. Codex CLI versions that do not emit those items cannot provide reliable
+  semantic skill visibility, so ShipMates does not infer it from filenames or
+  shell commands.
+
+Worker pane identities are released after the overall run so later tasks can
+reuse the capacity. If Herdr is unavailable, visibility fails open with one
+terminal warning while the authoritative Codex artifacts and task execution
+continue normally.

@@ -159,6 +159,95 @@ test("creates a no-mutation proof from a clean expected HEAD", async () => {
   });
 });
 
+test("lists staged, unstaged, and untracked paths without duplicates", async () => {
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async (file, args) => {
+      assert.equal(file, "git");
+      if (args[0] === "diff" && args.includes("--cached")) {
+        return { stdout: "src/staged.js\0src/shared.js\0", stderr: "" };
+      }
+      if (args[0] === "diff") {
+        return { stdout: "src/unstaged.js\0src/shared.js\0", stderr: "" };
+      }
+      if (args[0] === "ls-files") {
+        return {
+          stdout: args.includes("--ignored") ? ".env\0" : "test/new.test.js\0",
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    },
+  });
+
+  assert.deepEqual(
+    await manager.inspectChangedPaths({ worktreePath: "/tmp/worktree" }),
+    {
+      staged: ["src/shared.js", "src/staged.js"],
+      unstaged: ["src/shared.js", "src/unstaged.js"],
+      untracked: ["test/new.test.js"],
+      ignored: [".env"],
+      all: [
+        "src/shared.js",
+        "src/staged.js",
+        "src/unstaged.js",
+        "test/new.test.js",
+      ],
+    },
+  );
+});
+
+test("prepares an exact deterministic task branch without changing workspace paths", async () => {
+  const calls = [];
+  let branch = null;
+  const headSha = "a".repeat(40);
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async (file, args) => {
+      assert.equal(file, "git");
+      calls.push(args);
+      if (args[0] === "status") {
+        return { stdout: " M src/message.js\n", stderr: "" };
+      }
+      if (args[0] === "rev-parse") {
+        return { stdout: `${headSha}\n`, stderr: "" };
+      }
+      if (args[0] === "branch") {
+        return { stdout: branch ? `${branch}\n` : "\n", stderr: "" };
+      }
+      if (args[0] === "diff") {
+        return {
+          stdout: args.includes("--cached") ? "" : "src/message.js\0",
+          stderr: "",
+        };
+      }
+      if (args[0] === "ls-files") return { stdout: "", stderr: "" };
+      if (args[0] === "check-ref-format") return { stdout: "", stderr: "" };
+      if (args[0] === "switch") {
+        branch = args[2];
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    },
+  });
+
+  const result = await manager.prepareTaskBranch({
+    worktreePath: "/tmp/worktree",
+    expectedHeadSha: headSha,
+    branch: "agent/task-live-001",
+    expectedChangedPaths: ["src/message.js"],
+  });
+
+  assert.deepEqual(result, {
+    branch: "agent/task-live-001",
+    headSha,
+    dirty: true,
+    changedPaths: ["src/message.js"],
+  });
+  assert.deepEqual(
+    calls.find(([command]) => command === "switch"),
+    ["switch", "--create", "agent/task-live-001", "--no-track"],
+  );
+});
+
 test("refuses to return a lease without matching proof", async () => {
   const manager = new TreehouseWorktreeManager({
     executeFile: async () => {
@@ -202,6 +291,36 @@ test("proves a squash landing when approved and merged trees match", async () =>
   assert.equal(proof.kind, "exact-tree-landing");
   assert.equal(proof.treeSha, "tree456");
   assert.equal(proof.mergedCommitSha, "merged789");
+});
+
+test("fetches only the confirmed full merge commit before landed-tree proof", async () => {
+  const calls = [];
+  const commitSha = "c".repeat(40);
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async (file, args, options) => {
+      calls.push({ file, args, cwd: options.cwd });
+      return { stdout: "", stderr: "" };
+    },
+  });
+
+  const result = await manager.fetchExactCommit({
+    worktreePath: "/tmp/worktree",
+    commitSha,
+  });
+
+  assert.deepEqual(result, { commitSha, remote: "origin" });
+  assert.deepEqual(calls, [
+    {
+      file: "git",
+      args: ["fetch", "--no-tags", "--no-recurse-submodules", "origin", commitSha],
+      cwd: "/tmp/worktree",
+    },
+    {
+      file: "git",
+      args: ["cat-file", "-e", `${commitSha}^{commit}`],
+      cwd: "/tmp/worktree",
+    },
+  ]);
 });
 
 test("rejects a squash landing whose trees differ", async () => {
