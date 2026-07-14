@@ -326,6 +326,15 @@ function projectWorktree(worktree) {
     worktreePath: worktree.worktreePath ?? null,
     headSha: worktree.headSha ?? worktree.baseSha ?? null,
     branch: worktree.branch ?? null,
+    branchPreparation: worktree.branchPreparation === null ||
+      worktree.branchPreparation === undefined ? null : {
+        branch: worktree.branchPreparation.branch,
+        status: worktree.branchPreparation.status,
+        expectedHeadSha: worktree.branchPreparation.expectedHeadSha,
+        expectedChangedPaths: worktree.branchPreparation.expectedChangedPaths.length,
+        requestEventId: worktree.branchPreparation.requestEventId,
+        completedEventId: worktree.branchPreparation.completedEventId || null,
+      },
     leaseHolder: worktree.leaseHolder ?? null,
   };
 }
@@ -465,6 +474,18 @@ function deriveAttention({
   const result = [];
   if (new Set(["lease_requested", "return_requested"]).has(snapshot.worktree?.status)) {
     result.push(item("worktree_reconciliation", `Worktree is ${snapshot.worktree.status}`));
+  }
+  if (snapshot.worktree?.branchPreparation?.status === "requested") {
+    result.push(item(
+      "task_branch_reconciliation",
+      `Task branch ${snapshot.worktree.branchPreparation.branch} needs reconciliation`,
+    ));
+  } else if (snapshot.kind === "firstmate-intake" &&
+    snapshot.worktree?.status === "leased" && snapshot.worktree.branch === null) {
+    result.push(item(
+      "task_branch_preparation",
+      "Active local-write lease needs a deterministic task branch",
+    ));
   }
   for (const worker of workers) {
     if (new Set(["dispatch_requested", "started"]).has(worker.status)) {

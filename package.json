@@ -11,6 +11,7 @@
 		"codex:mcp-pair": "node scripts/codex-mcp-pair.js",
 		"codex:ship": "node scripts/codex-ship.js",
 		"firstmate:commit": "node scripts/firstmate-commit.js",
+		"firstmate:branch": "node scripts/firstmate-branch.js",
 		"firstmate:push": "node scripts/firstmate-push.js",
 		"scout:synthesize": "node scripts/scout-synthesis.js",
 		"scout:follow-up": "node scripts/scout-follow-up.js",

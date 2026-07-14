@@ -5,8 +5,8 @@ import { TaskStore } from "../src/storage/task-store.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
 
 const [command, ...args] = process.argv.slice(2);
-if (command !== "run" || args.length < 2) {
-  throw new Error("Usage: local-validation.js run <task-id> <intent>");
+if (!new Set(["run", "reconcile"]).has(command) || args.length < 2) {
+  throw new Error("Usage: local-validation.js <run|reconcile> <task-id> <intent>");
 }
 const binaryPath = process.env.NO_MISTAKES_BIN;
 if (!binaryPath) {
@@ -22,7 +22,7 @@ const workflow = new LocalValidationWorkflow({
   actor: process.env.SHIPMATES_ACTOR || "firstmate",
 });
 const [taskId, ...intentParts] = args;
-const snapshot = await workflow.run({
+const snapshot = await workflow[command]({
   taskId,
   intent: intentParts.join(" "),
 });

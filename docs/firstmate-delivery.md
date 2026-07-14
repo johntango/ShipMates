@@ -5,6 +5,11 @@ reclassifying the request or dispatching another worker. It derives the exact
 repository, task branch, and committed SHA from the durable ledger, then
 coordinates the existing push, draft-PR, and read-only CI workflows.
 
+The local-write path prepares deterministic `agent/<task-id>` before worker
+dispatch. For an older detached lease, use
+`npm run firstmate:branch -- prepare TASK_ID`; if durable intent already exists
+without a result, use `reconcile` instead. Neither command publishes remotely.
+
 Push and draft-PR creation remain separate authority boundaries. Each requires
 its own human approval ID and exact binding. CI observation is read-only and
 does not authorize merge.

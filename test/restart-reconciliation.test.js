@@ -23,6 +23,7 @@ test("records a safe audit when applicable durable and live state agree", async 
     [
       { kind: "ledger", status: "pass" },
       { kind: "worktree", status: "not_applicable" },
+      { kind: "task-branch", status: "not_applicable" },
       { kind: "workers", status: "not_applicable" },
       { kind: "scout-follow-ups", status: "not_applicable" },
       { kind: "git-commit", status: "not_applicable" },
@@ -34,6 +35,49 @@ test("records a safe audit when applicable durable and live state agree", async 
     { kind: "branch-cleanup", status: "not_applicable" },
     { kind: "github", status: "not_applicable" },
     ],
+  );
+});
+
+test("requires read-only reconciliation for uncertain task-branch preparation", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.kind = "firstmate-intake";
+  snapshot.state = "running";
+  snapshot.worktree = {
+    status: "leased",
+    repoPath: "/tmp/repo",
+    worktreePath: "/tmp/worktree",
+    headSha: HEAD,
+    branch: null,
+    branchPreparation: {
+      status: "requested",
+      branch: "agent/recovery-001",
+      expectedHeadSha: HEAD,
+      expectedChangedPaths: [],
+      requestEventId: "branch-request",
+    },
+  };
+  const reconciler = new RestartReconciler({
+    store: new MemoryStore(snapshot),
+    treehouseManager: {
+      async findWorktree() {
+        return { state: "leased", leaseHolder: "recovery-001" };
+      },
+      async inspect() {
+        return { headSha: HEAD, branch: "agent/recovery-001", dirty: false };
+      },
+    },
+    clock: () => NOW,
+  });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-task-branch",
+  });
+
+  assert.equal(result.report.safeToResume, false);
+  assert.equal(
+    result.report.checks.find(({ kind }) => kind === "task-branch").action,
+    "reconcile_task_branch",
   );
 });
 

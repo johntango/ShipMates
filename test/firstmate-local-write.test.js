@@ -50,6 +50,24 @@ test("advances a clarified local-write task into an exact Treehouse lease", asyn
         changes: [],
       };
     },
+    async prepareTaskBranch(input) {
+      calls.push(["prepare-branch", input]);
+      return {
+        branch: `agent/${taskId}`,
+        headSha,
+        dirty: false,
+        changedPaths: [],
+      };
+    },
+    async inspectPreparedTaskBranch(input) {
+      calls.push(["inspect-branch", input]);
+      return {
+        branch: `agent/${taskId}`,
+        headSha,
+        dirty: false,
+        changedPaths: [],
+      };
+    },
   };
 
   const first = await prepareFirstmateLocalWrite({
@@ -62,8 +80,11 @@ test("advances a clarified local-write task into an exact Treehouse lease", asyn
   assert.equal(first.state, "running");
   assert.equal(first.worktree.status, "leased");
   assert.equal(first.worktree.headSha, headSha);
+  assert.equal(first.worktree.branch, `agent/${taskId}`);
   assert.equal(first.worktree.worktreePath, "/tmp/treehouse/shipmates/repo");
-  assert.deepEqual(calls.map(([name]) => name), ["prepare", "lease", "inspect"]);
+  assert.deepEqual(calls.map(([name]) => name), [
+    "prepare", "lease", "inspect", "prepare-branch",
+  ]);
 
   const events = first.eventsCount;
   const second = await prepareFirstmateLocalWrite({
@@ -74,5 +95,5 @@ test("advances a clarified local-write task into an exact Treehouse lease", asyn
     repoPath: "/repos/shipmates",
   });
   assert.equal(second.eventsCount, events);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
 });

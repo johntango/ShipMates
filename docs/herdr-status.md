@@ -15,6 +15,7 @@ The projection includes:
 
 - task lifecycle and ledger watermark;
 - Treehouse worktree status and exact head;
+- deterministic task-branch preparation status and reconciliation need;
 - worker backend, pane, status, thread, verification kind, changed-path count,
   and reply status;
 - controlled commit status, exact head, tree, and changed-path count;

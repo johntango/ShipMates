@@ -83,6 +83,32 @@ test("does not repeat a validator after durable intent without a result", async 
   assert.equal(runs, 1);
 });
 
+test("explicitly reconciles one exact durable validation request", async () => {
+  const store = new MemoryStore();
+  const intent = "Validate locally";
+  let loseResult = true;
+  let runs = 0;
+  const workflow = new LocalValidationWorkflow({
+    store,
+    gate: {
+      pinEvidence,
+      async run() {
+        runs += 1;
+        if (loseResult) throw new Error("validator result lost");
+        return validationReport();
+      },
+    },
+  });
+  await assert.rejects(
+    workflow.run({ taskId: "validation-001", intent }),
+    /validator result lost/u,
+  );
+  loseResult = false;
+  const result = await workflow.reconcile({ taskId: "validation-001", intent });
+  assert.equal(result.report.runId, "run-local-1");
+  assert.equal(runs, 2);
+});
+
 class MemoryStore {
   constructor() {
     this.records = [];

@@ -25,6 +25,7 @@ export class RestartReconciler {
     const checks = [
       ledgerCheck(snapshot),
       ...(await this.#worktreeChecks(snapshot)),
+      taskBranchCheck(snapshot),
       workerCheck(snapshot),
       ...scoutFollowUpChecks(snapshot),
       commitCheck(snapshot),
@@ -311,6 +312,36 @@ export class RestartReconciler {
     }
     return checks;
   }
+}
+
+function taskBranchCheck(snapshot) {
+  const worktree = snapshot.worktree;
+  if (worktree === null || worktree.status === "returned" ||
+    snapshot.kind !== "firstmate-intake") {
+    return check("task-branch", "not_applicable", "Task has no active local-write branch");
+  }
+  if (worktree.branchPreparation?.status === "requested") {
+    return recoveryCheck(
+      "task-branch",
+      `Task branch ${worktree.branchPreparation.branch} has durable intent but no result`,
+      "reconcile_task_branch",
+    );
+  }
+  if (worktree.status === "leased" && worktree.branch === null) {
+    return recoveryCheck(
+      "task-branch",
+      "Active Firstmate local-write lease is still detached",
+      "prepare_task_branch",
+    );
+  }
+  if (worktree.status === "leased" && worktree.branch === `agent/${snapshot.id}`) {
+    return check("task-branch", "pass", "Deterministic task branch is prepared");
+  }
+  return recoveryCheck(
+    "task-branch",
+    `Unexpected active task branch: ${worktree.branch || "none"}`,
+    "inspect_task_branch_manually",
+  );
 }
 
 function ledgerCheck(snapshot) {

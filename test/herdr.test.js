@@ -93,6 +93,30 @@ test("requires only getSnapshot and renders a compact control-safe view", async 
   assert.match(view, /owner\/repo\?forged-line/u);
 });
 
+test("shows detached and uncertain task-branch preparation", () => {
+  const snapshot = richSnapshot();
+  snapshot.kind = "firstmate-intake";
+  snapshot.worktree.branch = null;
+  let projection = projectHerdrSnapshot(snapshot);
+  assert.equal(projection.attention.some(
+    ({ code }) => code === "task_branch_preparation",
+  ), true);
+
+  snapshot.worktree.branchPreparation = {
+    branch: `agent/${snapshot.id}`,
+    status: "requested",
+    expectedHeadSha: snapshot.worktree.headSha,
+    expectedChangedPaths: [],
+    requestEventId: "branch-request",
+  };
+  projection = projectHerdrSnapshot(snapshot);
+  assert.equal(projection.worktree.branchPreparation.status, "requested");
+  assert.equal(projection.attention.some(
+    ({ code }) => code === "task_branch_reconciliation",
+  ), true);
+  assert.match(renderHerdrView(projection), /task_branch_reconciliation/u);
+});
+
 test("projects synthesis metadata without report prose", () => {
   const snapshot = richSnapshot();
   snapshot.scoutSyntheses = [{

@@ -68,6 +68,48 @@ export class LocalValidationWorkflow {
     });
     return { snapshot: recorded, report, reused: false };
   }
+
+  async reconcile({ taskId, intent }) {
+    if (typeof intent !== "string" || intent.trim() === "") {
+      throw new TypeError("intent must be a non-empty string");
+    }
+    let snapshot = await this.store.getSnapshot(taskId);
+    const request = snapshot.validationRequests?.at(-1);
+    if (request?.status === "completed") {
+      if (request.intentSha256 !== digest(intent)) {
+        throw new LocalValidationWorkflowError(
+          "Completed local validation is bound to different intent",
+        );
+      }
+      return { snapshot, report: snapshot.validationRuns.at(-1), reused: true };
+    }
+    if (snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+      request?.status !== "requested" ||
+      request.headSha !== snapshot.worktree.headSha ||
+      request.branch !== snapshot.worktree.branch ||
+      request.intentSha256 !== digest(intent) ||
+      JSON.stringify(request.tool) !== JSON.stringify(this.gate.pinEvidence())) {
+      throw new LocalValidationRecoveryRequiredError(
+        "Durable validation request no longer matches the exact active lease and intent",
+      );
+    }
+    const report = await this.gate.run({
+      taskId,
+      worktreePath: snapshot.worktree.worktreePath,
+      expectedHeadSha: request.headSha,
+      intent,
+    });
+    snapshot = await this.store.recordLocalValidation({
+      taskId,
+      actor: this.actor,
+      report,
+      operationId: request.operationId,
+      requestEventId: request.requestEventId,
+      eventId: `${taskId}:validation:${report.runId}:v1`,
+      at: report.completedAt,
+    });
+    return { snapshot, report, reused: false };
+  }
 }
 
 export class LocalValidationWorkflowError extends Error {

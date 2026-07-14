@@ -66,6 +66,28 @@ node scripts/local-validation.js run TASK_ID "the original user intent"
 
 ## Verified exercise
 
+Before invoking AXI, the adapter idempotently initializes the repository in the
+isolated no-mistakes state. On macOS, deeply nested ledger paths can exceed the
+Unix-domain socket limit. ShipMates keeps authoritative state under the task
+ledger but supplies no-mistakes with a short temporary symlink to that exact
+directory. A pre-existing link is accepted only when it resolves to the
+expected target.
+
+If durable validation intent exists without a result, normal execution refuses
+to repeat it. After inspecting the pinned head, branch, intent, and tool binding,
+an operator can explicitly resume that same request with:
+
+```sh
+SHIPMATES_STATE_DIR=/absolute/state/root \
+NO_MISTAKES_BIN=/absolute/pinned/no-mistakes \
+node scripts/local-validation.js reconcile TASK_ID "ORIGINAL INTENT"
+```
+
+The July 14 practice run recovered `validation-v1` this way. Run
+`01KXGPDYQT138Z3RMPH3Y9ANNZ` passed at exact head
+`4adfed664b1c00d6d1fd879f9cd906d7a4840b5c` with zero findings and all
+remote-capable steps skipped.
+
 Task `local-validation-20260713` exercised the pinned binary against a
 disposable clone of `johntango/Shipmates-Practice` at
 `4894811cf35e6e7b6559d4d75f2da78d24791c92`.

@@ -189,6 +189,63 @@ export class TreehouseWorktreeManager {
     });
   }
 
+  async prepareTaskBranch({
+    worktreePath, expectedHeadSha, branch, expectedChangedPaths,
+  }) {
+    const authority = validateBranchAuthority({
+      worktreePath, expectedHeadSha, branch, expectedChangedPaths,
+    });
+    const before = await this.#inspectBranchAuthority(authority);
+    if (before.branch !== null) {
+      throw new TreehouseAdapterError(
+        `Task branch preparation requires detached HEAD, found ${before.branch}`,
+      );
+    }
+    await this.#run("git", ["check-ref-format", "--branch", authority.branch], {
+      cwd: authority.worktreePath,
+    });
+    await this.#run("git", ["switch", "--create", authority.branch, "--no-track"], {
+      cwd: authority.worktreePath,
+    });
+    return this.inspectPreparedTaskBranch(authority);
+  }
+
+  async inspectPreparedTaskBranch({
+    worktreePath, expectedHeadSha, branch, expectedChangedPaths,
+  }) {
+    const authority = validateBranchAuthority({
+      worktreePath, expectedHeadSha, branch, expectedChangedPaths,
+    });
+    const inspection = await this.#inspectBranchAuthority(authority);
+    if (inspection.branch !== authority.branch) {
+      throw new TreehouseAdapterError(
+        `Expected prepared task branch ${authority.branch}, found ${inspection.branch || "detached HEAD"}`,
+      );
+    }
+    return Object.freeze({
+      branch: inspection.branch,
+      headSha: inspection.headSha,
+      dirty: inspection.dirty,
+      changedPaths: authority.expectedChangedPaths,
+    });
+  }
+
+  async #inspectBranchAuthority(authority) {
+    const [inspection, paths] = await Promise.all([
+      this.inspect({ worktreePath: authority.worktreePath }),
+      this.inspectChangedPaths({ worktreePath: authority.worktreePath }),
+    ]);
+    if (inspection.headSha !== authority.expectedHeadSha ||
+      paths.staged.length !== 0 || paths.ignored.length !== 0 ||
+      !sameArray(paths.all, authority.expectedChangedPaths) ||
+      inspection.dirty !== (authority.expectedChangedPaths.length > 0)) {
+      throw new TreehouseAdapterError(
+        "Task branch preparation does not match the exact leased workspace",
+      );
+    }
+    return inspection;
+  }
+
   async proveNoMutation({ worktreePath, expectedHeadSha }) {
     assertNonEmpty("expectedHeadSha", expectedHeadSha);
     const inspection = await this.inspect({ worktreePath });
@@ -385,10 +442,40 @@ function assertFullSha(label, value) {
   }
 }
 
+function validateBranchAuthority({
+  worktreePath, expectedHeadSha, branch, expectedChangedPaths,
+}) {
+  assertAbsolutePath("worktreePath", worktreePath);
+  assertFullSha("expectedHeadSha", expectedHeadSha);
+  assertNonEmpty("branch", branch);
+  if (!/^agent\/[a-z0-9][a-z0-9._-]{2,63}$/u.test(branch)) {
+    throw new TypeError("branch must be a deterministic agent task branch");
+  }
+  const paths = uniqueSorted(expectedChangedPaths || []);
+  if (!Array.isArray(expectedChangedPaths) || paths.length !== expectedChangedPaths.length ||
+    paths.some((value) => typeof value !== "string" || value.trim() === "" ||
+      value.startsWith("/") || value.split("/").includes("..") ||
+      value === ".git" || value.startsWith(".git/") ||
+      value === ".shipmates" || value.startsWith(".shipmates/"))) {
+    throw new TypeError("expectedChangedPaths must be an exact safe path set");
+  }
+  return {
+    worktreePath: path.resolve(worktreePath),
+    expectedHeadSha: expectedHeadSha.toLowerCase(),
+    branch,
+    expectedChangedPaths: paths,
+  };
+}
+
 function parseNullSeparated(value) {
   return value.split("\0").filter(Boolean);
 }
 
 function uniqueSorted(values) {
   return Object.freeze([...new Set(values)].sort());
+}
+
+function sameArray(first, second) {
+  return first.length === second.length &&
+    first.every((value, index) => value === second[index]);
 }

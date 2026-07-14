@@ -480,6 +480,30 @@ export class TaskStore {
     });
   }
 
+  async requestWorktreeBranch({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "worktree.branch.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordWorktreeBranch({
+    taskId, actor, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "worktree.branch.prepared",
+      at,
+      actor,
+      data: { requestEventId, result },
+    });
+  }
+
   async recordWorktreeProof({ taskId, actor, proof, eventId, at }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),

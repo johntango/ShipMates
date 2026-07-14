@@ -196,6 +196,58 @@ test("lists staged, unstaged, and untracked paths without duplicates", async () 
   );
 });
 
+test("prepares an exact deterministic task branch without changing workspace paths", async () => {
+  const calls = [];
+  let branch = null;
+  const headSha = "a".repeat(40);
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async (file, args) => {
+      assert.equal(file, "git");
+      calls.push(args);
+      if (args[0] === "status") {
+        return { stdout: " M src/message.js\n", stderr: "" };
+      }
+      if (args[0] === "rev-parse") {
+        return { stdout: `${headSha}\n`, stderr: "" };
+      }
+      if (args[0] === "branch") {
+        return { stdout: branch ? `${branch}\n` : "\n", stderr: "" };
+      }
+      if (args[0] === "diff") {
+        return {
+          stdout: args.includes("--cached") ? "" : "src/message.js\0",
+          stderr: "",
+        };
+      }
+      if (args[0] === "ls-files") return { stdout: "", stderr: "" };
+      if (args[0] === "check-ref-format") return { stdout: "", stderr: "" };
+      if (args[0] === "switch") {
+        branch = args[2];
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    },
+  });
+
+  const result = await manager.prepareTaskBranch({
+    worktreePath: "/tmp/worktree",
+    expectedHeadSha: headSha,
+    branch: "agent/task-live-001",
+    expectedChangedPaths: ["src/message.js"],
+  });
+
+  assert.deepEqual(result, {
+    branch: "agent/task-live-001",
+    headSha,
+    dirty: true,
+    changedPaths: ["src/message.js"],
+  });
+  assert.deepEqual(
+    calls.find(([command]) => command === "switch"),
+    ["switch", "--create", "agent/task-live-001", "--no-track"],
+  );
+});
+
 test("refuses to return a lease without matching proof", async () => {
   const manager = new TreehouseWorktreeManager({
     executeFile: async () => {

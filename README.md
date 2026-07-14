@@ -629,5 +629,21 @@ The next sequence is:
    merge, post-merge assurance, lease return, and branch cleanup, then use its
    evidence to harden operator recovery and release readiness.
 
+The July 14 exercise is in progress as task `task-live-e2e-20260714` at practice
+head `4adfed664b1c00d6d1fd879f9cd906d7a4840b5c`. Its local phase exposed and
+repaired two fail-closed gaps before any GitHub write:
+
+- Treehouse leases are detached, so Firstmate now records durable intent before
+  creating deterministic `agent/<task-id>` branches. Uncertain creation is
+  reconciled by inspection and is never automatically repeated.
+- the pinned no-mistakes daemon could not bind a Unix socket beneath the long
+  ledger path. It now receives a short temporary symlink whose target remains
+  the durable per-task state directory. Explicit validation reconciliation
+  resumes the original exact request instead of creating another operation.
+
+Recovered pinned validation passed with zero findings while `rebase`, `push`,
+`pr`, and `ci` remained skipped. The task is stopped at its first external-write
+boundary awaiting a separate exact-head push approval.
+
 We will keep using `Shipmates-Practice` for each stage and will not advance a
 sensitive transition without exact evidence and explicit human approval.

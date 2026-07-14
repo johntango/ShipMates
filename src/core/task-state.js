@@ -780,10 +780,66 @@ function applyEvent(snapshot, event, index) {
         worktreePath: null,
         headSha: null,
         branch: null,
+        branchPreparation: null,
         proof: null,
         returnRequestEventId: null,
         returnedEventId: null,
       };
+      break;
+    }
+
+    case "worktree.branch.requested": {
+      requireWorktreeStatus(snapshot, event, "leased");
+      const request = event.data;
+      requireIdentifier("branch preparation attempt ID", request.attemptId);
+      requireNonEmpty("task branch", request.branch);
+      requireFullSha("branch preparation head", request.expectedHeadSha);
+      if (snapshot.state !== "running" || snapshot.worktree.branch !== null ||
+        snapshot.worktree.branchPreparation !== null ||
+        request.branch !== taskBranchName(snapshot.id) ||
+        request.expectedHeadSha !== snapshot.worktree.headSha ||
+        !safePathList(request.expectedChangedPaths)) {
+        throw new TaskStateError(
+          "Task branch request does not match the active detached lease",
+        );
+      }
+      const worker = [...snapshot.workers].reverse().find((candidate) =>
+        candidate.mode === "ship" && candidate.status === "reported" &&
+        candidate.verification?.dirty === true);
+      const expectedPaths = worker ? worker.verification.changedPaths : [];
+      if (!sameArray(request.expectedChangedPaths, expectedPaths)) {
+        throw new TaskStateError(
+          "Task branch request does not match verified workspace changes",
+        );
+      }
+      snapshot.worktree.branchPreparation = {
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+      };
+      break;
+    }
+
+    case "worktree.branch.prepared": {
+      requireWorktreeStatus(snapshot, event, "leased");
+      const operation = snapshot.worktree.branchPreparation;
+      const { requestEventId, result } = event.data;
+      if (!operation || operation.status !== "requested" ||
+        requestEventId !== operation.requestEventId || !result ||
+        result.branch !== operation.branch ||
+        result.headSha !== operation.expectedHeadSha ||
+        result.dirty !== (operation.expectedChangedPaths.length > 0) ||
+        !safePathList(result.changedPaths) ||
+        !sameArray(result.changedPaths, operation.expectedChangedPaths)) {
+        throw new TaskStateError(
+          "Task branch result does not match its exact preparation request",
+        );
+      }
+      operation.status = "completed";
+      operation.result = { ...result };
+      operation.completedEventId = event.id;
+      snapshot.worktree.branch = result.branch;
       break;
     }
 
@@ -1280,6 +1336,17 @@ function pathIsUnsafe(value) {
     /[\p{Cc}\p{Cf}]/u.test(value) ||
     value === ".git" || value.startsWith(".git/") ||
     value === ".shipmates" || value.startsWith(".shipmates/");
+}
+
+function safePathList(values) {
+  return Array.isArray(values) &&
+    sameArray(values, [...values].sort()) &&
+    new Set(values).size === values.length &&
+    values.every((value) => typeof value === "string" && !pathIsUnsafe(value));
+}
+
+function taskBranchName(taskId) {
+  return `agent/${taskId}`;
 }
 
 function validateScoutFollowUpSelection(snapshot, selection) {

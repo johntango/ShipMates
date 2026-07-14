@@ -1,4 +1,5 @@
 import { TreehouseLedgerWorkflow } from "./treehouse-ledger.js";
+import { TaskBranchWorkflow } from "./task-branch.js";
 
 export async function prepareFirstmateLocalWrite({
   store, manager, taskId, requestId, repoPath, actor = "firstmate",
@@ -22,10 +23,14 @@ export async function prepareFirstmateLocalWrite({
       `Durable local-write execution cannot resume from ${snapshot.state}; run restart reconciliation`,
     );
   }
-  return new TreehouseLedgerWorkflow({ store, manager, actor }).acquire({
+  snapshot = await new TreehouseLedgerWorkflow({ store, manager, actor }).acquire({
     taskId,
     repoPath,
   });
+  const prepared = await new TaskBranchWorkflow({ store, manager, actor }).prepare({
+    taskId,
+  });
+  return prepared.snapshot;
 }
 
 export class FirstmateLocalWriteRecoveryRequiredError extends Error {

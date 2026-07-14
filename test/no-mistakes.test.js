@@ -49,6 +49,7 @@ test("runs a passing validator with remote-capable steps disabled", async () => 
     ...PIN,
   });
   const invocation = calls.find(({ args }) => args[0] === "axi");
+  assert.equal(calls.some(({ args }) => args[0] === "init"), true);
   assert.deepEqual(invocation.args, [
     "axi",
     "run",
