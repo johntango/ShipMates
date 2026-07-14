@@ -28,6 +28,8 @@ The reconciler:
   human approval rather than a retry;
 - identifies merge intent without a result and directs the operator to read-only
   GitHub reconciliation rather than a second merge request;
+- requires a completed merge to have passing exact-commit CI evidence, a
+  matching exact-tree proof, and a returned lease before cleanup is complete;
 - identifies pinned local validation intent without a result and refuses an
   automatic rerun;
 - checks whether validation evidence matches the active lease;

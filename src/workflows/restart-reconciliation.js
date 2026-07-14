@@ -32,6 +32,7 @@ export class RestartReconciler {
       validationCheck(snapshot),
       draftPullRequestCheck(snapshot),
       mergeCheck(snapshot),
+      postMergeCheck(snapshot),
       ...(await this.#githubChecks(snapshot)),
     ];
     const recoveryChecks = checks.filter(
@@ -247,7 +248,14 @@ export class RestartReconciler {
           ));
           continue;
         }
-        if (live.state !== recorded.pullRequest.state) {
+        const completedMerge = [...(snapshot.githubMerges || [])].reverse().find(
+          (operation) => operation.status === "completed" &&
+            operation.prNumber === live.number && operation.headSha === live.head.sha,
+        );
+        const expectedMergedState = completedMerge && live.state === "closed" &&
+          live.merged === true &&
+          live.mergeCommitSha === completedMerge.result.mergeCommitSha;
+        if (live.state !== recorded.pullRequest.state && !expectedMergedState) {
           checks.push(recoveryCheck(
             "github-pull-request",
             `PR #${live.number} state changed from ${recorded.pullRequest.state} to ${live.state}`,
@@ -279,7 +287,9 @@ export class RestartReconciler {
         checks.push(check(
           "github-pull-request",
           "pass",
-          `PR #${live.number} head, state, and required checks match`,
+          expectedMergedState
+            ? `PR #${live.number} confirms the recorded exact-head merge`
+            : `PR #${live.number} head, state, and required checks match`,
           {
             source: live.source,
             observed: {
@@ -585,7 +595,7 @@ function mergeCheck(snapshot) {
   }
   if (latest.status !== "completed" ||
     latest.result?.mergeCommitSha !== latest.result?.baseHeadSha ||
-    snapshot.state !== "landed") {
+    !new Set(["landed", "cleaning", "complete"]).has(snapshot.state)) {
     return recoveryCheck(
       "github-merge",
       "Merge evidence does not match the landed task state",
@@ -600,6 +610,66 @@ function mergeCheck(snapshot) {
       mergeCommitSha: latest.result.mergeCommitSha,
     },
   });
+}
+
+function postMergeCheck(snapshot) {
+  const merge = [...(snapshot.githubMerges || [])].reverse().find(
+    ({ status }) => status === "completed",
+  );
+  if (!merge) {
+    return check("post-merge", "not_applicable", "Task has no completed merge");
+  }
+  const assurance = [...(snapshot.postMergeAssurances || [])].reverse().find(
+    ({ mergeOperationId }) => mergeOperationId === merge.operationId,
+  );
+  if (!assurance) {
+    return recoveryCheck(
+      "post-merge",
+      `Merge ${merge.operationId} lacks merge-commit CI and landed-tree assurance`,
+      "complete_post_merge_assurance",
+    );
+  }
+  if (assurance.requiredChecks?.satisfied !== true ||
+    assurance.approvedHeadSha !== merge.headSha ||
+    assurance.mergeCommitSha !== merge.result.mergeCommitSha ||
+    assurance.baseHeadSha !== merge.result.mergeCommitSha) {
+    return recoveryCheck(
+      "post-merge",
+      "Post-merge assurance does not match the completed merge",
+      "inspect_post_merge_evidence_manually",
+    );
+  }
+  const proof = snapshot.worktree?.proof;
+  if (proof?.kind !== "exact-tree-landing" ||
+    proof.assuranceEventId !== assurance.eventId ||
+    proof.mergedCommitSha !== assurance.mergeCommitSha) {
+    return recoveryCheck(
+      "post-merge",
+      "Passing merge-commit CI lacks its exact-tree landed-work proof",
+      "resume_post_merge_assurance",
+    );
+  }
+  if (snapshot.state === "complete" && snapshot.worktree?.status !== "returned") {
+    return recoveryCheck(
+      "post-merge",
+      "Completed task did not record a returned Treehouse lease",
+      "inspect_treehouse_return_manually",
+    );
+  }
+  return check(
+    "post-merge",
+    "pass",
+    `Merge-commit checks and exact tree ${proof.treeSha} are verified`,
+    {
+      source: { kind: "task-ledger", eventId: assurance.eventId },
+      observed: {
+        operationId: assurance.operationId,
+        mergeCommitSha: assurance.mergeCommitSha,
+        treeSha: proof.treeSha,
+        leaseStatus: snapshot.worktree?.status,
+      },
+    },
+  );
 }
 
 function latestPullRequestObservations(observations) {

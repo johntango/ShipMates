@@ -155,6 +155,14 @@ result records `.failed`, returns to `awaiting_human`, and requires a new
 approval. The legacy generic `task.approval.recorded` event is not accepted by
 the merge gateway.
 
+Post-merge completion records `github.post_merge.verified` only after the
+confirmed merge commit is still the default-branch head and every protected or
+pre-merge-required check passes on that commit. The subsequent
+`worktree.proof.recorded` event must bind an `exact-tree-landing` proof to that
+assurance event before `worktree.return.requested` can advance through
+`cleaning` to `complete`. An uncertain return remains durable and is reconciled
+without repeating Treehouse mutation.
+
 The Herdr adapter reads the replaceable task snapshot and creates an ephemeral
 operator projection. It never writes a status event back into the ledger; see
 the [Herdr status guide](herdr-status.md).

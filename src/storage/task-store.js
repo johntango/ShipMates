@@ -147,6 +147,17 @@ export class TaskStore {
     });
   }
 
+  async recordPostMergeAssurance({ taskId, actor, report, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.post_merge.verified",
+      at,
+      actor,
+      data: { report },
+    });
+  }
+
   async recordDraftPullRequestApproval({ taskId, actor, approval, eventId, at }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),

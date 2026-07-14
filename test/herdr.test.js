@@ -300,6 +300,33 @@ test("shows merge approval, uncertain merge, and landed verification stages", ()
     ),
     true,
   );
+
+  snapshot.postMergeAssurances = [{
+    operationId: "assurance-001",
+    mergeOperationId: "merge-001",
+    mergeCommitSha: "c".repeat(40),
+    observedAt: "2026-07-14T00:00:00.000Z",
+    requiredChecks: {
+      names: ["test"], missing: [], unsuccessful: [], satisfied: true,
+    },
+  }];
+  assert.equal(
+    projectHerdrSnapshot(snapshot).attention.some(
+      ({ code }) => code === "exact_tree_verification",
+    ),
+    true,
+  );
+  snapshot.worktree.proof = {
+    kind: "exact-tree-landing",
+    eventId: "tree-proof",
+  };
+  snapshot.worktree.status = "returned";
+  snapshot.state = "complete";
+  const complete = projectHerdrSnapshot(snapshot);
+  assert.equal(complete.attention.some(({ code }) =>
+    new Set(["post_merge_verification", "exact_tree_verification", "treehouse_return"])
+      .has(code)), false);
+  assert.match(renderHerdrView(complete), /assurance-001: checks=passing/u);
 });
 
 function richSnapshot() {

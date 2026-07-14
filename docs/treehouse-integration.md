@@ -118,6 +118,11 @@ proof or if GitHub's merged tree differs from the approved tree. A later
 reconciliation slice may add patch-based proof for concurrent, non-overlapping
 main-branch changes, but it must not weaken the current fail-closed behavior.
 
+Firstmate delivery now invokes this proof only after durable merge-commit CI
+assurance. It fetches the confirmed full commit without updating a branch,
+binds the proof to that assurance event, records return intent, and then calls
+Treehouse. See the [post-merge assurance guide](post-merge-assurance.md).
+
 ## Ledger-backed lifecycle
 
 Task `treehouse-ledger-20260713` exercised the integrated workflow at practice

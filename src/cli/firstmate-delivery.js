@@ -5,12 +5,15 @@ import { GitHubDraftPullRequestGateway } from "../adapters/github-draft-pr.js";
 import { GitHubMergeGateway } from "../adapters/github-merge.js";
 import { GitHubReadGateway } from "../adapters/github-read.js";
 import { ExactHeadGitPushAdapter } from "../adapters/git-push.js";
+import { TreehouseWorktreeManager } from "../adapters/treehouse.js";
 import { TaskStore } from "../storage/task-store.js";
 import { FirstmateDeliveryWorkflow } from "../workflows/firstmate-delivery.js";
 import { GitHubDraftPullRequestWorkflow } from "../workflows/github-draft-pr.js";
 import { GitHubMergeWorkflow } from "../workflows/github-merge.js";
 import { GitHubStatusWorkflow } from "../workflows/github-status.js";
 import { ExactHeadPushWorkflow } from "../workflows/git-push.js";
+import { PostMergeAssuranceWorkflow } from "../workflows/post-merge-assurance.js";
+import { TreehouseLedgerWorkflow } from "../workflows/treehouse-ledger.js";
 
 export async function runFirstmateDeliveryCli({
   args,
@@ -114,6 +117,16 @@ export async function runFirstmateDeliveryCli({
         taskId: values[0], operationId: values[1],
       });
       break;
+    case "post-merge":
+      exactArguments(command, values, 2);
+      result = await delivery.completePostMerge({
+        taskId: values[0], operationId: values[1],
+      });
+      break;
+    case "reconcile-return":
+      exactArguments(command, values, 1);
+      result = await delivery.reconcileTreehouseReturn({ taskId: values[0] });
+      break;
     default:
       usage();
   }
@@ -128,6 +141,11 @@ function createWorkflow({ env, cwd }) {
   const readGateway = new GitHubReadGateway();
   const actor = env.SHIPMATES_ACTOR || "firstmate";
   const statusWorkflow = new GitHubStatusWorkflow({ store, gateway: readGateway, actor });
+  const treehouseWorkflow = new TreehouseLedgerWorkflow({
+    store,
+    manager: new TreehouseWorktreeManager(),
+    actor,
+  });
   const mergeWorkflow = new GitHubMergeWorkflow({
     store,
     readGateway,
@@ -151,6 +169,12 @@ function createWorkflow({ env, cwd }) {
       actor,
     }),
     mergeWorkflow,
+    postMergeWorkflow: new PostMergeAssuranceWorkflow({
+      store,
+      readGateway,
+      treehouseWorkflow,
+      actor,
+    }),
   });
 }
 
@@ -182,6 +206,6 @@ function atLeastArguments(command, values, count) {
 
 function usage() {
   throw new Error(
-    "Usage: firstmate --delivery status TASK | approve-push TASK APPROVAL | push TASK OPERATION APPROVAL | reconcile-push TASK OPERATION | approve-pr TASK APPROVAL BASE TITLE_FILE BODY_FILE | create-pr TASK OPERATION APPROVAL BASE TITLE_FILE BODY_FILE [REQUIRED_CHECK ...] | reconcile-pr TASK OPERATION | ci TASK OPERATION [REQUIRED_CHECK ...] | approve-merge TASK APPROVAL | merge TASK OPERATION APPROVAL | reconcile-merge TASK OPERATION",
+    "Usage: firstmate --delivery status TASK | approve-push TASK APPROVAL | push TASK OPERATION APPROVAL | reconcile-push TASK OPERATION | approve-pr TASK APPROVAL BASE TITLE_FILE BODY_FILE | create-pr TASK OPERATION APPROVAL BASE TITLE_FILE BODY_FILE [REQUIRED_CHECK ...] | reconcile-pr TASK OPERATION | ci TASK OPERATION [REQUIRED_CHECK ...] | approve-merge TASK APPROVAL | merge TASK OPERATION APPROVAL | reconcile-merge TASK OPERATION | post-merge TASK OPERATION | reconcile-return TASK",
   );
 }

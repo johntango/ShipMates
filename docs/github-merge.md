@@ -84,5 +84,7 @@ head records recovered completion. A proven open and unmerged PR records failure
 and requires a new human approval. Changed heads, closed-unmerged PRs, or an
 advanced default branch require manual recovery.
 
-`landed` does not release the Treehouse lease. Post-merge CI, exact-tree landing
-proof, lease return, and branch cleanup remain later, separately bounded stages.
+`landed` does not release the Treehouse lease. The separately bounded
+[post-merge assurance workflow](post-merge-assurance.md) requires merge-commit
+CI and exact-tree proof before returning it. Remote branch cleanup remains a
+later capability.

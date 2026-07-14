@@ -26,12 +26,16 @@ export function projectHerdrSnapshot(snapshot) {
   const commits = (snapshot.gitCommits || []).map(projectGitCommit);
   const pushes = (snapshot.gitPushes || []).map(projectGitPush);
   const merges = (snapshot.githubMerges || []).map(projectGitHubMerge);
+  const postMerge = (snapshot.postMergeAssurances || []).map(
+    (assurance) => projectPostMergeAssurance(assurance, snapshot),
+  );
   const attention = deriveAttention({
     snapshot,
     workers,
     commits,
     pushes,
     merges,
+    postMerge,
     draftPullRequests,
     latestValidation,
     latestGitHub,
@@ -62,10 +66,12 @@ export function projectHerdrSnapshot(snapshot) {
     commits,
     pushes,
     merges,
+    postMerge,
     validation: projectValidation(latestValidation),
     github: {
       draftPullRequests,
       ci: projectCi(latestGitHub),
+      postMerge,
     },
     approvals: {
       merge: [
@@ -130,6 +136,7 @@ export function projectHerdrSnapshot(snapshot) {
       pendingPushes: pushes.filter(({ status }) => status === "requested").length,
       merges: merges.length,
       pendingMerges: merges.filter(({ status }) => status === "requested").length,
+      postMergeAssurances: postMerge.length,
       requiredChecksSatisfied: latestGitHub?.requiredChecks?.satisfied ?? null,
       attentionItems: attention.length,
       syntheses: syntheses.length,
@@ -150,6 +157,7 @@ export function renderHerdrView(projection) {
     `workers: ${projection.summary.workers} (${projection.summary.activeWorkers} active, ${projection.summary.pendingReplies} replies pending)`,
     `pushes: ${projection.summary.pushes} (${projection.summary.pendingPushes} pending)`,
     `merges: ${projection.summary.merges} (${projection.summary.pendingMerges} pending)`,
+    `post-merge assurances: ${projection.summary.postMergeAssurances}`,
     `draft PRs: ${projection.summary.draftPullRequests} (${projection.summary.pendingDraftPullRequests} pending)`,
     `CI required checks: ${formatNullableBoolean(projection.summary.requiredChecksSatisfied)}`,
     `recovery: ${projection.recovery ? (!projection.recovery.current ? "stale" : projection.recovery.safeToResume ? "safe" : "required") : "not audited"}`,
@@ -188,6 +196,14 @@ export function renderHerdrView(projection) {
     for (const operation of projection.merges) {
       lines.push(
         `- ${safe(operation.operationId)}: ${safe(operation.status)}; PR=${operation.prNumber}; head=${safe(operation.headSha)}; merge=${safe(operation.mergeCommitSha || "none")}`,
+      );
+    }
+  }
+  if (projection.postMerge.length > 0) {
+    lines.push("", "Post-merge assurance");
+    for (const assurance of projection.postMerge) {
+      lines.push(
+        `- ${safe(assurance.operationId)}: checks=${assurance.requiredChecksSatisfied ? "passing" : "not passing"}; merge=${safe(assurance.mergeCommitSha)}; tree=${safe(assurance.treeProofEventId || "pending")}; lease=${safe(assurance.leaseStatus)}`,
       );
     }
   }
@@ -344,6 +360,21 @@ function projectGitHubMerge(operation) {
   };
 }
 
+function projectPostMergeAssurance(assurance, snapshot) {
+  return {
+    operationId: assurance.operationId,
+    mergeOperationId: assurance.mergeOperationId,
+    mergeCommitSha: assurance.mergeCommitSha,
+    observedAt: assurance.observedAt,
+    requiredChecksSatisfied: assurance.requiredChecks.satisfied,
+    requiredChecks: [...assurance.requiredChecks.names],
+    treeProofEventId: snapshot.worktree?.proof?.kind === "exact-tree-landing"
+      ? snapshot.worktree.proof.eventId
+      : null,
+    leaseStatus: snapshot.worktree?.status || null,
+  };
+}
+
 function projectDraftPullRequest(operation) {
   return {
     operationId: operation.operationId,
@@ -385,7 +416,8 @@ function projectCi(observation) {
 }
 
 function deriveAttention({
-  snapshot, workers, commits, pushes, merges, draftPullRequests, latestValidation, latestGitHub,
+  snapshot, workers, commits, pushes, merges, postMerge, draftPullRequests,
+  latestValidation, latestGitHub,
   latestRecovery, recoveryCurrent, syntheses, followUps,
 }) {
   const result = [];
@@ -491,10 +523,21 @@ function deriveAttention({
     latestGitHub.pullRequest.draft === false && merges.length === 0) {
     result.push(item("merge_approval", "Exact-head PR awaits separate human merge approval"));
   }
-  if (merges.some(({ status }) => status === "completed")) {
+  if (merges.some(({ status }) => status === "completed") && postMerge.length === 0) {
     result.push(item(
       "post_merge_verification",
       "Landed merge awaits post-merge CI and exact-tree landing proof",
+    ));
+  } else if (postMerge.length > 0 && snapshot.worktree?.proof?.kind !==
+      "exact-tree-landing") {
+    result.push(item(
+      "exact_tree_verification",
+      "Passing merge-commit CI awaits exact-tree landed-work proof",
+    ));
+  } else if (postMerge.length > 0 && snapshot.worktree?.status === "leased") {
+    result.push(item(
+      "treehouse_return",
+      "Verified landed work awaits Treehouse lease return",
     ));
   }
   if (snapshot.state === "awaiting_human") {

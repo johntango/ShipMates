@@ -96,6 +96,7 @@ export function replayTaskEvents(events) {
     githubDraftPullRequests: [],
     githubMergeApprovals: [],
     githubMerges: [],
+    postMergeAssurances: [],
     gitCommits: [],
     gitPushApprovals: [],
     gitPushes: [],
@@ -303,6 +304,31 @@ function applyEvent(snapshot, event, index) {
       operation.result = { ...event.data.result };
       operation.completedEventId = event.id;
       snapshot.state = "landed";
+      break;
+    }
+
+    case "github.post_merge.verified": {
+      requireCreated(snapshot, event);
+      const { report } = event.data;
+      validatePostMergeAssurance(snapshot, report, event);
+      if (snapshot.postMergeAssurances.some(({ operationId }) =>
+        operationId === report.operationId)) {
+        throw new TaskStateError(
+          `Post-merge assurance already exists: ${report.operationId}`,
+        );
+      }
+      if (snapshot.postMergeAssurances.some(({ mergeOperationId }) =>
+        mergeOperationId === report.mergeOperationId)) {
+        throw new TaskStateError(
+          `Completed merge already has post-merge assurance: ${report.mergeOperationId}`,
+        );
+      }
+      snapshot.postMergeAssurances.push({
+        ...report,
+        eventId: event.id,
+        at: event.at,
+        actor: event.actor,
+      });
       break;
     }
 
@@ -725,6 +751,23 @@ function applyEvent(snapshot, event, index) {
         throw new TaskStateError("A worktree proof must be verified");
       }
       requireMatchingWorktree(snapshot, worktreePath, headSha);
+      if (kind === "exact-tree-landing") {
+        const assurance = snapshot.postMergeAssurances.find(
+          ({ eventId }) => eventId === event.data.assuranceEventId,
+        );
+        requireFullSha("landed merge commit SHA", event.data.mergedCommitSha);
+        requireFullSha("landed remote base SHA", event.data.remoteMainSha);
+        requireFullSha("landed tree SHA", event.data.treeSha);
+        if (snapshot.state !== "landed" || !assurance ||
+          assurance.requiredChecks.satisfied !== true ||
+          assurance.approvedHeadSha !== headSha ||
+          assurance.mergeCommitSha !== event.data.mergedCommitSha ||
+          assurance.baseHeadSha !== event.data.remoteMainSha) {
+          throw new TaskStateError(
+            "Exact-tree proof lacks matching passing post-merge assurance",
+          );
+        }
+      }
       snapshot.worktree.proof = {
         ...event.data,
         eventId: event.id,
@@ -1672,6 +1715,115 @@ function validateGitHubMergeResult(operation, result) {
   if (!sameGitHubMergeBinding(operation, result) ||
     result.mergeCommitSha !== result.baseHeadSha || result.merged !== true) {
     throw new TaskStateError("GitHub merge result does not match its approved request");
+  }
+}
+
+function validatePostMergeAssurance(snapshot, report, event) {
+  if (!report || typeof report !== "object" || Array.isArray(report) ||
+    report.schemaVersion !== 1) {
+    throw new TaskStateError("Post-merge assurance report is malformed");
+  }
+  requireIdentifier("post-merge operation ID", report.operationId);
+  requireIdentifier("post-merge observation ID", report.observationId);
+  requireIdentifier("post-merge merge operation ID", report.mergeOperationId);
+  requireNonEmpty("post-merge repository", report.repository);
+  requireNonEmpty("post-merge base branch", report.baseBranch);
+  requireTimestamp("post-merge observedAt", report.observedAt);
+  requireFullSha("post-merge approved head", report.approvedHeadSha);
+  requireFullSha("post-merge commit", report.mergeCommitSha);
+  requireFullSha("post-merge base head", report.baseHeadSha);
+  if (Date.parse(report.observedAt) !== Date.parse(event.at) ||
+    snapshot.state !== "landed" || snapshot.worktree?.status !== "leased" ||
+    report.repository.toLowerCase() !== snapshot.repo.toLowerCase() ||
+    report.approvedHeadSha !== snapshot.worktree.headSha ||
+    report.mergeCommitSha !== report.baseHeadSha ||
+    !Number.isSafeInteger(report.prNumber) || report.prNumber < 1) {
+    throw new TaskStateError(
+      "Post-merge assurance is not pinned to the landed task and active lease",
+    );
+  }
+  const merge = snapshot.githubMerges.find(({ operationId }) =>
+    operationId === report.mergeOperationId);
+  if (!merge || merge.status !== "completed" ||
+    merge.repository !== report.repository || merge.prNumber !== report.prNumber ||
+    merge.headSha !== report.approvedHeadSha ||
+    merge.result?.mergeCommitSha !== report.mergeCommitSha ||
+    merge.result?.baseBranch !== report.baseBranch) {
+    throw new TaskStateError(
+      "Post-merge assurance does not match the completed merge",
+    );
+  }
+  requireObservation(report.repositoryObservation, "post-merge repository");
+  requireObservation(report.pullRequest, "post-merge pullRequest");
+  requireObservation(report.branchHead, "post-merge branchHead");
+  requireObservation(report.branchProtection, "post-merge branchProtection");
+  if (report.repositoryObservation.nameWithOwner?.toLowerCase() !==
+      snapshot.repo.toLowerCase() ||
+    report.repositoryObservation.defaultBranch !== report.baseBranch ||
+    report.pullRequest.number !== report.prNumber ||
+    report.pullRequest.merged !== true ||
+    report.pullRequest.head?.sha !== report.approvedHeadSha ||
+    report.pullRequest.mergeCommitSha !== report.mergeCommitSha ||
+    report.pullRequest.base?.branch !== report.baseBranch ||
+    report.branchHead.branch !== report.baseBranch ||
+    report.branchHead.sha !== report.mergeCommitSha) {
+    throw new TaskStateError("Post-merge GitHub observations changed the landed target");
+  }
+  for (const [label, observations] of Object.entries({
+    checks: report.checks,
+    workflowRuns: report.workflowRuns,
+  })) {
+    if (!Array.isArray(observations)) {
+      throw new TaskStateError(`Post-merge ${label} must be an array`);
+    }
+    for (const observation of observations) requireObservation(observation, label);
+    if (observations.some(({ headSha }) => headSha !== report.mergeCommitSha)) {
+      throw new TaskStateError(`Post-merge ${label} does not match the merge commit`);
+    }
+  }
+  validateRequiredCheckEvidence(report.checks, report.requiredChecks, {
+    label: "post-merge",
+    requireSatisfied: true,
+  });
+}
+
+function validateRequiredCheckEvidence(checks, required, {
+  label,
+  requireSatisfied = false,
+}) {
+  if (!required || !Array.isArray(required.names) ||
+    !Array.isArray(required.missing) || !Array.isArray(required.unsuccessful) ||
+    typeof required.satisfied !== "boolean") {
+    throw new TaskStateError(`${label} required-check summary is malformed`);
+  }
+  for (const [field, names] of Object.entries({
+    names: required.names,
+    missing: required.missing,
+    unsuccessful: required.unsuccessful,
+  })) {
+    if (names.some((name) => typeof name !== "string" || name.trim() === "") ||
+      new Set(names).size !== names.length) {
+      throw new TaskStateError(`${label} required-check ${field} is invalid`);
+    }
+  }
+  const byName = new Map();
+  for (const check of checks) {
+    requireNonEmpty(`${label} check name`, check.name);
+    if (byName.has(check.name)) {
+      throw new TaskStateError(`${label} check name is ambiguous: ${check.name}`);
+    }
+    byName.set(check.name, check);
+  }
+  const missing = required.names.filter((name) => !byName.has(name));
+  const unsuccessful = required.names.filter((name) => {
+    const check = byName.get(name);
+    return check && (check.status !== "completed" || check.conclusion !== "success");
+  });
+  if (!sameArray(required.missing, missing) ||
+    !sameArray(required.unsuccessful, unsuccessful) ||
+    required.satisfied !== (missing.length === 0 && unsuccessful.length === 0) ||
+    requireSatisfied && required.satisfied !== true) {
+    throw new TaskStateError(`${label} required-check summary is inconsistent`);
   }
 }
 

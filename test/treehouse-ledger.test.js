@@ -144,6 +144,42 @@ test("reconciles an uncertain return without returning twice", async (t) => {
   assert.deepEqual(calls, ["find-worktree"]);
 });
 
+test("does not repeat an uncertain exact-tree landing return", async () => {
+  const assurance = {
+    operationId: "post-merge-001",
+    eventId: "assurance-event",
+    requiredChecks: { satisfied: true },
+  };
+  const snapshot = {
+    id: "treehouse-post-merge-001",
+    state: "cleaning",
+    postMergeAssurances: [assurance],
+    worktree: {
+      status: "return_requested",
+      worktreePath,
+      proof: {
+        kind: "exact-tree-landing",
+        assuranceEventId: assurance.eventId,
+        eventId: "proof-event",
+      },
+    },
+  };
+  let returns = 0;
+  const workflow = new TreehouseLedgerWorkflow({
+    store: { async getSnapshot() { return snapshot; } },
+    manager: { async returnLease() { returns += 1; } },
+  });
+
+  await assert.rejects(
+    workflow.completeExactTreeLanding({
+      taskId: snapshot.id,
+      operationId: assurance.operationId,
+    }),
+    TreehouseRecoveryRequiredError,
+  );
+  assert.equal(returns, 0);
+});
+
 async function approvedTask(t) {
   const rootDir = await mkdtemp(path.join(tmpdir(), "shipmates-workflow-"));
   t.after(() => rm(rootDir, { recursive: true, force: true }));

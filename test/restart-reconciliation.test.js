@@ -29,8 +29,9 @@ test("records a safe audit when applicable durable and live state agree", async 
       { kind: "git-push", status: "not_applicable" },
       { kind: "validation", status: "not_applicable" },
       { kind: "github-draft-pr", status: "not_applicable" },
-      { kind: "github-merge", status: "not_applicable" },
-      { kind: "github", status: "not_applicable" },
+    { kind: "github-merge", status: "not_applicable" },
+    { kind: "post-merge", status: "not_applicable" },
+    { kind: "github", status: "not_applicable" },
     ],
   );
 });
@@ -296,6 +297,37 @@ test("requires read-only reconciliation for an interrupted GitHub merge", async 
   });
 
   assert.deepEqual(result.report.recommendedActions, ["reconcile_github_merge"]);
+});
+
+test("requires post-merge assurance after a confirmed landed merge", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.state = "landed";
+  snapshot.githubMerges = [{
+    operationId: "merge-001",
+    status: "completed",
+    prNumber: 7,
+    headSha: HEAD,
+    completedEventId: "merge-completed",
+    result: {
+      mergeCommitSha: "c".repeat(40),
+      baseHeadSha: "c".repeat(40),
+    },
+  }];
+  const reconciler = new RestartReconciler({
+    store: new MemoryStore(snapshot),
+    clock: () => NOW,
+  });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-post-merge",
+  });
+
+  assert.equal(result.report.safeToResume, false);
+  assert.equal(
+    result.report.checks.find(({ kind }) => kind === "post-merge").action,
+    "complete_post_merge_assurance",
+  );
 });
 
 test("requires read-only reconciliation for an interrupted controlled commit", async () => {

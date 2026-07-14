@@ -93,6 +93,9 @@ Implemented repository artifacts include:
   the approved head;
 - a separately human-approved exact-head squash-merge gateway with fresh
   compare-and-act checks, resolved-thread evidence, and read-only recovery;
+- post-merge assurance that requires protected CI on the exact merge commit,
+  proves the squash tree equals the approved task tree, and returns the
+  Treehouse lease through a crash-safe intent/result boundary;
 - a local Codex MCP runtime wrapped as one strict, read-only Firstmate scout
   tool with no conversational handoff;
 - architecture and GitHub governance documentation;
@@ -522,6 +525,17 @@ both the merged PR and default branch to confirm the returned merge commit.
 Uncertain results reconcile by reads without repeating the merge. See the
 [exact-head merge guide](docs/github-merge.md).
 
+### Step 31: Prove landed work before releasing the lease
+
+Firstmate now re-observes the merged PR, default branch, current protection,
+checks, and workflow runs at the exact merge commit. It preserves every
+pre-merge required check while accepting newly protected checks only as added
+requirements. After passing CI, it fetches the confirmed commit, proves its Git
+tree is identical to the approved task tree, records that proof, and returns
+the Treehouse lease through the existing crash-safe lifecycle. It refuses an
+advanced default branch and never repeats an uncertain return. See the
+[post-merge assurance guide](docs/post-merge-assurance.md).
+
 ## Running the current checks
 
 Run the ShipMates tests after `npm install`:
@@ -581,6 +595,9 @@ at its expected head.
 - The exact-head merge gateway is implemented but has not been exercised against
   a live PR. It supports only squash merge and intentionally refuses code-owner
   or last-pusher review policies until their identities can be proven directly.
+- Post-merge assurance deliberately requires the default branch to remain at
+  the confirmed merge commit until proof completes; it does not yet reconcile
+  later commits that contain the same landed tree.
 - lavish-axi review is not yet wired into the full executable path. Herdr
   receives best-effort live worker, commit, and validation status in addition
   to its deterministic read-only projection, but it remains non-authoritative.
@@ -594,8 +611,8 @@ at its expected head.
 
 The next sequence is:
 
-1. add post-merge default-branch CI observation, exact-tree landed-work proof,
-   and crash-safe Treehouse lease return without combining branch cleanup.
+1. add a separately approved remote task-branch cleanup capability, with
+   exact landed-work and returned-lease preconditions plus read-only recovery.
 
 We will keep using `Shipmates-Practice` for each stage and will not advance a
 sensitive transition without exact evidence and explicit human approval.

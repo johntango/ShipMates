@@ -151,6 +151,12 @@ The implemented merge gateway follows this contract with distinct
 `github.merge.approved`, `.requested`, `.completed`, and `.failed` events. See
 the [exact-head merge guide](github-merge.md).
 
+After merge, `github.post_merge.verified` records read-only proof that protected
+checks passed on the exact merge commit and the default branch has not advanced.
+Only a matching Git tree proof can then authorize the existing crash-safe
+Treehouse return lifecycle. Remote task-branch deletion is not included; see
+the [post-merge assurance guide](post-merge-assurance.md).
+
 ## Setup checkpoint
 
 The original read-only planning checkpoint predated GitHub CLI authorization.

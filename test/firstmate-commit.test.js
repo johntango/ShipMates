@@ -15,6 +15,8 @@ import { GitHubMergeWorkflow } from "../src/workflows/github-merge.js";
 import { GitHubStatusWorkflow } from "../src/workflows/github-status.js";
 import { ExactHeadPushWorkflow } from "../src/workflows/git-push.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
+import { PostMergeAssuranceWorkflow } from "../src/workflows/post-merge-assurance.js";
+import { TreehouseLedgerWorkflow } from "../src/workflows/treehouse-ledger.js";
 
 const BASE = "a".repeat(40);
 const HEAD = "b".repeat(40);
@@ -135,7 +137,7 @@ test("allows only one concurrent caller to claim controlled commit execution", a
   assert.equal((await durableStore.getSnapshot("commit-flow-003")).gitCommits.length, 1);
 });
 
-test("records separate exact delivery approvals through one concurrency-safe merge", async (t) => {
+test("records exact delivery approvals through merge assurance and lease return", async (t) => {
   const taskId = "commit-flow-004";
   const store = await preparedStore(t, taskId);
   await new FirstmateCommitWorkflow({
@@ -269,10 +271,10 @@ test("records separate exact delivery approvals through one concurrency-safe mer
       requiredPullRequestReviews: null,
       requiredConversationResolution: true,
     }),
-    listCheckRuns: async () => [observation({
+    listCheckRuns: async ({ headSha = HEAD } = {}) => [observation({
       id: 1,
       name: "test",
-      headSha: HEAD,
+      headSha,
       status: "completed",
       conclusion: "success",
     })],
@@ -335,6 +337,49 @@ test("records separate exact delivery approvals through one concurrency-safe mer
   assert.equal(landed.state, "landed");
   assert.equal(landed.githubMerges[0].result.mergeCommitSha, MERGE);
   assert.equal(mergeCalls, 1);
+
+  const treehouseCalls = [];
+  const treehouseWorkflow = new TreehouseLedgerWorkflow({
+    store,
+    manager: {
+      async fetchExactCommit(input) {
+        treehouseCalls.push(["fetch", input]);
+      },
+      async proveExactTreeLanding(input) {
+        treehouseCalls.push(["prove", input]);
+        return {
+          kind: "exact-tree-landing",
+          verified: true,
+          worktreePath: "/tmp/worktree",
+          headSha: HEAD,
+          mergedCommitSha: MERGE,
+          remoteMainSha: MERGE,
+          treeSha: "d".repeat(40),
+        };
+      },
+      async returnLease(input) {
+        treehouseCalls.push(["return", input]);
+      },
+    },
+  });
+  const postMerge = new PostMergeAssuranceWorkflow({
+    store,
+    readGateway,
+    treehouseWorkflow,
+    clock: store.clock,
+    idFactory: () => "post-merge-observation-001",
+  });
+  const completed = await postMerge.complete({
+    taskId,
+    operationId: "post-merge-operation-001",
+  });
+
+  assert.equal(completed.state, "complete");
+  assert.equal(completed.worktree.status, "returned");
+  assert.equal(completed.worktree.proof.kind, "exact-tree-landing");
+  assert.equal(completed.postMergeAssurances[0].mergeCommitSha, MERGE);
+  assert.equal(completed.postMergeAssurances[0].requiredChecks.satisfied, true);
+  assert.deepEqual(treehouseCalls.map(([name]) => name), ["fetch", "prove", "return"]);
 });
 
 async function preparedStore(t, taskId) {

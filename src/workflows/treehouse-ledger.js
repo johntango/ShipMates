@@ -1,13 +1,16 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 export class TreehouseLedgerWorkflow {
-  constructor({ store, manager, actor = "firstmate" }) {
+  constructor({ store, manager, actor = "firstmate", idFactory = randomUUID }) {
     if (!store || !manager) {
       throw new TypeError("TreehouseLedgerWorkflow requires store and manager");
     }
+    if (typeof idFactory !== "function") throw new TypeError("idFactory must be a function");
     this.store = store;
     this.manager = manager;
     this.actor = actor;
+    this.idFactory = idFactory;
   }
 
   async acquire({ taskId, repoPath }) {
@@ -207,6 +210,114 @@ export class TreehouseLedgerWorkflow {
       "complete",
       "Treehouse return recorded",
     );
+  }
+
+  async completeExactTreeLanding({ taskId, operationId }) {
+    let snapshot = await this.store.getSnapshot(taskId);
+    if (snapshot.state === "complete" && snapshot.worktree?.status === "returned") {
+      return snapshot;
+    }
+    const assurance = (snapshot.postMergeAssurances || []).find(
+      ({ operationId: id }) => id === operationId,
+    );
+    if (!assurance || assurance.requiredChecks?.satisfied !== true) {
+      throw new TreehouseWorkflowError(
+        "Exact-tree landing requires passing merge-commit assurance evidence",
+      );
+    }
+
+    if (snapshot.state === "landed" && snapshot.worktree?.proof === null) {
+      if (snapshot.worktree?.status !== "leased") {
+        throw new TreehouseWorkflowError("No active lease is available to prove");
+      }
+      await this.manager.fetchExactCommit({
+        worktreePath: snapshot.worktree.worktreePath,
+        commitSha: assurance.mergeCommitSha,
+      });
+      const proof = await this.manager.proveExactTreeLanding({
+        worktreePath: snapshot.worktree.worktreePath,
+        approvedHeadSha: assurance.approvedHeadSha,
+        mergedCommitSha: assurance.mergeCommitSha,
+        remoteMainSha: assurance.baseHeadSha,
+      });
+      snapshot = await this.store.recordWorktreeProof({
+        taskId,
+        actor: this.actor,
+        proof: { ...proof, assuranceEventId: assurance.eventId },
+        eventId: `${taskId}:post-merge:${operationId}:tree-proof:v1`,
+      });
+    }
+
+    if (snapshot.state === "landed") {
+      if (snapshot.worktree?.proof?.kind !== "exact-tree-landing" ||
+        snapshot.worktree.proof.assuranceEventId !== assurance.eventId) {
+        throw new TreehouseWorkflowError(
+          "A matching exact-tree landing proof is required",
+        );
+      }
+      snapshot = await this.store.transition({
+        taskId,
+        from: "landed",
+        to: "cleaning",
+        reason: "Merge-commit CI and exact-tree landing verified",
+        actor: this.actor,
+        eventId: `${taskId}:post-merge:${operationId}:state-cleaning:v1`,
+      });
+    }
+
+    requireState(snapshot, "cleaning");
+    if (snapshot.worktree.status === "returned") {
+      return this.store.transition({
+        taskId,
+        from: "cleaning",
+        to: "complete",
+        reason: "Treehouse return recorded after landed-work proof",
+        actor: this.actor,
+        eventId: `${taskId}:post-merge:${operationId}:state-complete:v1`,
+      });
+    }
+
+    let requestedHere = false;
+    if (snapshot.worktree.status === "leased") {
+      snapshot = await this.store.requestWorktreeReturn({
+        taskId,
+        actor: this.actor,
+        worktreePath: snapshot.worktree.worktreePath,
+        proofEventId: snapshot.worktree.proof.eventId,
+        eventId: `${taskId}:post-merge:${operationId}:return-request:${this.idFactory()}:v1`,
+      });
+      requestedHere = true;
+    }
+    if (snapshot.worktree.status !== "return_requested") {
+      throw new TreehouseWorkflowError(
+        `Cannot return worktree from status ${snapshot.worktree.status}`,
+      );
+    }
+    if (!requestedHere) {
+      throw new TreehouseRecoveryRequiredError(
+        "A return request has no recorded result; reconcile Treehouse status instead of returning again",
+      );
+    }
+
+    await this.manager.returnLease({
+      worktreePath: snapshot.worktree.worktreePath,
+      proof: snapshot.worktree.proof,
+    });
+    snapshot = await this.store.recordWorktreeReturn({
+      taskId,
+      actor: this.actor,
+      worktreePath: snapshot.worktree.worktreePath,
+      requestEventId: snapshot.worktree.returnRequestEventId,
+      eventId: `${taskId}:post-merge:${operationId}:returned:v1`,
+    });
+    return this.store.transition({
+      taskId,
+      from: "cleaning",
+      to: "complete",
+      reason: "Treehouse return recorded after landed-work proof",
+      actor: this.actor,
+      eventId: `${taskId}:post-merge:${operationId}:state-complete:v1`,
+    });
   }
 
   async reconcileReturn({ taskId }) {

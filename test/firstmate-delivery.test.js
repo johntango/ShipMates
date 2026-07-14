@@ -96,6 +96,24 @@ test("continues one validated task through separate push and draft approvals int
       },
       async reconcile() {},
     },
+    postMergeWorkflow: {
+      async complete(input) {
+        calls.push(["post-merge", input]);
+        store.snapshot.postMergeAssurances.push({
+          ...input,
+          observedAt: "2026-07-14T16:00:00.000Z",
+          mergeCommitSha: "c".repeat(40),
+          requiredChecks: { names: ["test"], missing: [], unsuccessful: [], satisfied: true },
+        });
+        store.snapshot.worktree.proof = {
+          kind: "exact-tree-landing",
+          eventId: "tree-proof",
+        };
+        store.snapshot.worktree.status = "returned";
+        store.snapshot.state = "complete";
+      },
+      async reconcileReturn() {},
+    },
   });
 
   assert.equal((await workflow.status({ taskId: "delivery-001" })).stage,
@@ -141,11 +159,17 @@ test("continues one validated task through separate push and draft approvals int
     operationId: "merge-operation-001",
     approvalId: "merge-approval-001",
   });
-  assert.equal(landed.stage, "landed");
+  assert.equal(landed.stage, "awaiting_post_merge_assurance");
   assert.equal(landed.merge.mergeCommitSha, "c".repeat(40));
+  const completed = await workflow.completePostMerge({
+    taskId: "delivery-001",
+    operationId: "post-merge-operation-001",
+  });
+  assert.equal(completed.stage, "complete");
+  assert.equal(completed.postMerge.treeProofEventId, "tree-proof");
   assert.deepEqual(calls.map(([name]) => name), [
     "approve-push", "push", "approve-pr", "create-pr", "ci",
-    "approve-merge", "merge",
+    "approve-merge", "merge", "post-merge",
   ]);
   for (const [, input] of calls.slice(0, 4)) {
     assert.equal(input.repository, REPOSITORY);
@@ -214,6 +238,7 @@ class MemoryStore {
       githubObservations: [],
       githubMergeApprovals: [],
       githubMerges: [],
+      postMergeAssurances: [],
     };
   }
 

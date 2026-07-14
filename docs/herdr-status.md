@@ -23,6 +23,7 @@ The projection includes:
 - draft-PR creation and latest exact-head CI observation;
 - merge and draft-PR approvals;
 - exact-head merge operation, merge commit, and recovery status;
+- merge-commit check assurance, exact-tree proof event, and lease-return status;
 - latest restart audit and recommended recovery actions;
 - two-scout synthesis identity, exact-head binding, outcome, and counts;
 - human-selected follow-up binding, read-only reply lifecycle, outcome, and
@@ -45,8 +46,9 @@ exact-head push approval. A completed push with no draft PR is shown as awaiting
 the separate draft-PR approval, and a completed draft with no matching
 observation is shown as awaiting exact-head CI evidence.
 Passing non-draft exact-head CI is shown as awaiting separate merge approval.
-Uncertain merge intent requires reconciliation; a landed merge remains visible
-as awaiting post-merge CI and exact-tree proof.
+Uncertain merge intent requires reconciliation. A landed merge remains visible
+as awaiting post-merge CI, then exact-tree proof, then lease return; a completed
+task exposes the returned lease without a cleanup attention item.
 
 ## Commands
 

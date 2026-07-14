@@ -23,7 +23,9 @@ The reported stage is one of:
 - `draft_pr_reconciliation_required`;
 - `awaiting_ci_observation` or `ci_pending_or_failed`;
 - `awaiting_pr_ready`, `awaiting_merge_approval`, or `ready_to_merge`;
-- `merge_reconciliation_required` or `landed`.
+- `merge_reconciliation_required` or `awaiting_post_merge_assurance`;
+- `treehouse_return_reconciliation_required`,
+  `ready_to_release_treehouse_lease`, or `complete`.
 
 The same commands are available through
 `npm run firstmate -- --delivery ...`. Delivery mode reads an existing task and
@@ -109,4 +111,24 @@ npm run firstmate:delivery -- \
 ```
 
 See the [exact-head merge guide](github-merge.md) for compare-and-act
-preconditions and the remaining post-merge boundary.
+preconditions.
+
+## Prove the landed tree and return the lease
+
+After the exact merge is confirmed, run the ledger-derived post-merge stage:
+
+```sh
+npm run firstmate:delivery -- \
+  post-merge TASK_ID POST_MERGE_OPERATION_ID
+```
+
+It requires protected checks to pass on the merge commit, proves that commit's
+tree exactly equals the approved task-head tree, and returns the still-clean
+Treehouse lease. It accepts no operator-supplied target or check names. If the
+return becomes uncertain, do not repeat it:
+
+```sh
+npm run firstmate:delivery -- reconcile-return TASK_ID
+```
+
+See the [post-merge assurance guide](post-merge-assurance.md).

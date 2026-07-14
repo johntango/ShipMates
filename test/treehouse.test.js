@@ -241,6 +241,36 @@ test("proves a squash landing when approved and merged trees match", async () =>
   assert.equal(proof.mergedCommitSha, "merged789");
 });
 
+test("fetches only the confirmed full merge commit before landed-tree proof", async () => {
+  const calls = [];
+  const commitSha = "c".repeat(40);
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async (file, args, options) => {
+      calls.push({ file, args, cwd: options.cwd });
+      return { stdout: "", stderr: "" };
+    },
+  });
+
+  const result = await manager.fetchExactCommit({
+    worktreePath: "/tmp/worktree",
+    commitSha,
+  });
+
+  assert.deepEqual(result, { commitSha, remote: "origin" });
+  assert.deepEqual(calls, [
+    {
+      file: "git",
+      args: ["fetch", "--no-tags", "--no-recurse-submodules", "origin", commitSha],
+      cwd: "/tmp/worktree",
+    },
+    {
+      file: "git",
+      args: ["cat-file", "-e", `${commitSha}^{commit}`],
+      cwd: "/tmp/worktree",
+    },
+  ]);
+});
+
 test("rejects a squash landing whose trees differ", async () => {
   const manager = new TreehouseWorktreeManager({
     executeFile: async (file, args) => {

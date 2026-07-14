@@ -1,5 +1,11 @@
 export class FirstmateDeliveryWorkflow {
-  constructor({ store, pushWorkflow, draftWorkflow, mergeWorkflow = null } = {}) {
+  constructor({
+    store,
+    pushWorkflow,
+    draftWorkflow,
+    mergeWorkflow = null,
+    postMergeWorkflow = null,
+  } = {}) {
     if (!store || !pushWorkflow || !draftWorkflow) {
       throw new TypeError(
         "FirstmateDeliveryWorkflow requires store, pushWorkflow, and draftWorkflow",
@@ -9,6 +15,7 @@ export class FirstmateDeliveryWorkflow {
     this.pushWorkflow = pushWorkflow;
     this.draftWorkflow = draftWorkflow;
     this.mergeWorkflow = mergeWorkflow;
+    this.postMergeWorkflow = postMergeWorkflow;
   }
 
   async status({ taskId }) {
@@ -120,9 +127,29 @@ export class FirstmateDeliveryWorkflow {
     return this.status({ taskId });
   }
 
+  async completePostMerge({ taskId, operationId }) {
+    this.#requirePostMergeWorkflow();
+    await this.postMergeWorkflow.complete({ taskId, operationId });
+    return this.status({ taskId });
+  }
+
+  async reconcileTreehouseReturn({ taskId }) {
+    this.#requirePostMergeWorkflow();
+    await this.postMergeWorkflow.reconcileReturn({ taskId });
+    return this.status({ taskId });
+  }
+
   #requireMergeWorkflow() {
     if (!this.mergeWorkflow) {
       throw new FirstmateDeliveryWorkflowError("Merge workflow is not configured");
+    }
+  }
+
+  #requirePostMergeWorkflow() {
+    if (!this.postMergeWorkflow) {
+      throw new FirstmateDeliveryWorkflowError(
+        "Post-merge assurance workflow is not configured",
+      );
     }
   }
 }
@@ -154,7 +181,15 @@ function summarize(snapshot) {
     if (merge?.status === "requested") {
       stage = "merge_reconciliation_required";
     } else if (merge?.status === "completed") {
-      stage = "landed";
+      if (snapshot.state === "complete" && snapshot.worktree?.status === "returned") {
+        stage = "complete";
+      } else if (snapshot.worktree?.status === "return_requested") {
+        stage = "treehouse_return_reconciliation_required";
+      } else if (snapshot.state === "cleaning") {
+        stage = "ready_to_release_treehouse_lease";
+      } else {
+        stage = "awaiting_post_merge_assurance";
+      }
     } else if (observation === null) {
       stage = "awaiting_ci_observation";
     } else if (observation.requiredChecks.satisfied !== true) {
@@ -202,6 +237,16 @@ function summarize(snapshot) {
       mergeCommitSha: merge.result?.mergeCommitSha || null,
       failure: merge.failure,
     },
+    postMerge: snapshot.postMergeAssurances?.at(-1) ? {
+      operationId: snapshot.postMergeAssurances.at(-1).operationId,
+      observedAt: snapshot.postMergeAssurances.at(-1).observedAt,
+      mergeCommitSha: snapshot.postMergeAssurances.at(-1).mergeCommitSha,
+      requiredChecks: { ...snapshot.postMergeAssurances.at(-1).requiredChecks },
+      treeProofEventId: snapshot.worktree?.proof?.kind === "exact-tree-landing"
+        ? snapshot.worktree.proof.eventId
+        : null,
+      leaseStatus: snapshot.worktree?.status || null,
+    } : null,
     ledger: {
       state: snapshot.state,
       eventsCount: snapshot.eventsCount,
@@ -215,7 +260,9 @@ function validatedTarget(snapshot) {
   const commit = snapshot.gitCommits?.at(-1);
   if (!new Set([
     "validating", "ready_to_merge", "merging", "landed", "awaiting_human",
-  ]).has(snapshot.state) || snapshot.worktree?.status !== "leased" ||
+    "cleaning", "complete",
+  ]).has(snapshot.state) ||
+    !new Set(["leased", "return_requested", "returned"]).has(snapshot.worktree?.status) ||
     validation?.passed !== true ||
     validation.finalHeadSha !== snapshot.worktree.headSha ||
     commit?.status !== "completed" ||

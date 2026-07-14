@@ -70,3 +70,33 @@ test("dispatches only the bound merge operation after separate approval", async 
     approvalId: "merge-approval-001",
   }]);
 });
+
+test("dispatches post-merge assurance and return reconciliation", async () => {
+  const calls = [];
+  const workflow = {
+    async completePostMerge(input) {
+      calls.push(["post-merge", input]);
+      return { stage: "complete" };
+    },
+    async reconcileTreehouseReturn(input) {
+      calls.push(["reconcile-return", input]);
+      return { stage: "complete" };
+    },
+  };
+
+  await runFirstmateDeliveryCli({
+    args: ["post-merge", "task-001", "assurance-001"],
+    workflow,
+    write() {},
+  });
+  await runFirstmateDeliveryCli({
+    args: ["reconcile-return", "task-001"],
+    workflow,
+    write() {},
+  });
+
+  assert.deepEqual(calls, [
+    ["post-merge", { taskId: "task-001", operationId: "assurance-001" }],
+    ["reconcile-return", { taskId: "task-001" }],
+  ]);
+});

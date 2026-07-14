@@ -259,6 +259,25 @@ export class TreehouseWorktreeManager {
     });
   }
 
+  async fetchExactCommit({ worktreePath, commitSha, remote = "origin" }) {
+    assertAbsolutePath("worktreePath", worktreePath);
+    assertFullSha("commitSha", commitSha);
+    assertNonEmpty("remote", remote);
+    if (!/^[A-Za-z0-9._-]+$/u.test(remote)) {
+      throw new TypeError("remote must be a safe Git remote name");
+    }
+
+    await this.#run(
+      "git",
+      ["fetch", "--no-tags", "--no-recurse-submodules", remote, commitSha],
+      { cwd: worktreePath },
+    );
+    await this.#run("git", ["cat-file", "-e", `${commitSha}^{commit}`], {
+      cwd: worktreePath,
+    });
+    return Object.freeze({ commitSha, remote });
+  }
+
   async returnLease({ worktreePath, proof }) {
     assertAbsolutePath("worktreePath", worktreePath);
     const acceptedProofKinds = new Set([
@@ -357,6 +376,12 @@ function assertAbsolutePath(label, value) {
 function assertNonEmpty(label, value) {
   if (typeof value !== "string" || value.trim() === "") {
     throw new TypeError(`${label} must be a non-empty string`);
+  }
+}
+
+function assertFullSha(label, value) {
+  if (typeof value !== "string" || !/^[a-f0-9]{40}$/iu.test(value)) {
+    throw new TypeError(`${label} must be a full 40-character hexadecimal SHA`);
   }
 }
 
