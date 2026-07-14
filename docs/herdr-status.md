@@ -63,6 +63,24 @@ and snapshot SHA-256 hashes were identical before and after the view.
 The live two-scout synthesis demonstrated the stale-audit indicator before a
 fresh read-only audit restored current `safe` status.
 
-This stage does not publish to an external Herdr pane. The existing user-edited
-`agent.js` pane reporter remains untouched; connecting this projection to that
-sink would be a separate, bounded status-publication stage.
+## Live Firstmate execution
+
+When `npm run firstmate` runs inside a Herdr pane (`HERDR_PANE_ID` is set), it
+now publishes live execution status in addition to the deterministic ledger
+projection:
+
+- the current pane shows Firstmate classification and overall execution state;
+- two vacant panes are selected or created for `scout-1` and `scout-2`;
+- the first scout pane is reused for the workspace-write implementer;
+- each worker reports started, completed, or failed state;
+- sanitized Codex JSONL activity reports shell, file-edit, MCP, and web-search
+  tool lifecycle without exposing commands, arguments, prompts, or outputs;
+- skill activity is shown when Codex emits a `skill` or `skill_invocation`
+  item. Codex CLI versions that do not emit those items cannot provide reliable
+  semantic skill visibility, so ShipMates does not infer it from filenames or
+  shell commands.
+
+Worker pane identities are released after the overall run so later tasks can
+reuse the capacity. If Herdr is unavailable, visibility fails open with one
+terminal warning while the authoritative Codex artifacts and task execution
+continue normally.

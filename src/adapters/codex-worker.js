@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
+import { once } from "node:events";
 import path from "node:path";
+import { finished } from "node:stream/promises";
 
 export class CodexWorkerRuntime {
   constructor({
@@ -20,6 +23,7 @@ export class CodexWorkerRuntime {
     schemaPath,
     artifactDirectory,
     sandbox = "read-only",
+    onEvent,
   }) {
     for (const [label, value] of Object.entries({
       taskId,
@@ -68,6 +72,15 @@ export class CodexWorkerRuntime {
       env: workerEnvironment(this.environment, githubConfigDirectory),
       stdoutPath: paths.events,
       stderrPath: paths.stderr,
+      onStdoutLine: typeof onEvent === "function"
+        ? async (line) => {
+            try {
+              await onEvent(JSON.parse(line));
+            } catch {
+              // Observability is best-effort; durable validation below remains authoritative.
+            }
+          }
+        : undefined,
     });
     if (result.exitCode !== 0) {
       const stderr = await readFile(paths.stderr, "utf8").catch(() => "");
@@ -188,7 +201,13 @@ async function runSpawnedProcess({
   env,
   stdoutPath,
   stderrPath,
+  onStdoutLine,
 }) {
+  if (onStdoutLine) {
+    return runObservedProcess({
+      file, args, cwd, env, stdoutPath, stderrPath, onStdoutLine,
+    });
+  }
   const [stdoutHandle, stderrHandle] = await Promise.all([
     open(stdoutPath, "wx", 0o600),
     open(stderrPath, "wx", 0o600),
@@ -209,6 +228,36 @@ async function runSpawnedProcess({
       resolve({ exitCode: exitCode ?? 1, signal }),
     );
   });
+}
+
+async function runObservedProcess({
+  file, args, cwd, env, stdoutPath, stderrPath, onStdoutLine,
+}) {
+  const stderrHandle = await open(stderrPath, "wx", 0o600);
+  const stdoutStream = createWriteStream(stdoutPath, { flags: "wx", mode: 0o600 });
+  const child = spawn(file, args, {
+    cwd,
+    env,
+    stdio: ["ignore", "pipe", stderrHandle.fd],
+  });
+  await stderrHandle.close();
+  child.stdout.pipe(stdoutStream);
+  let buffered = "";
+  let observations = Promise.resolve();
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffered += chunk;
+    const lines = buffered.split(/\r?\n/u);
+    buffered = lines.pop() || "";
+    for (const line of lines.filter(Boolean)) {
+      observations = observations.then(() => onStdoutLine(line));
+    }
+  });
+  const [exitCode, signal] = await once(child, "exit");
+  if (buffered.trim()) observations = observations.then(() => onStdoutLine(buffered));
+  await observations;
+  await finished(stdoutStream);
+  return { exitCode: exitCode ?? 1, signal };
 }
 
 function artifactPaths(artifactDirectory) {

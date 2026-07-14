@@ -2,6 +2,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CodexWorkerRuntime } from "../src/adapters/codex-worker.js";
+import { HerdrExecutionObserver } from "../src/adapters/herdr-execution.js";
+import { HerdrPaneClient, HerdrPanePool } from "../src/adapters/herdr-pane.js";
 import {
   createFirstmateId,
   discoverFirstmateContext,
@@ -48,6 +50,13 @@ const tracingEnabled = parseBoolean(
   process.env.SHIPMATES_FIRSTMATE_TRACING,
 );
 const store = new TaskStore({ rootDir });
+const herdrObserver = createHerdrObserver({ store });
+await herdrObserver?.firstmateStage({
+  taskId,
+  repoPath,
+  message: "Classifying request",
+  customStatus: "classifying",
+});
 const shell = new FirstmateShell({ store, model, tracingEnabled });
 const result = await shell.classify({
   taskId,
@@ -78,6 +87,7 @@ if (!classifyOnly) {
     ),
     store,
     actor: "firstmate",
+    observer: herdrObserver,
   });
   execution = await executor.execute({
     taskId,
@@ -85,6 +95,15 @@ if (!classifyOnly) {
     repoPath,
     message,
     classification: result.classification,
+  });
+}
+if (classifyOnly) {
+  await herdrObserver?.firstmateStage({
+    taskId,
+    repoPath,
+    state: "idle",
+    message: "Classification completed",
+    customStatus: "classified",
   });
 }
 const finalSnapshot = execution ? await store.getSnapshot(taskId) : result.snapshot;
@@ -115,4 +134,16 @@ function parseBoolean(name, value) {
   }
   if (value === "1" || value === "true") return true;
   throw new TypeError(`${name} must be true, false, 1, or 0`);
+}
+
+function createHerdrObserver({ store }) {
+  const currentPaneId = process.env.HERDR_PANE_ID;
+  if (!currentPaneId) return null;
+  const client = new HerdrPaneClient();
+  return new HerdrExecutionObserver({
+    client,
+    panePool: new HerdrPanePool({ client, store, currentPaneId }),
+    currentPaneId,
+    onWarning: (message) => console.error(message),
+  });
 }

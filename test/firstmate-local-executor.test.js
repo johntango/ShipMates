@@ -5,17 +5,27 @@ import { FirstmateLocalExecutor } from "../src/workflows/firstmate-local-executo
 
 test("runs two independent scouts before a local implementation", async () => {
   const calls = [];
+  const observed = [];
   const executor = new FirstmateLocalExecutor({
     schemaPath: "schemas/codex-worker-report.schema.json",
     runtime: {
       async run(input) {
         calls.push(input);
         const workerId = input.artifactDirectory.split("/").at(-1);
+        await input.onEvent?.({ type: "thread.started" });
         return {
           threadId: `thread-${workerId}`,
           report: report(input.taskId, workerId),
         };
       },
+    },
+    observer: {
+      async begin() { observed.push("begin"); },
+      async workerStarted({ workerId }) { observed.push(`${workerId}:started`); },
+      async workerEvent({ workerId }) { observed.push(`${workerId}:event`); },
+      async workerFinished({ workerId }) { observed.push(`${workerId}:finished`); },
+      async prepareImplementer() { observed.push("prepare-implementer"); },
+      async end({ status }) { observed.push(`end:${status}`); },
     },
   });
 
@@ -37,6 +47,9 @@ test("runs two independent scouts before a local implementation", async () => {
   assert.equal(result.status, "completed");
   assert.equal(result.scouts.length, 2);
   assert.equal(result.implementation.workerId, "implementer");
+  assert.equal(observed.includes("scout-1:event"), true);
+  assert.equal(observed.includes("implementer:event"), true);
+  assert.equal(observed.at(-1), "end:completed");
 });
 
 test("stops before external or destructive authority", async () => {

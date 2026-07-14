@@ -91,6 +91,11 @@ implementation worker is told not to commit or publish and runs in Codex's
 `workspace-write` sandbox. Execution evidence is recorded under the task ledger
 and detailed worker artifacts remain under ignored `.shipmates/tasks/` state.
 
+When invoked from a Herdr pane, Firstmate also creates live worker-pane
+visibility for both scouts and the implementer. Sanitized status updates show
+tool type and lifecycle but never raw commands, arguments, prompt text, or tool
+output. See the [Herdr status guide](herdr-status.md#live-firstmate-execution).
+
 For classification without worker execution:
 
 ```sh
