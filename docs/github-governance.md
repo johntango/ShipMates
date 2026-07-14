@@ -110,9 +110,9 @@ The exact repo and branch remain constrained.
 
 ### Human-confirmed writes
 
-The current implementation also requires exact-target human confirmation for a
-new task-branch push and draft-PR creation. Require an explicit confirmation for
-merge, non-draft public comments or reviews, closing another person's issue,
+The current implementation requires exact-target human confirmation for a new
+task-branch push, draft-PR creation, and exact-head squash merge. Require an
+explicit confirmation for non-draft public comments or reviews, closing another person's issue,
 marking a PR ready, rerunning privileged workflows, or publishing a prerelease.
 
 ### High-risk administration
@@ -146,6 +146,10 @@ its trust implications are understood and tested.
 ```
 
 Record a second event with the GitHub response or refusal reason.
+
+The implemented merge gateway follows this contract with distinct
+`github.merge.approved`, `.requested`, `.completed`, and `.failed` events. See
+the [exact-head merge guide](github-merge.md).
 
 ## Setup checkpoint
 

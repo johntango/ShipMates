@@ -31,6 +31,7 @@ export class RestartReconciler {
       pushCheck(snapshot),
       validationCheck(snapshot),
       draftPullRequestCheck(snapshot),
+      mergeCheck(snapshot),
       ...(await this.#githubChecks(snapshot)),
     ];
     const recoveryChecks = checks.filter(
@@ -559,6 +560,46 @@ function draftPullRequestCheck(snapshot) {
       })),
     },
   );
+}
+
+function mergeCheck(snapshot) {
+  const operations = snapshot.githubMerges || [];
+  const pending = operations.find(({ status }) => status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "github-merge",
+      `GitHub merge ${pending.operationId} has durable intent but no result`,
+      "reconcile_github_merge",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
+  const latest = operations.at(-1);
+  if (!latest) return check("github-merge", "not_applicable", "Task has no merge operation");
+  if (latest.status === "failed") {
+    return recoveryCheck(
+      "github-merge",
+      `GitHub merge ${latest.operationId} did not land`,
+      "request_new_merge_approval",
+      { source: { kind: "task-ledger", eventId: latest.failedEventId } },
+    );
+  }
+  if (latest.status !== "completed" ||
+    latest.result?.mergeCommitSha !== latest.result?.baseHeadSha ||
+    snapshot.state !== "landed") {
+    return recoveryCheck(
+      "github-merge",
+      "Merge evidence does not match the landed task state",
+      "inspect_github_merge_manually",
+    );
+  }
+  return check("github-merge", "pass", `Merge landed at ${latest.result.mergeCommitSha}`, {
+    source: { kind: "task-ledger", eventId: latest.completedEventId },
+    observed: {
+      operationId: latest.operationId,
+      prNumber: latest.prNumber,
+      mergeCommitSha: latest.result.mergeCommitSha,
+    },
+  });
 }
 
 function latestPullRequestObservations(observations) {

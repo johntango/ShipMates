@@ -29,6 +29,7 @@ test("records a safe audit when applicable durable and live state agree", async 
       { kind: "git-push", status: "not_applicable" },
       { kind: "validation", status: "not_applicable" },
       { kind: "github-draft-pr", status: "not_applicable" },
+      { kind: "github-merge", status: "not_applicable" },
       { kind: "github", status: "not_applicable" },
     ],
   );
@@ -277,6 +278,24 @@ test("requires GitHub reconciliation for an interrupted draft PR write", async (
 
   assert.equal(result.report.safeToResume, false);
   assert.deepEqual(result.report.recommendedActions, ["reconcile_draft_pr_create"]);
+});
+
+test("requires read-only reconciliation for an interrupted GitHub merge", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.githubMerges = [{
+    operationId: "merge-001",
+    status: "requested",
+    requestEventId: "merge-request",
+  }];
+  const store = new MemoryStore(snapshot);
+  const reconciler = new RestartReconciler({ store, clock: () => NOW });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-merge",
+  });
+
+  assert.deepEqual(result.report.recommendedActions, ["reconcile_github_merge"]);
 });
 
 test("requires read-only reconciliation for an interrupted controlled commit", async () => {

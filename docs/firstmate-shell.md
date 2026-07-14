@@ -125,7 +125,8 @@ npm run firstmate -- --delivery status TASK_ID
 ```
 
 It coordinates ledger-derived exact-head push, separately approved draft-PR
-creation, and read-only CI observation. See the
+creation, read-only CI observation, and a third separately approved exact-head
+squash merge. See the
 [Firstmate delivery guide](firstmate-delivery.md) for the approval and recovery
 commands.
 

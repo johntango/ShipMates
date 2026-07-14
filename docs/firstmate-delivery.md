@@ -21,7 +21,9 @@ The reported stage is one of:
 - `push_reconciliation_required`;
 - `awaiting_draft_pr_approval` or `ready_to_create_draft_pr`;
 - `draft_pr_reconciliation_required`;
-- `awaiting_ci_observation`, `ci_pending_or_failed`, or `ci_passed`.
+- `awaiting_ci_observation` or `ci_pending_or_failed`;
+- `awaiting_pr_ready`, `awaiting_merge_approval`, or `ready_to_merge`;
+- `merge_reconciliation_required` or `landed`.
 
 The same commands are available through
 `npm run firstmate -- --delivery ...`. Delivery mode reads an existing task and
@@ -83,5 +85,28 @@ CI is safe to observe again because it is read-only:
 npm run firstmate:delivery -- ci TASK_ID PR_OPERATION_ID
 ```
 
-`ci_passed` is evidence for a later human decision. It cannot mark the PR ready,
-merge, rerun a workflow, comment, update the branch, or release the worktree.
+Passing CI is evidence for a later human decision. It cannot mark the PR ready,
+rerun a workflow, comment, update the branch, or release the worktree.
+
+## Separately approve and merge
+
+After a human marks the draft ready in GitHub and Firstmate records fresh passing
+CI evidence, record the exact merge approval and execute it as separate commands:
+
+```sh
+SHIPMATES_HUMAN_ACTOR=YOUR_NAME npm run firstmate:delivery -- \
+  approve-merge TASK_ID MERGE_APPROVAL_ID
+
+npm run firstmate:delivery -- \
+  merge TASK_ID MERGE_OPERATION_ID MERGE_APPROVAL_ID
+```
+
+An uncertain merge must be reconciled rather than repeated:
+
+```sh
+npm run firstmate:delivery -- \
+  reconcile-merge TASK_ID MERGE_OPERATION_ID
+```
+
+See the [exact-head merge guide](github-merge.md) for compare-and-act
+preconditions and the remaining post-merge boundary.

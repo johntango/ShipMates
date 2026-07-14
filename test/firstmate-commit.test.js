@@ -11,11 +11,14 @@ import {
   FirstmateCommitWorkflow,
 } from "../src/workflows/firstmate-commit.js";
 import { GitHubDraftPullRequestWorkflow } from "../src/workflows/github-draft-pr.js";
+import { GitHubMergeWorkflow } from "../src/workflows/github-merge.js";
+import { GitHubStatusWorkflow } from "../src/workflows/github-status.js";
 import { ExactHeadPushWorkflow } from "../src/workflows/git-push.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
 
 const BASE = "a".repeat(40);
 const HEAD = "b".repeat(40);
+const MERGE = "c".repeat(40);
 
 test("records one controlled commit and advances the exact lease to validation", async (t) => {
   const store = await preparedStore(t, "commit-flow-001");
@@ -132,7 +135,7 @@ test("allows only one concurrent caller to claim controlled commit execution", a
   assert.equal((await durableStore.getSnapshot("commit-flow-003")).gitCommits.length, 1);
 });
 
-test("records an exact approved push before permitting separate draft PR approval", async (t) => {
+test("records separate exact delivery approvals through one concurrency-safe merge", async (t) => {
   const taskId = "commit-flow-004";
   const store = await preparedStore(t, taskId);
   await new FirstmateCommitWorkflow({
@@ -240,6 +243,98 @@ test("records an exact approved push before permitting separate draft PR approva
   assert.equal(snapshot.gitPushes[0].status, "completed");
   assert.equal(snapshot.gitPushApprovals[0].consumedBy, "push-operation-001");
   assert.equal(snapshot.githubDraftPullRequests[0].status, "completed");
+
+  let merged = false;
+  let mergeCalls = 0;
+  let timestamp = Date.parse("2026-07-14T02:00:00.000Z");
+  store.clock = () => new Date(timestamp++);
+  const observation = (value) => ({
+    ...value,
+    observedAt: "2026-07-14T02:00:00.000Z",
+    source: { kind: "github-rest", endpoint: "merge-fixture" },
+  });
+  const readGateway = {
+    readRepository: async () => observation({
+      nameWithOwner: "johntango/ShipMates",
+      defaultBranch: "main",
+      archived: false,
+      disabled: false,
+      allowSquashMerge: true,
+    }),
+    readPullRequest: async () => observation(mergePullRequest({ merged })),
+    readBranchProtection: async () => observation({
+      repository: "johntango/ShipMates",
+      branch: "main",
+      requiredStatusChecks: { contexts: ["test"], checks: [] },
+      requiredPullRequestReviews: null,
+      requiredConversationResolution: true,
+    }),
+    listCheckRuns: async () => [observation({
+      id: 1,
+      name: "test",
+      headSha: HEAD,
+      status: "completed",
+      conclusion: "success",
+    })],
+    listReviews: async () => [],
+    listWorkflowRuns: async () => [],
+    listReviewThreads: async () => [observation({
+      id: "thread-001",
+      resolved: true,
+      outdated: false,
+    })],
+    readBranchHead: async () => observation({
+      repository: "johntango/ShipMates",
+      branch: "main",
+      sha: MERGE,
+    }),
+  };
+  const merge = new GitHubMergeWorkflow({
+    store,
+    readGateway,
+    statusWorkflow: new GitHubStatusWorkflow({
+      store,
+      gateway: readGateway,
+      clock: store.clock,
+      idFactory: () => `status-${store.snapshotSequence || 0}-${timestamp}`,
+    }),
+    mergeGateway: {
+      mergeSquash: async () => {
+        mergeCalls += 1;
+        merged = true;
+        return { mergeCommitSha: MERGE };
+      },
+    },
+    idFactory: () => "merge-attempt-001",
+  });
+  await merge.approve({
+    taskId,
+    approvalId: "merge-approval-001",
+    humanActor: "john",
+    repository: "johntango/ShipMates",
+    prNumber: 7,
+    headSha: HEAD,
+  });
+  const mergeResults = await Promise.allSettled([
+    merge.merge({
+      taskId,
+      operationId: "merge-operation-001",
+      approvalId: "merge-approval-001",
+    }),
+    merge.merge({
+      taskId,
+      operationId: "merge-operation-002",
+      approvalId: "merge-approval-001",
+    }),
+  ]);
+  const landed = mergeResults.find(({ status }) => status === "fulfilled").value;
+
+  assert.deepEqual(mergeResults.map(({ status }) => status).sort(), [
+    "fulfilled", "rejected",
+  ]);
+  assert.equal(landed.state, "landed");
+  assert.equal(landed.githubMerges[0].result.mergeCommitSha, MERGE);
+  assert.equal(mergeCalls, 1);
 });
 
 async function preparedStore(t, taskId) {
@@ -464,5 +559,28 @@ function draftPullRequest() {
       kind: "github-rest",
       endpoint: "repos/johntango/ShipMates/pulls/7",
     },
+  };
+}
+
+function mergePullRequest({ merged }) {
+  return {
+    repository: "johntango/ShipMates",
+    number: 7,
+    url: "https://github.com/johntango/ShipMates/pull/7",
+    state: merged ? "closed" : "open",
+    draft: false,
+    title: "Task draft",
+    merged,
+    mergeable: merged ? null : true,
+    mergeableState: merged ? "unknown" : "clean",
+    mergeCommitSha: merged ? MERGE : null,
+    base: { repository: "johntango/ShipMates", branch: "main", sha: BASE },
+    head: {
+      repository: "johntango/ShipMates",
+      owner: "johntango",
+      branch: "task-branch",
+      sha: HEAD,
+    },
+    updatedAt: "2026-07-14T02:00:00.000Z",
   };
 }

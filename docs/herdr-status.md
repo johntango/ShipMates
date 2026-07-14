@@ -22,6 +22,7 @@ The projection includes:
 - latest local validation;
 - draft-PR creation and latest exact-head CI observation;
 - merge and draft-PR approvals;
+- exact-head merge operation, merge commit, and recovery status;
 - latest restart audit and recommended recovery actions;
 - two-scout synthesis identity, exact-head binding, outcome, and counts;
 - human-selected follow-up binding, read-only reply lifecycle, outcome, and
@@ -43,6 +44,9 @@ attention item. A passing validated head with no push is shown as awaiting
 exact-head push approval. A completed push with no draft PR is shown as awaiting
 the separate draft-PR approval, and a completed draft with no matching
 observation is shown as awaiting exact-head CI evidence.
+Passing non-draft exact-head CI is shown as awaiting separate merge approval.
+Uncertain merge intent requires reconciliation; a landed merge remains visible
+as awaiting post-merge CI and exact-tree proof.
 
 ## Commands
 

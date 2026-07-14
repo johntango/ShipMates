@@ -78,6 +78,7 @@ test("exposes fixed read capabilities and ignores a caller-supplied mutating pro
       visibility: "public",
       archived: false,
       disabled: false,
+      allow_squash_merge: true,
       html_url: "https://github.com/johntango/Shipmates-Practice",
     },
   });
@@ -159,6 +160,49 @@ test("normalizes check, review, and workflow pages without raw response storage"
   assert.equal(checks[0].conclusion, "success");
   assert.equal(reviews[0].body, undefined);
   assert.equal(runs[0].logs_url, undefined);
+});
+
+test("reads every review thread through paginated GraphQL evidence", async () => {
+  const calls = [];
+  const responses = [
+    {
+      data: { repository: { pullRequest: { reviewThreads: {
+        nodes: [{ id: "thread-1", isResolved: true, isOutdated: false }],
+        pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
+      } } } },
+    },
+    {
+      data: { repository: { pullRequest: { reviewThreads: {
+        nodes: [{ id: "thread-2", isResolved: false, isOutdated: true }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } } },
+    },
+  ];
+  const gateway = new GitHubReadGateway({
+    clock: () => NOW,
+    client: {
+      get: async () => { throw new Error("REST must not be used"); },
+      async graphql(input) {
+        calls.push(input);
+        return responses.shift();
+      },
+    },
+  });
+
+  const threads = await gateway.listReviewThreads({
+    owner: "johntango",
+    repo: "Shipmates-Practice",
+    number: 2,
+  });
+
+  assert.deepEqual(threads.map(({ id, resolved, outdated }) => ({
+    id, resolved, outdated,
+  })), [
+    { id: "thread-1", resolved: true, outdated: false },
+    { id: "thread-2", resolved: false, outdated: true },
+  ]);
+  assert.equal(calls[0].variables.cursor, null);
+  assert.equal(calls[1].variables.cursor, "cursor-1");
 });
 
 class StubClient {

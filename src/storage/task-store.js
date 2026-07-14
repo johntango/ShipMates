@@ -99,6 +99,54 @@ export class TaskStore {
     });
   }
 
+  async recordGitHubMergeApproval({ taskId, actor, approval, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.merge.approved",
+      at,
+      actor,
+      data: approval,
+    });
+  }
+
+  async requestGitHubMerge({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.merge.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordGitHubMergeCompleted({
+    taskId, actor, operationId, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.merge.completed",
+      at,
+      actor,
+      data: { operationId, requestEventId, result },
+    });
+  }
+
+  async recordGitHubMergeFailure({
+    taskId, actor, operationId, requestEventId, code, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "github.merge.failed",
+      at,
+      actor,
+      data: { operationId, requestEventId, code },
+    });
+  }
+
   async recordDraftPullRequestApproval({ taskId, actor, approval, eventId, at }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),

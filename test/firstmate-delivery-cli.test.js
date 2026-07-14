@@ -50,3 +50,23 @@ test("requires an explicit human identity for each approval command", async () =
     /SHIPMATES_HUMAN_ACTOR/u,
   );
 });
+
+test("dispatches only the bound merge operation after separate approval", async () => {
+  const calls = [];
+  await runFirstmateDeliveryCli({
+    args: ["merge", "task-001", "merge-operation-001", "merge-approval-001"],
+    workflow: {
+      async merge(input) {
+        calls.push(input);
+        return { stage: "landed" };
+      },
+    },
+    write() {},
+  });
+
+  assert.deepEqual(calls, [{
+    taskId: "task-001",
+    operationId: "merge-operation-001",
+    approvalId: "merge-approval-001",
+  }]);
+});

@@ -59,7 +59,7 @@ test("continues one validated task through separate push and draft approvals int
         calls.push(["ci", input]);
         store.snapshot.githubObservations.push({
           observedAt: "2026-07-14T15:00:00.000Z",
-          pullRequest: { number: 7, head: { sha: HEAD } },
+          pullRequest: { number: 7, draft: false, head: { sha: HEAD } },
           requiredChecks: {
             names: ["test"],
             missing: [],
@@ -67,6 +67,32 @@ test("continues one validated task through separate push and draft approvals int
             satisfied: true,
           },
         });
+      },
+      async reconcile() {},
+    },
+    mergeWorkflow: {
+      async approve(input) {
+        calls.push(["approve-merge", input]);
+        store.snapshot.githubMergeApprovals.push({
+          ...input,
+          decision: "approved",
+          consumedBy: null,
+        });
+        store.snapshot.state = "ready_to_merge";
+      },
+      async merge(input) {
+        calls.push(["merge", input]);
+        store.snapshot.githubMergeApprovals[0].consumedBy = input.operationId;
+        store.snapshot.githubMerges.push({
+          ...input,
+          repository: REPOSITORY,
+          prNumber: 7,
+          headSha: HEAD,
+          status: "completed",
+          result: { mergeCommitSha: "c".repeat(40) },
+          failure: null,
+        });
+        store.snapshot.state = "landed";
       },
       async reconcile() {},
     },
@@ -102,11 +128,24 @@ test("continues one validated task through separate push and draft approvals int
     requiredChecks: ["test"],
   });
 
-  assert.equal(delivered.stage, "ci_passed");
+  assert.equal(delivered.stage, "awaiting_merge_approval");
   assert.equal(delivered.target.headSha, HEAD);
   assert.equal(delivered.draftPullRequest.number, 7);
+  assert.equal((await workflow.approveMerge({
+    taskId: "delivery-001",
+    approvalId: "merge-approval-001",
+    humanActor: "john",
+  })).stage, "ready_to_merge");
+  const landed = await workflow.merge({
+    taskId: "delivery-001",
+    operationId: "merge-operation-001",
+    approvalId: "merge-approval-001",
+  });
+  assert.equal(landed.stage, "landed");
+  assert.equal(landed.merge.mergeCommitSha, "c".repeat(40));
   assert.deepEqual(calls.map(([name]) => name), [
     "approve-push", "push", "approve-pr", "create-pr", "ci",
+    "approve-merge", "merge",
   ]);
   for (const [, input] of calls.slice(0, 4)) {
     assert.equal(input.repository, REPOSITORY);
@@ -173,6 +212,8 @@ class MemoryStore {
       githubDraftPrApprovals: [],
       githubDraftPullRequests: [],
       githubObservations: [],
+      githubMergeApprovals: [],
+      githubMerges: [],
     };
   }
 

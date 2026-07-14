@@ -2,11 +2,13 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { GitHubDraftPullRequestGateway } from "../adapters/github-draft-pr.js";
+import { GitHubMergeGateway } from "../adapters/github-merge.js";
 import { GitHubReadGateway } from "../adapters/github-read.js";
 import { ExactHeadGitPushAdapter } from "../adapters/git-push.js";
 import { TaskStore } from "../storage/task-store.js";
 import { FirstmateDeliveryWorkflow } from "../workflows/firstmate-delivery.js";
 import { GitHubDraftPullRequestWorkflow } from "../workflows/github-draft-pr.js";
+import { GitHubMergeWorkflow } from "../workflows/github-merge.js";
 import { GitHubStatusWorkflow } from "../workflows/github-status.js";
 import { ExactHeadPushWorkflow } from "../workflows/git-push.js";
 
@@ -92,6 +94,26 @@ export async function runFirstmateDeliveryCli({
         requiredChecks: values.slice(2),
       });
       break;
+    case "approve-merge":
+      exactArguments(command, values, 2);
+      result = await delivery.approveMerge({
+        taskId: values[0],
+        approvalId: values[1],
+        humanActor: requireHumanActor(env),
+      });
+      break;
+    case "merge":
+      exactArguments(command, values, 3);
+      result = await delivery.merge({
+        taskId: values[0], operationId: values[1], approvalId: values[2],
+      });
+      break;
+    case "reconcile-merge":
+      exactArguments(command, values, 2);
+      result = await delivery.reconcileMerge({
+        taskId: values[0], operationId: values[1],
+      });
+      break;
     default:
       usage();
   }
@@ -106,6 +128,13 @@ function createWorkflow({ env, cwd }) {
   const readGateway = new GitHubReadGateway();
   const actor = env.SHIPMATES_ACTOR || "firstmate";
   const statusWorkflow = new GitHubStatusWorkflow({ store, gateway: readGateway, actor });
+  const mergeWorkflow = new GitHubMergeWorkflow({
+    store,
+    readGateway,
+    statusWorkflow,
+    mergeGateway: new GitHubMergeGateway(),
+    actor,
+  });
   return new FirstmateDeliveryWorkflow({
     store,
     pushWorkflow: new ExactHeadPushWorkflow({
@@ -121,6 +150,7 @@ function createWorkflow({ env, cwd }) {
       statusWorkflow,
       actor,
     }),
+    mergeWorkflow,
   });
 }
 
@@ -152,6 +182,6 @@ function atLeastArguments(command, values, count) {
 
 function usage() {
   throw new Error(
-    "Usage: firstmate --delivery status TASK | approve-push TASK APPROVAL | push TASK OPERATION APPROVAL | reconcile-push TASK OPERATION | approve-pr TASK APPROVAL BASE TITLE_FILE BODY_FILE | create-pr TASK OPERATION APPROVAL BASE TITLE_FILE BODY_FILE [REQUIRED_CHECK ...] | reconcile-pr TASK OPERATION | ci TASK OPERATION [REQUIRED_CHECK ...]",
+    "Usage: firstmate --delivery status TASK | approve-push TASK APPROVAL | push TASK OPERATION APPROVAL | reconcile-push TASK OPERATION | approve-pr TASK APPROVAL BASE TITLE_FILE BODY_FILE | create-pr TASK OPERATION APPROVAL BASE TITLE_FILE BODY_FILE [REQUIRED_CHECK ...] | reconcile-pr TASK OPERATION | ci TASK OPERATION [REQUIRED_CHECK ...] | approve-merge TASK APPROVAL | merge TASK OPERATION APPROVAL | reconcile-merge TASK OPERATION",
   );
 }

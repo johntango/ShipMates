@@ -79,15 +79,12 @@ node scripts/task-ledger.js show ledger-practice-001
 node scripts/task-ledger.js events ledger-practice-001
 ```
 
-Record an exact-SHA merge approval only after the human has supplied it:
+Generic ledger events cannot authorize a merge. After a complete delivery task
+has a ready, passing exact-head PR, use the compare-and-act approval workflow:
 
 ```sh
-node scripts/task-ledger.js approve-merge \
-  ledger-practice-001 \
-  johntango/Shipmates-Practice \
-  3 \
-  APPROVED_HEAD_SHA \
-  squash
+SHIPMATES_HUMAN_ACTOR=YOUR_NAME npm run firstmate:delivery -- \
+  approve-merge TASK_ID MERGE_APPROVAL_ID
 ```
 
 For isolated exercises or tests, redirect state outside the repository:
@@ -149,6 +146,14 @@ Firstmate delivery mode adds no competing state store. It derives its stage
 from these push events, the existing separately approved draft-PR events, and
 `github.status.recorded` observations. CI evidence is accepted for delivery only
 when the PR number and head match the completed draft operation's approved SHA.
+
+Merge delivery adds `github.merge.approved` for one human-bound repository, PR,
+head, default branch, and squash method. `github.merge.requested` consumes it
+before mutation and moves the task to `merging`; confirmed or reconciled success
+records `github.merge.completed` and moves to `landed`. A proven open-unmerged
+result records `.failed`, returns to `awaiting_human`, and requires a new
+approval. The legacy generic `task.approval.recorded` event is not accepted by
+the merge gateway.
 
 The Herdr adapter reads the replaceable task snapshot and creates an ephemeral
 operator projection. It never writes a status event back into the ledger; see

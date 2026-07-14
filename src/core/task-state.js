@@ -94,6 +94,8 @@ export function replayTaskEvents(events) {
     githubObservations: [],
     githubDraftPrApprovals: [],
     githubDraftPullRequests: [],
+    githubMergeApprovals: [],
+    githubMerges: [],
     gitCommits: [],
     gitPushApprovals: [],
     gitPushes: [],
@@ -244,6 +246,79 @@ function applyEvent(snapshot, event, index) {
         at: event.at,
         actor: event.actor,
       });
+      break;
+    }
+
+    case "github.merge.approved": {
+      requireCreated(snapshot, event);
+      const approval = event.data;
+      validateGitHubMergeApproval(snapshot, approval);
+      if (snapshot.githubMergeApprovals.some(({ approvalId }) =>
+        approvalId === approval.approvalId)) {
+        throw new TaskStateError(`GitHub merge approval already exists: ${approval.approvalId}`);
+      }
+      snapshot.githubMergeApprovals.push({
+        ...approval,
+        eventId: event.id,
+        at: event.at,
+        actor: event.actor,
+        consumedBy: null,
+      });
+      snapshot.state = "ready_to_merge";
+      break;
+    }
+
+    case "github.merge.requested": {
+      requireCreated(snapshot, event);
+      const request = event.data;
+      validateGitHubMergeRequest(snapshot, request);
+      if (snapshot.githubMerges.some(({ operationId }) =>
+        operationId === request.operationId)) {
+        throw new TaskStateError(`GitHub merge operation already exists: ${request.operationId}`);
+      }
+      const approval = snapshot.githubMergeApprovals.find(({ eventId }) =>
+        eventId === request.approvalEventId);
+      approval.consumedBy = request.operationId;
+      snapshot.githubMerges.push({
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+        failure: null,
+      });
+      snapshot.state = "merging";
+      break;
+    }
+
+    case "github.merge.completed": {
+      requireCreated(snapshot, event);
+      const operation = requireGitHubMergeOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId) {
+        throw new TaskStateError("GitHub merge result does not match its request");
+      }
+      validateGitHubMergeResult(operation, event.data.result);
+      operation.status = "completed";
+      operation.result = { ...event.data.result };
+      operation.completedEventId = event.id;
+      snapshot.state = "landed";
+      break;
+    }
+
+    case "github.merge.failed": {
+      requireCreated(snapshot, event);
+      const operation = requireGitHubMergeOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId ||
+        event.data.code !== "pull_request_not_merged") {
+        throw new TaskStateError("GitHub merge failure does not match its request");
+      }
+      operation.status = "failed";
+      operation.failure = event.data.code;
+      operation.failedEventId = event.id;
+      snapshot.state = "awaiting_human";
       break;
     }
 
@@ -1488,6 +1563,134 @@ function requireGitPushOperation(snapshot, operationId, status) {
 function sameGitPushBinding(left, right) {
   return ["repository", "branch", "headSha"].every((field) =>
     left[field] === right[field]);
+}
+
+function validateGitHubMergeApproval(snapshot, approval) {
+  const expectedKeys = [
+    "approvalId", "approverType", "baseBranch", "decision", "headSha",
+    "mergeMethod", "prNumber", "repository", "reviewThreadsCount",
+    "reviewThreadsSha256", "statusEventId", "unresolvedThreads",
+  ];
+  if (!approval || typeof approval !== "object" || Array.isArray(approval) ||
+    Object.keys(approval).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("GitHub merge approval fields are invalid");
+  }
+  requireIdentifier("GitHub merge approval ID", approval.approvalId);
+  requireNonEmpty("GitHub merge repository", approval.repository);
+  requireNonEmpty("GitHub merge base branch", approval.baseBranch);
+  requireFullSha("GitHub merge head SHA", approval.headSha);
+  requireNonEmpty("GitHub merge status event", approval.statusEventId);
+  requireSha256("GitHub merge review-thread digest", approval.reviewThreadsSha256);
+  if (!Number.isSafeInteger(approval.prNumber) || approval.prNumber < 1 ||
+    !Number.isSafeInteger(approval.reviewThreadsCount) ||
+    approval.reviewThreadsCount < 0 || approval.unresolvedThreads !== 0 ||
+    approval.mergeMethod !== "squash" || approval.decision !== "approved" ||
+    approval.approverType !== "human" || snapshot.state !== "validating") {
+    throw new TaskStateError("GitHub merge requires an exact human-approved squash target");
+  }
+  validateGitHubMergeTaskTarget(snapshot, approval, approval.statusEventId);
+  if (snapshot.githubMerges.some(({ status }) => status === "completed")) {
+    throw new TaskStateError("Task already has a completed GitHub merge");
+  }
+}
+
+function validateGitHubMergeRequest(snapshot, request) {
+  const expectedKeys = [
+    "approvalEventId", "approvalId", "attemptId", "baseBranch", "headSha",
+    "mergeMethod", "operationId", "prNumber", "preMergeReviewThreadsCount",
+    "preMergeReviewThreadsSha256", "preMergeStatusEventId",
+    "preMergeUnresolvedThreads", "repository",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("GitHub merge request fields are invalid");
+  }
+  requireIdentifier("GitHub merge operation ID", request.operationId);
+  requireIdentifier("GitHub merge attempt ID", request.attemptId);
+  requireIdentifier("GitHub merge approval ID", request.approvalId);
+  requireNonEmpty("GitHub merge approval event", request.approvalEventId);
+  requireNonEmpty("GitHub merge status event", request.preMergeStatusEventId);
+  requireSha256(
+    "GitHub pre-merge review-thread digest",
+    request.preMergeReviewThreadsSha256,
+  );
+  if (snapshot.state !== "ready_to_merge" || request.mergeMethod !== "squash" ||
+    !Number.isSafeInteger(request.preMergeReviewThreadsCount) ||
+    request.preMergeReviewThreadsCount < 0 || request.preMergeUnresolvedThreads !== 0 ||
+    snapshot.githubMerges.some(({ status }) =>
+      new Set(["requested", "completed"]).has(status))) {
+    throw new TaskStateError("GitHub merge request is not a new ready squash merge");
+  }
+  validateGitHubMergeTaskTarget(snapshot, request, request.preMergeStatusEventId);
+  const approval = snapshot.githubMergeApprovals.find(({ approvalId }) =>
+    approvalId === request.approvalId);
+  if (!approval || approval.eventId !== request.approvalEventId ||
+    approval.consumedBy !== null || !sameGitHubMergeBinding(approval, request)) {
+    throw new TaskStateError("GitHub merge request changed its approved target");
+  }
+}
+
+function validateGitHubMergeTaskTarget(snapshot, value, statusEventId) {
+  const draft = [...snapshot.githubDraftPullRequests].reverse().find((operation) =>
+    operation.status === "completed" && operation.pullRequest?.number === value.prNumber &&
+    operation.repository.toLowerCase() === value.repository.toLowerCase() &&
+    operation.headSha === value.headSha && operation.baseBranch === value.baseBranch);
+  const status = snapshot.githubObservations.find(({ eventId }) =>
+    eventId === statusEventId);
+  if (snapshot.repo.toLowerCase() !== value.repository.toLowerCase() || !draft ||
+    !status || status.pullRequest.number !== value.prNumber ||
+    status.pullRequest.head.sha !== value.headSha ||
+    status.pullRequest.base.branch !== value.baseBranch ||
+    status.pullRequest.state !== "open" || status.pullRequest.draft !== false ||
+    status.pullRequest.merged !== false || status.pullRequest.mergeable !== true ||
+    status.requiredChecks.satisfied !== true ||
+    status.repository.allowSquashMerge !== true ||
+    status.branchProtection.requiredConversationResolution !== true ||
+    status.repository.defaultBranch !== value.baseBranch ||
+    snapshot.worktree?.headSha !== value.headSha) {
+    throw new TaskStateError(
+      "GitHub merge target lacks matching open exact-head passing evidence",
+    );
+  }
+}
+
+function validateGitHubMergeResult(operation, result) {
+  const expectedKeys = [
+    "baseBranch", "baseHeadSha", "evidenceKind", "headSha", "mergeCommitSha",
+    "mergeMethod", "merged", "prNumber", "repository",
+  ];
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+    Object.keys(result).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("GitHub merge result fields are invalid");
+  }
+  if (!new Set(["merge-confirmation", "remote-reconciliation"]).has(
+    result.evidenceKind)) {
+    throw new TaskStateError("GitHub merge evidence kind is invalid");
+  }
+  requireFullSha("GitHub merge commit SHA", result.mergeCommitSha);
+  requireFullSha("GitHub merge base head SHA", result.baseHeadSha);
+  if (!sameGitHubMergeBinding(operation, result) ||
+    result.mergeCommitSha !== result.baseHeadSha || result.merged !== true) {
+    throw new TaskStateError("GitHub merge result does not match its approved request");
+  }
+}
+
+function requireGitHubMergeOperation(snapshot, operationId, status) {
+  requireIdentifier("GitHub merge operation ID", operationId);
+  const operation = snapshot.githubMerges.find(({ operationId: id }) =>
+    id === operationId);
+  if (!operation || operation.status !== status) {
+    throw new TaskStateError(
+      `GitHub merge operation ${operationId} requires status ${status}`,
+    );
+  }
+  return operation;
+}
+
+function sameGitHubMergeBinding(left, right) {
+  return [
+    "repository", "prNumber", "headSha", "baseBranch", "mergeMethod",
+  ].every((field) => left[field] === right[field]);
 }
 
 function validateLocalValidationRequest(snapshot, request) {

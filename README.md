@@ -91,6 +91,8 @@ Implemented repository artifacts include:
 - a Firstmate delivery continuation that derives exact targets from the ledger,
   preserves separate push and draft-PR approvals, and observes protected CI at
   the approved head;
+- a separately human-approved exact-head squash-merge gateway with fresh
+  compare-and-act checks, resolved-thread evidence, and read-only recovery;
 - a local Codex MCP runtime wrapped as one strict, read-only Firstmate scout
   tool with no conversational handoff;
 - architecture and GitHub governance documentation;
@@ -510,6 +512,16 @@ immediately observes CI at the approved head. Required checks come from live
 branch protection plus any explicitly requested checks. See the
 [Firstmate delivery guide](docs/firstmate-delivery.md).
 
+### Step 30: Merge only the exact approved head
+
+Firstmate can now record a separate human merge approval and consume it once for
+one exact-head squash merge. Approval and mutation each refresh repository,
+PR, branch-policy, check, review, workflow, and paginated review-thread evidence.
+The write supplies GitHub's atomic expected-head SHA, and completion requires
+both the merged PR and default branch to confirm the returned merge commit.
+Uncertain results reconcile by reads without repeating the merge. See the
+[exact-head merge guide](docs/github-merge.md).
+
 ## Running the current checks
 
 Run the ShipMates tests after `npm install`:
@@ -566,6 +578,9 @@ at its expected head.
   operations even though Firstmate now coordinates them. Neither gateway
   updates PRs, reruns workflows, marks PRs ready, comments, merges, or deletes
   anything; their live write paths have not been exercised in this stage.
+- The exact-head merge gateway is implemented but has not been exercised against
+  a live PR. It supports only squash merge and intentionally refuses code-owner
+  or last-pusher review policies until their identities can be proven directly.
 - lavish-axi review is not yet wired into the full executable path. Herdr
   receives best-effort live worker, commit, and validation status in addition
   to its deterministic read-only projection, but it remains non-authoritative.
@@ -579,9 +594,8 @@ at its expected head.
 
 The next sequence is:
 
-1. add an explicit exact-head human merge decision using a compare-and-act
-   gateway, while keeping merge authority separate from worker, push, draft-PR,
-   and CI capabilities.
+1. add post-merge default-branch CI observation, exact-tree landed-work proof,
+   and crash-safe Treehouse lease return without combining branch cleanup.
 
 We will keep using `Shipmates-Practice` for each stage and will not advance a
 sensitive transition without exact evidence and explicit human approval.

@@ -1,5 +1,5 @@
 export class FirstmateDeliveryWorkflow {
-  constructor({ store, pushWorkflow, draftWorkflow } = {}) {
+  constructor({ store, pushWorkflow, draftWorkflow, mergeWorkflow = null } = {}) {
     if (!store || !pushWorkflow || !draftWorkflow) {
       throw new TypeError(
         "FirstmateDeliveryWorkflow requires store, pushWorkflow, and draftWorkflow",
@@ -8,6 +8,7 @@ export class FirstmateDeliveryWorkflow {
     this.store = store;
     this.pushWorkflow = pushWorkflow;
     this.draftWorkflow = draftWorkflow;
+    this.mergeWorkflow = mergeWorkflow;
   }
 
   async status({ taskId }) {
@@ -91,6 +92,39 @@ export class FirstmateDeliveryWorkflow {
     await this.draftWorkflow.observeCi({ taskId, operationId, requiredChecks });
     return this.status({ taskId });
   }
+
+  async approveMerge({ taskId, approvalId, humanActor }) {
+    this.#requireMergeWorkflow();
+    const target = mergeTarget(await this.store.getSnapshot(taskId));
+    await this.mergeWorkflow.approve({
+      taskId,
+      approvalId,
+      humanActor,
+      repository: target.repository,
+      prNumber: target.prNumber,
+      headSha: target.headSha,
+      mergeMethod: "squash",
+    });
+    return this.status({ taskId });
+  }
+
+  async merge({ taskId, operationId, approvalId }) {
+    this.#requireMergeWorkflow();
+    await this.mergeWorkflow.merge({ taskId, operationId, approvalId });
+    return this.status({ taskId });
+  }
+
+  async reconcileMerge({ taskId, operationId }) {
+    this.#requireMergeWorkflow();
+    await this.mergeWorkflow.reconcile({ taskId, operationId });
+    return this.status({ taskId });
+  }
+
+  #requireMergeWorkflow() {
+    if (!this.mergeWorkflow) {
+      throw new FirstmateDeliveryWorkflowError("Merge workflow is not configured");
+    }
+  }
 }
 
 export class FirstmateDeliveryWorkflowError extends Error {
@@ -107,6 +141,7 @@ function summarize(snapshot) {
   const observation = draft?.status === "completed"
     ? latestExactObservation(snapshot, draft)
     : null;
+  const merge = latestExactMerge(snapshot, draft);
   let stage;
   if (push?.status === "requested") {
     stage = "push_reconciliation_required";
@@ -116,11 +151,21 @@ function summarize(snapshot) {
   } else if (draft?.status === "requested") {
     stage = "draft_pr_reconciliation_required";
   } else if (draft?.status === "completed") {
-    stage = observation === null
-      ? "awaiting_ci_observation"
-      : observation.requiredChecks.satisfied
-        ? "ci_passed"
-        : "ci_pending_or_failed";
+    if (merge?.status === "requested") {
+      stage = "merge_reconciliation_required";
+    } else if (merge?.status === "completed") {
+      stage = "landed";
+    } else if (observation === null) {
+      stage = "awaiting_ci_observation";
+    } else if (observation.requiredChecks.satisfied !== true) {
+      stage = "ci_pending_or_failed";
+    } else if (observation.pullRequest.draft === true) {
+      stage = "awaiting_pr_ready";
+    } else {
+      stage = latestUnusedMergeApproval(snapshot, draft)
+        ? "ready_to_merge"
+        : "awaiting_merge_approval";
+    }
   } else {
     const approval = latestUnusedDraftApproval(snapshot, target);
     stage = approval ? "ready_to_create_draft_pr" : "awaiting_draft_pr_approval";
@@ -150,6 +195,13 @@ function summarize(snapshot) {
       headSha: observation.pullRequest.head.sha,
       requiredChecks: { ...observation.requiredChecks },
     },
+    merge: merge === null ? null : {
+      operationId: merge.operationId,
+      approvalId: merge.approvalId,
+      status: merge.status,
+      mergeCommitSha: merge.result?.mergeCommitSha || null,
+      failure: merge.failure,
+    },
     ledger: {
       state: snapshot.state,
       eventsCount: snapshot.eventsCount,
@@ -161,7 +213,9 @@ function summarize(snapshot) {
 function validatedTarget(snapshot) {
   const validation = snapshot.validationRuns?.at(-1);
   const commit = snapshot.gitCommits?.at(-1);
-  if (snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+  if (!new Set([
+    "validating", "ready_to_merge", "merging", "landed", "awaiting_human",
+  ]).has(snapshot.state) || snapshot.worktree?.status !== "leased" ||
     validation?.passed !== true ||
     validation.finalHeadSha !== snapshot.worktree.headSha ||
     commit?.status !== "completed" ||
@@ -206,6 +260,14 @@ function latestExactObservation(snapshot, draft) {
     observation.pullRequest.head.sha === draft.headSha) || null;
 }
 
+function latestExactMerge(snapshot, draft) {
+  if (!draft) return null;
+  return [...(snapshot.githubMerges || [])].reverse().find((operation) =>
+    operation.repository.toLowerCase() === draft.repository.toLowerCase() &&
+    operation.prNumber === draft.pullRequest?.number &&
+    operation.headSha === draft.headSha) || null;
+}
+
 function latestUnusedPushApproval(snapshot, target) {
   return [...(snapshot.gitPushApprovals || [])].reverse().find((approval) =>
     approval.consumedBy === null && approval.decision === "approved" &&
@@ -218,4 +280,30 @@ function latestUnusedDraftApproval(snapshot, target) {
     approval.consumedBy === null && approval.decision === "approved" &&
     approval.repository.toLowerCase() === target.repository.toLowerCase() &&
     approval.headBranch === target.branch && approval.headSha === target.headSha) || null;
+}
+
+function latestUnusedMergeApproval(snapshot, draft) {
+  return [...(snapshot.githubMergeApprovals || [])].reverse().find((approval) =>
+    approval.consumedBy === null && approval.decision === "approved" &&
+    approval.repository.toLowerCase() === draft.repository.toLowerCase() &&
+    approval.prNumber === draft.pullRequest.number && approval.headSha === draft.headSha) || null;
+}
+
+function mergeTarget(snapshot) {
+  const target = pushedTarget(snapshot);
+  const draft = latestExactDraft(snapshot, target);
+  const observation = draft?.status === "completed"
+    ? latestExactObservation(snapshot, draft)
+    : null;
+  if (!draft || !observation || observation.requiredChecks.satisfied !== true ||
+    observation.pullRequest.draft !== false) {
+    throw new FirstmateDeliveryWorkflowError(
+      "Merge approval requires a non-draft pull request with passing exact-head CI",
+    );
+  }
+  return {
+    repository: target.repository,
+    prNumber: draft.pullRequest.number,
+    headSha: target.headSha,
+  };
 }

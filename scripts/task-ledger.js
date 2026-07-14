@@ -45,18 +45,9 @@ switch (command) {
   }
 
   case "approve-merge": {
-    const [taskId, repo, prNumber, headSha, mergeMethod] = args;
-    requireArguments(command, args, 5);
-    result = await store.recordApproval({
-      taskId,
-      repo,
-      prNumber: parsePositiveInteger("prNumber", prNumber),
-      headSha,
-      mergeMethod,
-      decision: "approved",
-      actor,
-    });
-    break;
+    throw new Error(
+      "approve-merge moved to `npm run firstmate:delivery -- approve-merge TASK APPROVAL`; generic ledger approvals cannot authorize merge",
+    );
   }
 
   case "show": {
@@ -82,7 +73,7 @@ switch (command) {
 
   default:
     throw new Error(
-      "Usage: task-ledger.js <create|transition|evidence|approve-merge|show|events|rebuild> ...",
+      "Usage: task-ledger.js <create|transition|evidence|show|events|rebuild> ...",
     );
 }
 
@@ -92,12 +83,4 @@ function requireArguments(name, values, minimum) {
   if (values.length < minimum || values.slice(0, minimum).some((value) => !value)) {
     throw new Error(`${name} requires at least ${minimum} arguments`);
   }
-}
-
-function parsePositiveInteger(label, value) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isSafeInteger(parsed) || parsed < 1 || String(parsed) !== value) {
-    throw new TypeError(`${label} must be a positive integer`);
-  }
-  return parsed;
 }

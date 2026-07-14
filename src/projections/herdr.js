@@ -25,11 +25,13 @@ export function projectHerdrSnapshot(snapshot) {
   );
   const commits = (snapshot.gitCommits || []).map(projectGitCommit);
   const pushes = (snapshot.gitPushes || []).map(projectGitPush);
+  const merges = (snapshot.githubMerges || []).map(projectGitHubMerge);
   const attention = deriveAttention({
     snapshot,
     workers,
     commits,
     pushes,
+    merges,
     draftPullRequests,
     latestValidation,
     latestGitHub,
@@ -59,19 +61,25 @@ export function projectHerdrSnapshot(snapshot) {
     workers,
     commits,
     pushes,
+    merges,
     validation: projectValidation(latestValidation),
     github: {
       draftPullRequests,
       ci: projectCi(latestGitHub),
     },
     approvals: {
-      merge: snapshot.approvals.map((approval) => ({
+      merge: [
+        ...(snapshot.approvals || []),
+        ...(snapshot.githubMergeApprovals || []),
+      ].map((approval) => ({
+        approvalId: approval.approvalId || null,
         eventId: approval.eventId,
         actor: approval.actor,
-        repository: approval.repo,
+        repository: approval.repository || approval.repo,
         prNumber: approval.prNumber,
         headSha: approval.headSha,
         decision: approval.decision,
+        consumedBy: approval.consumedBy ?? null,
       })),
       draftPullRequest: (snapshot.githubDraftPrApprovals || []).map(
         (approval) => ({
@@ -120,6 +128,8 @@ export function projectHerdrSnapshot(snapshot) {
       ).length,
       pushes: pushes.length,
       pendingPushes: pushes.filter(({ status }) => status === "requested").length,
+      merges: merges.length,
+      pendingMerges: merges.filter(({ status }) => status === "requested").length,
       requiredChecksSatisfied: latestGitHub?.requiredChecks?.satisfied ?? null,
       attentionItems: attention.length,
       syntheses: syntheses.length,
@@ -139,6 +149,7 @@ export function renderHerdrView(projection) {
     `worktree: ${projection.worktree ? `${safe(projection.worktree.status)} ${safe(projection.worktree.headSha)}` : "none"}`,
     `workers: ${projection.summary.workers} (${projection.summary.activeWorkers} active, ${projection.summary.pendingReplies} replies pending)`,
     `pushes: ${projection.summary.pushes} (${projection.summary.pendingPushes} pending)`,
+    `merges: ${projection.summary.merges} (${projection.summary.pendingMerges} pending)`,
     `draft PRs: ${projection.summary.draftPullRequests} (${projection.summary.pendingDraftPullRequests} pending)`,
     `CI required checks: ${formatNullableBoolean(projection.summary.requiredChecksSatisfied)}`,
     `recovery: ${projection.recovery ? (!projection.recovery.current ? "stale" : projection.recovery.safeToResume ? "safe" : "required") : "not audited"}`,
@@ -169,6 +180,14 @@ export function renderHerdrView(projection) {
     for (const operation of projection.pushes) {
       lines.push(
         `- ${safe(operation.operationId)}: ${safe(operation.status)}; branch=${safe(operation.branch)}; head=${safe(operation.headSha)}`,
+      );
+    }
+  }
+  if (projection.merges.length > 0) {
+    lines.push("", "GitHub merges");
+    for (const operation of projection.merges) {
+      lines.push(
+        `- ${safe(operation.operationId)}: ${safe(operation.status)}; PR=${operation.prNumber}; head=${safe(operation.headSha)}; merge=${safe(operation.mergeCommitSha || "none")}`,
       );
     }
   }
@@ -309,6 +328,22 @@ function projectGitPush(operation) {
   };
 }
 
+function projectGitHubMerge(operation) {
+  return {
+    operationId: operation.operationId,
+    approvalId: operation.approvalId,
+    status: operation.status,
+    repository: operation.repository,
+    prNumber: operation.prNumber,
+    headSha: operation.headSha,
+    mergeMethod: operation.mergeMethod,
+    mergeCommitSha: operation.result?.mergeCommitSha || null,
+    failure: operation.failure,
+    requestEventId: operation.requestEventId,
+    completedEventId: operation.completedEventId || null,
+  };
+}
+
 function projectDraftPullRequest(operation) {
   return {
     operationId: operation.operationId,
@@ -350,7 +385,7 @@ function projectCi(observation) {
 }
 
 function deriveAttention({
-  snapshot, workers, commits, pushes, draftPullRequests, latestValidation, latestGitHub,
+  snapshot, workers, commits, pushes, merges, draftPullRequests, latestValidation, latestGitHub,
   latestRecovery, recoveryCurrent, syntheses, followUps,
 }) {
   const result = [];
@@ -399,6 +434,19 @@ function deriveAttention({
       ));
     }
   }
+  for (const operation of merges) {
+    if (operation.status === "requested") {
+      result.push(item(
+        "merge_reconciliation",
+        `GitHub merge ${operation.operationId} needs remote reconciliation`,
+      ));
+    } else if (operation.status === "failed") {
+      result.push(item(
+        "merge_approval",
+        `GitHub merge ${operation.operationId} needs a new human approval`,
+      ));
+    }
+  }
   if (latestValidation?.passed === true && pushes.length === 0) {
     result.push(item(
       "git_push_approval",
@@ -434,6 +482,20 @@ function deriveAttention({
   }
   if (latestGitHub && latestGitHub.requiredChecks.satisfied !== true) {
     result.push(item("ci_not_satisfied", "Required GitHub checks are not satisfied"));
+  }
+  const exactCompletedDraft = [...draftPullRequests].reverse().find(
+    ({ status }) => status === "completed",
+  );
+  if (exactCompletedDraft && latestGitHub?.requiredChecks.satisfied === true &&
+    latestGitHub.pullRequest.head.sha === exactCompletedDraft.headSha &&
+    latestGitHub.pullRequest.draft === false && merges.length === 0) {
+    result.push(item("merge_approval", "Exact-head PR awaits separate human merge approval"));
+  }
+  if (merges.some(({ status }) => status === "completed")) {
+    result.push(item(
+      "post_merge_verification",
+      "Landed merge awaits post-merge CI and exact-tree landing proof",
+    ));
   }
   if (snapshot.state === "awaiting_human") {
     result.push(item("human_decision", "Task is awaiting a human decision"));

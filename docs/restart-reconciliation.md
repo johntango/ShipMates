@@ -26,6 +26,8 @@ The reconciler:
 - identifies exact-head push intent without a result and directs the operator
   to read-only remote reconciliation; a proven absent branch requires a new
   human approval rather than a retry;
+- identifies merge intent without a result and directs the operator to read-only
+  GitHub reconciliation rather than a second merge request;
 - identifies pinned local validation intent without a result and refuses an
   automatic rerun;
 - checks whether validation evidence matches the active lease;

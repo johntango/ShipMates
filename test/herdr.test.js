@@ -236,6 +236,72 @@ test("shows the separate draft approval and exact-head CI delivery stages", () =
   );
 });
 
+test("shows merge approval, uncertain merge, and landed verification stages", () => {
+  const snapshot = richSnapshot();
+  const headSha = snapshot.worktree.headSha;
+  snapshot.validationRuns[0] = {
+    ...snapshot.validationRuns[0], passed: true, outcome: "passed",
+  };
+  snapshot.gitPushes = [{
+    operationId: "push-001", approvalId: "push-approval-001", status: "completed",
+    repository: snapshot.repo, branch: snapshot.worktree.branch, headSha,
+    result: { remoteHeadSha: headSha }, failure: null,
+    requestEventId: "push-request", completedEventId: "push-completed",
+  }];
+  snapshot.githubDraftPullRequests = [{
+    operationId: "draft-001", approvalId: "draft-approval-001", status: "completed",
+    repository: snapshot.repo, headBranch: snapshot.worktree.branch, headSha,
+    baseBranch: "main", failure: null,
+    pullRequest: {
+      number: 7,
+      url: "https://github.com/johntango/Shipmates-Practice/pull/7",
+      state: "open",
+      draft: false,
+      head: { sha: headSha },
+    },
+  }];
+  snapshot.githubObservations = [{
+    observedAt: "2026-07-13T23:02:00.000Z",
+    pullRequest: { number: 7, draft: false, head: { sha: headSha } },
+    requiredChecks: {
+      names: ["test"], missing: [], unsuccessful: [], satisfied: true,
+    },
+    checks: [],
+  }];
+  snapshot.githubMergeApprovals = [];
+  snapshot.githubMerges = [];
+
+  assert.equal(
+    projectHerdrSnapshot(snapshot).attention.some(({ code }) => code === "merge_approval"),
+    true,
+  );
+
+  snapshot.githubMerges = [{
+    operationId: "merge-001", approvalId: "merge-approval-001", status: "requested",
+    repository: snapshot.repo, prNumber: 7, headSha, mergeMethod: "squash",
+    failure: null, result: null, requestEventId: "merge-request",
+  }];
+  const uncertain = projectHerdrSnapshot(snapshot);
+  assert.equal(
+    uncertain.attention.some(({ code }) => code === "merge_reconciliation"),
+    true,
+  );
+  assert.match(renderHerdrView(uncertain), /merge-001: requested/u);
+
+  snapshot.githubMerges[0] = {
+    ...snapshot.githubMerges[0],
+    status: "completed",
+    result: { mergeCommitSha: "c".repeat(40) },
+    completedEventId: "merge-completed",
+  };
+  assert.equal(
+    projectHerdrSnapshot(snapshot).attention.some(
+      ({ code }) => code === "post_merge_verification",
+    ),
+    true,
+  );
+});
+
 function richSnapshot() {
   const headSha = "a".repeat(40);
   return {
