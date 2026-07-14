@@ -75,9 +75,12 @@ Implemented repository artifacts include:
   authority;
 - a local Codex MCP runtime wrapped as one strict, read-only Firstmate scout
   tool with no conversational handoff;
-- architecture and GitHub governance documentation.
+- architecture and GitHub governance documentation;
+- live, sanitized Herdr execution visibility for Firstmate scouts and the local
+  implementation worker.
 
-Crash-safe Codex thread continuation and the multi-worker supervisor are still
+Crash-safe Codex thread continuation and exactly two concurrent read-only
+scouts are implemented. A durable supervisor for mutating workers is still
 planned work.
 
 ## How we developed ShipMates
@@ -444,8 +447,11 @@ and now marks a restart audit stale when later evidence is appended. See the
 Run the ShipMates tests after `npm install`:
 
 ```sh
-node --test
+npm test
 ```
+
+Pull requests run the same test command in GitHub Actions. The workflow also
+checks the complete pull-request diff for whitespace errors.
 
 Exercise the ledger from this repository root:
 
@@ -475,10 +481,10 @@ at its expected head.
 
 ## Important current limitations
 
-- Firstmate currently classifies one request; it has no specialist tools and
-  does not yet continue a multi-turn human conversation. The MCP-enabled agent
-  factory can receive the bounded scout tool, but the intake CLI remains
-  classification-only.
+- Firstmate classifies one request and executes bounded read-only or local-write
+  work, but it does not yet continue a multi-turn human conversation. Its local
+  executor launches Codex workers directly; it is not yet the durable,
+  MCP-backed supervisor described by the target architecture.
 - Agents SDK authentication was verified separately; routine tests do not call
   the API.
 - The legacy direct Codex adapter remains for comparison; the current bounded
@@ -491,8 +497,8 @@ at its expected head.
   PRs ready, comment, merge, or delete anything. Its live write path has not
   been exercised in this stage.
 - no-mistakes and lavish-axi review are not yet wired into the full executable
-  path. Herdr is currently a local read-only projection, not an external pane
-  publisher.
+  path. Herdr now receives best-effort live worker status in addition to its
+  deterministic read-only projection, but it remains non-authoritative.
 - Mutating-worker concurrency remains deliberately disabled; the only parallel
   path is exactly two read-only scouts.
 - Synthesis is exact and deliberately non-semantic. Similar claims with

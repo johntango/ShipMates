@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
+		"test": "node --test",
 		"start": "node agent.js",
 		"codex": "./codex-headr.sh",
 		"codex:mcp-scout": "node scripts/codex-mcp-scout.js",
