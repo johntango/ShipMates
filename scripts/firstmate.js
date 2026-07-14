@@ -161,16 +161,23 @@ if (!classifyOnly) {
     });
     const validated = await validationWorkflow.run({ taskId, intent: message });
     execution.delivery = {
-      status: validated.report.passed ? "validated" : "validation_failed",
+      status: validated.report.passed
+        ? "awaiting_push_approval"
+        : "validation_failed",
       commit: committed.commit,
       validation: validated.report,
+      pushTarget: validated.report.passed ? {
+        repository: repo,
+        branch: committed.commit.branch,
+        headSha: committed.commit.headSha,
+      } : null,
     };
     await herdrObserver?.firstmateStage({
       taskId,
       repoPath,
-      state: validated.report.passed ? "idle" : "blocked",
+      state: "blocked",
       message: validated.report.passed
-        ? "Exact task commit passed pinned local validation"
+        ? "Exact task commit awaits human push approval"
         : "Local validation did not pass",
       customStatus: execution.delivery.status,
     });

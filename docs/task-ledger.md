@@ -139,6 +139,12 @@ active lease's authoritative head. The validation stage similarly records
 `validation.local.requested` before invoking the pinned local-only gate and
 binds its result to that exact head, branch, intent digest, and binary pin.
 
+Branch publication adds `git.push.approved`, `git.push.requested`, and either a
+confirmed `git.push.completed` or proven-absence `git.push.failed` event. The
+approval is bound to one repository, new task branch, and full validated SHA.
+Uncertain requested operations remain durable and must be reconciled remotely
+without repeating the push.
+
 The Herdr adapter reads the replaceable task snapshot and creates an ephemeral
 operator projection. It never writes a status event back into the ledger; see
 the [Herdr status guide](herdr-status.md).

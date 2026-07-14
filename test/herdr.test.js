@@ -139,6 +139,54 @@ test("marks a prior safe recovery audit stale after new evidence", () => {
   assert.match(renderHerdrView(projection), /recovery: stale/u);
 });
 
+test("shows exact-head push approval and remote reconciliation states", () => {
+  const awaitingApproval = richSnapshot();
+  awaitingApproval.validationRuns[0].passed = true;
+  awaitingApproval.validationRuns[0].outcome = "passed";
+  awaitingApproval.githubDraftPullRequests = [];
+  awaitingApproval.githubObservations = [];
+  awaitingApproval.gitPushApprovals = [{
+    approvalId: "push-approval-001",
+    actor: "john",
+    repository: awaitingApproval.repo,
+    branch: awaitingApproval.worktree.branch,
+    headSha: awaitingApproval.worktree.headSha,
+    decision: "approved",
+    consumedBy: null,
+  }];
+  awaitingApproval.gitPushes = [];
+
+  const approvalProjection = projectHerdrSnapshot(awaitingApproval);
+  assert.equal(
+    approvalProjection.attention.some(({ code }) => code === "git_push_approval"),
+    true,
+  );
+  assert.equal(approvalProjection.approvals.push[0].consumedBy, null);
+
+  awaitingApproval.gitPushApprovals[0].consumedBy = "push-001";
+  awaitingApproval.gitPushes = [{
+    operationId: "push-001",
+    approvalId: "push-approval-001",
+    status: "requested",
+    repository: awaitingApproval.repo,
+    branch: awaitingApproval.worktree.branch,
+    headSha: awaitingApproval.worktree.headSha,
+    result: null,
+    failure: null,
+    requestEventId: "push-request",
+  }];
+  const recoveryProjection = projectHerdrSnapshot(awaitingApproval);
+
+  assert.equal(recoveryProjection.summary.pendingPushes, 1);
+  assert.equal(
+    recoveryProjection.attention.some(
+      ({ code }) => code === "git_push_reconciliation",
+    ),
+    true,
+  );
+  assert.match(renderHerdrView(recoveryProjection), /push-001: requested/u);
+});
+
 function richSnapshot() {
   const headSha = "a".repeat(40);
   return {

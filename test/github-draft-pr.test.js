@@ -197,6 +197,13 @@ class MemoryStore {
       state: "validating",
       worktree: { status: "leased", headSha, worktreePath: "/tmp/worktree" },
       validationRuns: [{ passed: true, finalHeadSha: headSha }],
+      gitPushes: [{
+        status: "completed",
+        repository,
+        branch: target.headBranch,
+        headSha,
+        result: { remoteHeadSha: headSha },
+      }],
       githubDraftPrApprovals: [],
       githubDraftPullRequests: [],
     };

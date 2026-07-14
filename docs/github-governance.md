@@ -110,9 +110,10 @@ The exact repo and branch remain constrained.
 
 ### Human-confirmed writes
 
-Require an explicit confirmation for merge, non-draft public comments or reviews,
-closing another person's issue, marking a PR ready, rerunning privileged workflows,
-or publishing a prerelease.
+The current implementation also requires exact-target human confirmation for a
+new task-branch push and draft-PR creation. Require an explicit confirmation for
+merge, non-draft public comments or reviews, closing another person's issue,
+marking a PR ready, rerunning privileged workflows, or publishing a prerelease.
 
 ### High-risk administration
 

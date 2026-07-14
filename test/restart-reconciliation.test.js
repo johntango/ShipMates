@@ -26,6 +26,7 @@ test("records a safe audit when applicable durable and live state agree", async 
       { kind: "workers", status: "not_applicable" },
       { kind: "scout-follow-ups", status: "not_applicable" },
       { kind: "git-commit", status: "not_applicable" },
+      { kind: "git-push", status: "not_applicable" },
       { kind: "validation", status: "not_applicable" },
       { kind: "github-draft-pr", status: "not_applicable" },
       { kind: "github", status: "not_applicable" },
@@ -294,6 +295,45 @@ test("requires read-only reconciliation for an interrupted controlled commit", a
   });
 
   assert.deepEqual(result.report.recommendedActions, ["reconcile_git_commit"]);
+});
+
+test("requires read-only remote reconciliation for an interrupted exact-head push", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.gitPushes = [{
+    operationId: "push-001",
+    status: "requested",
+    requestEventId: "push-request",
+  }];
+  const store = new MemoryStore(snapshot);
+  const reconciler = new RestartReconciler({ store, clock: () => NOW });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-push",
+  });
+
+  assert.deepEqual(result.report.recommendedActions, ["reconcile_git_push"]);
+});
+
+test("requires a new human approval after a proven absent push", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.gitPushes = [{
+    operationId: "push-001",
+    status: "failed",
+    failedEventId: "push-failed",
+  }];
+  const store = new MemoryStore(snapshot);
+  const reconciler = new RestartReconciler({ store, clock: () => NOW });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-failed-push",
+  });
+
+  assert.deepEqual(
+    result.report.recommendedActions,
+    ["request_new_git_push_approval"],
+  );
 });
 
 test("refuses to repeat local validation with durable intent and no result", async () => {

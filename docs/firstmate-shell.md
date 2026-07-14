@@ -86,7 +86,8 @@ The classified authority controls execution:
   acquires a task-bound Treehouse lease and records durable worker intent,
   artifacts, and independently verified changed paths. Firstmate then creates
   one exact task commit and runs the pinned local-only no-mistakes gate against
-  that commit;
+  that commit. A passing run reports the repository, branch, and SHA awaiting a
+  separate human push approval;
 - external-write and destructive requests stop at their human-approval boundary
   before any local worker starts.
 
@@ -97,8 +98,9 @@ acceptance. Firstmate alone stages the verified paths with a fixed identity,
 records the resulting single-parent commit, and validates its exact SHA with a
 digest-verified no-mistakes binary. Execution evidence is recorded under the
 task ledger and detailed worker artifacts remain under ignored
-`.shipmates/tasks/` state. The committed lease is not pushed or copied into the
-primary checkout.
+`.shipmates/tasks/` state. The committed lease is not copied into the primary
+checkout and is not pushed by the interactive run. The separate
+[`firstmate:push` workflow](exact-head-push.md) owns that exact external write.
 
 When invoked from a Herdr pane, Firstmate also creates live worker-pane
 visibility for both scouts and the implementer. Sanitized status updates show

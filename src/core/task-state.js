@@ -95,6 +95,8 @@ export function replayTaskEvents(events) {
     githubDraftPrApprovals: [],
     githubDraftPullRequests: [],
     gitCommits: [],
+    gitPushApprovals: [],
+    gitPushes: [],
     validationRequests: [],
     validationRuns: [],
     recoveryAudits: [],
@@ -327,6 +329,79 @@ function applyEvent(snapshot, event, index) {
       requireNonEmpty("draft PR failure", event.data.message);
       operation.status = "failed";
       operation.failure = event.data.message;
+      operation.failedEventId = event.id;
+      break;
+    }
+
+    case "git.push.approved": {
+      requireCreated(snapshot, event);
+      const approval = event.data;
+      validateGitPushApproval(snapshot, approval);
+      if (snapshot.gitPushApprovals.some(({ approvalId }) =>
+        approvalId === approval.approvalId)) {
+        throw new TaskStateError(`Git push approval already exists: ${approval.approvalId}`);
+      }
+      snapshot.gitPushApprovals.push({
+        ...approval,
+        eventId: event.id,
+        at: event.at,
+        actor: event.actor,
+        consumedBy: null,
+      });
+      break;
+    }
+
+    case "git.push.requested": {
+      requireCreated(snapshot, event);
+      const request = event.data;
+      validateGitPushRequest(snapshot, request);
+      if (snapshot.gitPushes.some(({ operationId }) =>
+        operationId === request.operationId)) {
+        throw new TaskStateError(`Git push operation already exists: ${request.operationId}`);
+      }
+      const approval = snapshot.gitPushApprovals.find(({ eventId }) =>
+        eventId === request.approvalEventId);
+      if (!approval || approval.consumedBy !== null ||
+        !sameGitPushBinding(approval, request)) {
+        throw new TaskStateError("Git push request lacks a matching unused approval");
+      }
+      approval.consumedBy = request.operationId;
+      snapshot.gitPushes.push({
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+        failure: null,
+      });
+      break;
+    }
+
+    case "git.push.completed": {
+      requireCreated(snapshot, event);
+      const operation = requireGitPushOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId) {
+        throw new TaskStateError("Git push result does not match its request");
+      }
+      validateGitPushResult(operation, event.data.result);
+      operation.status = "completed";
+      operation.result = { ...event.data.result };
+      operation.completedEventId = event.id;
+      break;
+    }
+
+    case "git.push.failed": {
+      requireCreated(snapshot, event);
+      const operation = requireGitPushOperation(
+        snapshot, event.data.operationId, "requested",
+      );
+      if (event.data.requestEventId !== operation.requestEventId ||
+        event.data.code !== "remote_branch_absent") {
+        throw new TaskStateError("Git push failure does not match its request");
+      }
+      operation.status = "failed";
+      operation.failure = event.data.code;
       operation.failedEventId = event.id;
       break;
     }
@@ -1202,6 +1277,15 @@ function validateDraftPrBinding(snapshot, value) {
   if (value.headSha !== snapshot.worktree?.headSha) {
     throw new TaskStateError("Draft PR head SHA does not match the active lease");
   }
+  if (!(snapshot.gitPushes || []).some((operation) =>
+    operation.status === "completed" &&
+    operation.repository.toLowerCase() === value.repository.toLowerCase() &&
+    operation.branch === value.headBranch && operation.headSha === value.headSha &&
+    operation.result?.remoteHeadSha === value.headSha)) {
+    throw new TaskStateError(
+      "Draft PR target requires a completed exact-head branch push",
+    );
+  }
 }
 
 function requirePassingActiveValidation(snapshot) {
@@ -1293,6 +1377,117 @@ function validateCommitResult(operation, result) {
     JSON.stringify(result.committer) !== JSON.stringify(expectedIdentity)) {
     throw new TaskStateError("Git commit result does not match its durable request");
   }
+}
+
+function validateGitPushApproval(snapshot, approval) {
+  const expectedKeys = [
+    "approvalId", "approverType", "branch", "decision", "headSha",
+    "repository",
+  ];
+  if (!approval || typeof approval !== "object" || Array.isArray(approval) ||
+    Object.keys(approval).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git push approval fields are invalid");
+  }
+  requireIdentifier("Git push approval ID", approval.approvalId);
+  requireNonEmpty("Git push repository", approval.repository);
+  requireNonEmpty("Git push branch", approval.branch);
+  requireFullSha("Git push head SHA", approval.headSha);
+  if (approval.decision !== "approved" || approval.approverType !== "human") {
+    throw new TaskStateError("Git push requires explicit human approval");
+  }
+  validateGitPushTaskTarget(snapshot, approval);
+  if (snapshot.gitPushes.some(({ status }) => status === "completed")) {
+    throw new TaskStateError("Task already has a completed Git push");
+  }
+}
+
+function validateGitPushRequest(snapshot, request) {
+  const expectedKeys = [
+    "approvalEventId", "approvalId", "attemptId", "branch",
+    "expectedRemoteHeadSha", "headSha", "operationId", "remoteName",
+    "remoteRef", "repository",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git push request fields are invalid");
+  }
+  requireIdentifier("Git push operation ID", request.operationId);
+  requireIdentifier("Git push attempt ID", request.attemptId);
+  requireIdentifier("Git push approval ID", request.approvalId);
+  requireNonEmpty("Git push approval event", request.approvalEventId);
+  if (request.remoteName !== "origin" ||
+    request.remoteRef !== `refs/heads/${request.branch}` ||
+    request.expectedRemoteHeadSha !== null ||
+    snapshot.gitPushes.some(({ status }) =>
+      new Set(["requested", "completed"]).has(status))) {
+    throw new TaskStateError("Git push request is not a new exact task branch");
+  }
+  validateGitPushTaskTarget(snapshot, request);
+  const approval = snapshot.gitPushApprovals.find(({ approvalId }) =>
+    approvalId === request.approvalId);
+  if (!approval || approval.eventId !== request.approvalEventId ||
+    !sameGitPushBinding(approval, request)) {
+    throw new TaskStateError("Git push request changed its approved target");
+  }
+}
+
+function validateGitPushTaskTarget(snapshot, value) {
+  const validation = snapshot.validationRuns.at(-1);
+  const commit = snapshot.gitCommits.at(-1);
+  if (snapshot.repo.toLowerCase() !== value.repository.toLowerCase() ||
+    snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    snapshot.worktree.branch !== value.branch ||
+    snapshot.worktree.headSha !== value.headSha || validation?.passed !== true ||
+    validation.finalHeadSha !== value.headSha || commit?.status !== "completed" ||
+    commit.result?.headSha !== value.headSha) {
+    throw new TaskStateError(
+      "Git push target must match the controlled commit and passing validation",
+    );
+  }
+}
+
+function validateGitPushResult(operation, result) {
+  const expectedKeys = [
+    "branch", "evidenceKind", "headSha", "previousHeadSha", "pushed",
+    "remoteHeadSha", "remoteName", "remoteRef", "repository",
+    "transportOutputSha256",
+  ];
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+    Object.keys(result).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git push result fields are invalid");
+  }
+  if (!new Set(["push-confirmation", "remote-reconciliation"]).has(
+    result.evidenceKind)) {
+    throw new TaskStateError("Git push evidence kind is invalid");
+  }
+  if (result.repository !== operation.repository ||
+    result.remoteName !== "origin" || result.branch !== operation.branch ||
+    result.remoteRef !== operation.remoteRef || result.headSha !== operation.headSha ||
+    result.previousHeadSha !== null || result.remoteHeadSha !== operation.headSha ||
+    result.pushed !== true ||
+    (result.evidenceKind === "push-confirmation" &&
+      !/^[a-f0-9]{64}$/u.test(result.transportOutputSha256)) ||
+    (result.evidenceKind === "remote-reconciliation" &&
+      result.transportOutputSha256 !== null)) {
+    throw new TaskStateError("Git push result does not match its approved request");
+  }
+}
+
+function requireGitPushOperation(snapshot, operationId, status) {
+  requireIdentifier("Git push operation ID", operationId);
+  const operation = snapshot.gitPushes.find(({ operationId: id }) =>
+    id === operationId);
+  if (!operation || operation.status !== status) {
+    throw new TaskStateError(
+      `Git push operation ${operationId} requires status ${status}`,
+    );
+  }
+  return operation;
+}
+
+function sameGitPushBinding(left, right) {
+  return ["repository", "branch", "headSha"].every((field) =>
+    left[field] === right[field]);
 }
 
 function validateLocalValidationRequest(snapshot, request) {

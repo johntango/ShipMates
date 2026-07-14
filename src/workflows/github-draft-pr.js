@@ -262,13 +262,17 @@ function binding({ repository, headBranch, headSha, baseBranch, title, body }) {
 }
 
 function validateTaskTarget(snapshot, { repository, headSha }) {
+  const push = [...(snapshot.gitPushes || [])].reverse().find((operation) =>
+    operation.status === "completed" &&
+    operation.repository.toLowerCase() === repository.toLowerCase() &&
+    operation.headSha === headSha && operation.result?.remoteHeadSha === headSha);
   if (
     snapshot.repo.toLowerCase() !== repository.toLowerCase() ||
     snapshot.state !== "validating" ||
     snapshot.worktree?.status !== "leased" ||
     snapshot.worktree.headSha !== headSha ||
     snapshot.validationRuns.at(-1)?.passed !== true ||
-    snapshot.validationRuns.at(-1)?.finalHeadSha !== headSha
+    snapshot.validationRuns.at(-1)?.finalHeadSha !== headSha || !push
   ) {
     throw new GitHubDraftPullRequestWorkflowError(
       "Draft PR target must match a passing validation on the active leased head",

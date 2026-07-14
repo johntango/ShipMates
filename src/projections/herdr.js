@@ -24,10 +24,12 @@ export function projectHerdrSnapshot(snapshot) {
     projectDraftPullRequest,
   );
   const commits = (snapshot.gitCommits || []).map(projectGitCommit);
+  const pushes = (snapshot.gitPushes || []).map(projectGitPush);
   const attention = deriveAttention({
     snapshot,
     workers,
     commits,
+    pushes,
     draftPullRequests,
     latestValidation,
     latestGitHub,
@@ -56,6 +58,7 @@ export function projectHerdrSnapshot(snapshot) {
     worktree: projectWorktree(snapshot.worktree),
     workers,
     commits,
+    pushes,
     validation: projectValidation(latestValidation),
     github: {
       draftPullRequests,
@@ -81,6 +84,15 @@ export function projectHerdrSnapshot(snapshot) {
           consumedBy: approval.consumedBy,
         }),
       ),
+      push: (snapshot.gitPushApprovals || []).map((approval) => ({
+        approvalId: approval.approvalId,
+        actor: approval.actor,
+        repository: approval.repository,
+        branch: approval.branch,
+        headSha: approval.headSha,
+        decision: approval.decision,
+        consumedBy: approval.consumedBy,
+      })),
     },
     recovery: latestRecovery === null ? null : {
       auditId: latestRecovery.auditId,
@@ -106,6 +118,8 @@ export function projectHerdrSnapshot(snapshot) {
       pendingDraftPullRequests: draftPullRequests.filter(
         ({ status }) => status === "requested",
       ).length,
+      pushes: pushes.length,
+      pendingPushes: pushes.filter(({ status }) => status === "requested").length,
       requiredChecksSatisfied: latestGitHub?.requiredChecks?.satisfied ?? null,
       attentionItems: attention.length,
       syntheses: syntheses.length,
@@ -124,6 +138,7 @@ export function renderHerdrView(projection) {
     `${safe(projection.task.repository)}  events=${projection.source.eventsCount}  last=${safe(projection.source.lastEventId)}`,
     `worktree: ${projection.worktree ? `${safe(projection.worktree.status)} ${safe(projection.worktree.headSha)}` : "none"}`,
     `workers: ${projection.summary.workers} (${projection.summary.activeWorkers} active, ${projection.summary.pendingReplies} replies pending)`,
+    `pushes: ${projection.summary.pushes} (${projection.summary.pendingPushes} pending)`,
     `draft PRs: ${projection.summary.draftPullRequests} (${projection.summary.pendingDraftPullRequests} pending)`,
     `CI required checks: ${formatNullableBoolean(projection.summary.requiredChecksSatisfied)}`,
     `recovery: ${projection.recovery ? (!projection.recovery.current ? "stale" : projection.recovery.safeToResume ? "safe" : "required") : "not audited"}`,
@@ -146,6 +161,14 @@ export function renderHerdrView(projection) {
     for (const operation of projection.github.draftPullRequests) {
       lines.push(
         `- ${safe(operation.operationId)}: ${safe(operation.status)}; PR=${operation.pullRequest?.number ?? "none"}; head=${safe(operation.headSha)}`,
+      );
+    }
+  }
+  if (projection.pushes.length > 0) {
+    lines.push("", "Git pushes");
+    for (const operation of projection.pushes) {
+      lines.push(
+        `- ${safe(operation.operationId)}: ${safe(operation.status)}; branch=${safe(operation.branch)}; head=${safe(operation.headSha)}`,
       );
     }
   }
@@ -270,6 +293,22 @@ function projectGitCommit(operation) {
   };
 }
 
+function projectGitPush(operation) {
+  return {
+    operationId: operation.operationId,
+    approvalId: operation.approvalId,
+    status: operation.status,
+    repository: operation.repository,
+    branch: operation.branch,
+    headSha: operation.headSha,
+    remoteHeadSha: operation.result?.remoteHeadSha || null,
+    evidenceKind: operation.result?.evidenceKind || null,
+    failure: operation.failure,
+    requestEventId: operation.requestEventId,
+    completedEventId: operation.completedEventId || null,
+  };
+}
+
 function projectDraftPullRequest(operation) {
   return {
     operationId: operation.operationId,
@@ -311,7 +350,7 @@ function projectCi(observation) {
 }
 
 function deriveAttention({
-  snapshot, workers, commits, draftPullRequests, latestValidation, latestGitHub,
+  snapshot, workers, commits, pushes, draftPullRequests, latestValidation, latestGitHub,
   latestRecovery, recoveryCurrent, syntheses, followUps,
 }) {
   const result = [];
@@ -346,6 +385,25 @@ function deriveAttention({
         `Git commit operation ${operation.operationId} needs reconciliation`,
       ));
     }
+  }
+  for (const operation of pushes) {
+    if (operation.status === "requested") {
+      result.push(item(
+        "git_push_reconciliation",
+        `Git push operation ${operation.operationId} needs remote reconciliation`,
+      ));
+    } else if (operation.status === "failed") {
+      result.push(item(
+        "git_push_approval",
+        `Git push operation ${operation.operationId} needs a new human approval`,
+      ));
+    }
+  }
+  if (latestValidation?.passed === true && pushes.length === 0) {
+    result.push(item(
+      "git_push_approval",
+      "Validated task commit awaits exact-head push approval",
+    ));
   }
   if ((snapshot.validationRequests || []).some(({ status }) => status === "requested")) {
     result.push(item(

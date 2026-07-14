@@ -18,6 +18,7 @@ The projection includes:
 - worker backend, pane, status, thread, verification kind, changed-path count,
   and reply status;
 - controlled commit status, exact head, tree, and changed-path count;
+- exact-head push approval, operation status, remote head, and recovery need;
 - latest local validation;
 - draft-PR creation and latest exact-head CI observation;
 - merge and draft-PR approvals;
@@ -37,8 +38,9 @@ audit as `stale` and adds an attention item. A synthesis with outcome
 `review_required` also becomes an attention item, while its report prose and
 proposed-check text remain outside the projection. Selected follow-ups remain
 attention items until their verified replies are durably resolved.
-Incomplete commit or validation intent also appears as a reconciliation
-attention item.
+Incomplete commit, push, or validation intent also appears as a reconciliation
+attention item. A passing validated head with no push is shown as awaiting
+exact-head push approval.
 
 ## Commands
 

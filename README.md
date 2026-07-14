@@ -86,6 +86,8 @@ Implemented repository artifacts include:
   reconciliation;
 - runtime verification of the pinned no-mistakes binary, plus durable
   exact-head validation intent and result evidence before publication;
+- a separately human-approved exact-head push gateway for new task branches,
+  with durable intent and read-only remote reconciliation;
 - a local Codex MCP runtime wrapped as one strict, read-only Firstmate scout
   tool with no conversational handoff;
 - architecture and GitHub governance documentation;
@@ -486,6 +488,15 @@ disabled. Both commit and validation crash windows fail closed without an
 automatic repeat. See the
 [commit and validation guide](docs/controlled-commit-validation.md).
 
+### Step 28: Publish one exact task head
+
+Firstmate can now consume a separate human approval bound to one repository,
+new task branch, and full validated SHA. It records intent before a fixed
+full-SHA refspec push, independently confirms the remote head, and refuses the
+default branch, existing remote branches, force updates, dirty worktrees, and
+implicit retry. An uncertain transport result is resolved only by read-only
+remote reconciliation. See the [exact-head push guide](docs/exact-head-push.md).
+
 ## Running the current checks
 
 Run the ShipMates tests after `npm install`:
@@ -538,9 +549,10 @@ at its expected head.
   as a production dependency.
 - Exact-tree proof refuses concurrent changes to `main`; patch-based
   reconciliation is future work.
-- The draft-PR gateway does not push branches, update PRs, rerun workflows, mark
-  PRs ready, comment, merge, or delete anything. Its live write path has not
-  been exercised in this stage.
+- Branch publication and draft-PR creation remain separate human-approved
+  operations. Neither gateway updates PRs, reruns workflows, marks PRs ready,
+  comments, merges, or deletes anything; their live write paths have not been
+  exercised in this stage.
 - lavish-axi review is not yet wired into the full executable path. Herdr
   receives best-effort live worker, commit, and validation status in addition
   to its deterministic read-only projection, but it remains non-authoritative.
@@ -554,9 +566,9 @@ at its expected head.
 
 The next sequence is:
 
-1. add an explicitly human-approved, exact-head branch push, then connect the
-   existing draft-PR and exact-head CI gateways without broadening worker
-   authority.
+1. connect the separately approved draft-PR creation and exact-head CI
+   observation workflows to the interactive Firstmate delivery path without
+   broadening worker authority.
 
 We will keep using `Shipmates-Practice` for each stage and will not advance a
 sensitive transition without exact evidence and explicit human approval.

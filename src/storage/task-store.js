@@ -147,6 +147,54 @@ export class TaskStore {
     });
   }
 
+  async recordGitPushApproval({ taskId, actor, approval, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.push.approved",
+      at,
+      actor,
+      data: approval,
+    });
+  }
+
+  async requestGitPush({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.push.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordGitPushCompleted({
+    taskId, actor, operationId, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.push.completed",
+      at,
+      actor,
+      data: { operationId, requestEventId, result },
+    });
+  }
+
+  async recordGitPushFailure({
+    taskId, actor, operationId, requestEventId, code, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.push.failed",
+      at,
+      actor,
+      data: { operationId, requestEventId, code },
+    });
+  }
+
   async requestGitCommit({ taskId, actor, request, eventId, at }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),

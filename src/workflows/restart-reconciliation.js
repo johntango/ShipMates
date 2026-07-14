@@ -28,6 +28,7 @@ export class RestartReconciler {
       workerCheck(snapshot),
       ...scoutFollowUpChecks(snapshot),
       commitCheck(snapshot),
+      pushCheck(snapshot),
       validationCheck(snapshot),
       draftPullRequestCheck(snapshot),
       ...(await this.#githubChecks(snapshot)),
@@ -482,6 +483,46 @@ function commitCheck(snapshot) {
       operationId: completed.operationId,
       headSha: completed.result.headSha,
       treeSha: completed.result.treeSha,
+    },
+  });
+}
+
+function pushCheck(snapshot) {
+  const operations = snapshot.gitPushes || [];
+  const pending = operations.find(({ status }) => status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "git-push",
+      `Git push ${pending.operationId} has durable intent but no result`,
+      "reconcile_git_push",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
+  const latest = operations.at(-1);
+  if (!latest) return check("git-push", "not_applicable", "Task has no Git push");
+  if (latest.status === "failed") {
+    return recoveryCheck(
+      "git-push",
+      `Git push ${latest.operationId} did not publish a branch`,
+      "request_new_git_push_approval",
+      { source: { kind: "task-ledger", eventId: latest.failedEventId } },
+    );
+  }
+  if (latest.status !== "completed" ||
+    latest.result?.remoteHeadSha !== latest.headSha ||
+    latest.headSha !== snapshot.worktree?.headSha) {
+    return recoveryCheck(
+      "git-push",
+      "Git push evidence does not match the active leased head",
+      "inspect_remote_task_branch_manually",
+    );
+  }
+  return check("git-push", "pass", `Remote task branch is ${latest.headSha}`, {
+    source: { kind: "task-ledger", eventId: latest.completedEventId },
+    observed: {
+      operationId: latest.operationId,
+      branch: latest.branch,
+      headSha: latest.headSha,
     },
   });
 }

@@ -14,9 +14,11 @@ Creation requires a separate durable human approval. The approval binds:
 - SHA-256 digests of the PR title and body.
 
 The task must still be in `validating` with a passing local-only validation for
-the exact active Treehouse lease. Immediately before recording write intent,
-ShipMates reads the remote head branch and requires the approved SHA. One
-approval can be consumed by one creation operation.
+the exact active Treehouse lease. The ledger must also contain a completed
+[exact-head push](exact-head-push.md) for the same repository, branch, and SHA.
+Immediately before recording write intent, ShipMates reads the remote head
+branch and requires the approved SHA. One approval can be consumed by one
+creation operation.
 
 The title and body are read from files by the CLI. The ledger stores their
 digests, not the body. Credentials and raw GitHub failures are never stored.

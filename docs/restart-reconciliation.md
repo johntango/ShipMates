@@ -23,6 +23,9 @@ The reconciler:
   reconciliation, or resolution from an already verified reply;
 - identifies controlled commit intent without a result and directs the operator
   to read-only commit reconciliation;
+- identifies exact-head push intent without a result and directs the operator
+  to read-only remote reconciliation; a proven absent branch requires a new
+  human approval rather than a retry;
 - identifies pinned local validation intent without a result and refuses an
   automatic rerun;
 - checks whether validation evidence matches the active lease;

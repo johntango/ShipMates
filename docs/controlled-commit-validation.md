@@ -56,8 +56,11 @@ npm run firstmate
   -> verified workspace-write worker
   -> durable controlled commit
   -> durable pinned local-only validation
-  -> stop in validating state before publication
+  -> stop in validating state awaiting exact-head push approval
 ```
+
+Publication is a separate human-approved capability described in the
+[exact-head push guide](exact-head-push.md).
 
 Set `NO_MISTAKES_BIN` to the pinned executable when it is not at the development
 default `/private/tmp/shipmates-no-mistakes-v1.37.0/no-mistakes`.

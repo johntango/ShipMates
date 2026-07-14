@@ -236,7 +236,7 @@ test("records typed Firstmate runs and rejects inconsistent authority", () => {
   );
 });
 
-test("binds draft PR creation to human approval and the validated leased head", () => {
+test("blocks draft PR creation until the validated head has an exact branch push", () => {
   const title = "Practice draft";
   const binding = {
     repository: "johntango/Shipmates-Practice",
@@ -247,47 +247,18 @@ test("binds draft PR creation to human approval and the validated leased head", 
     bodySha256: createHash("sha256").update("Body").digest("hex"),
   };
   const lifecycle = validationLifecycleEvents(localValidationReport()).slice(0, -1);
-  const snapshot = replayTaskEvents([
-    ...lifecycle,
-    event("draft-approved", "github.draft_pr.approved", {
-      approvalId: "approval-001",
-      ...binding,
-      decision: "approved",
-      approverType: "human",
-    }),
-    event("draft-requested", "github.draft_pr.create.requested", {
-      operationId: "create-001",
-      approvalId: "approval-001",
-      approvalEventId: "draft-approved",
-      ...binding,
-    }),
-    event("draft-completed", "github.draft_pr.create.completed", {
-      operationId: "create-001",
-      requestEventId: "draft-requested",
-      pullRequest: {
-        repository: binding.repository,
-        number: 3,
-        url: "https://github.com/johntango/Shipmates-Practice/pull/3",
-        state: "open",
-        draft: true,
-        title,
-        base: { repository: binding.repository, branch: "main", sha: "d".repeat(40) },
-        head: {
-          repository: binding.repository,
-          owner: "johntango",
-          branch: binding.headBranch,
-          sha: binding.headSha,
-        },
-        updatedAt: "2026-07-13T10:00:00.000Z",
-        observedAt: "2026-07-13T10:00:00.000Z",
-        source: { kind: "github-rest", endpoint: "repos/johntango/Shipmates-Practice/pulls/3" },
-      },
-    }),
-  ]);
-
-  assert.equal(snapshot.githubDraftPrApprovals[0].consumedBy, "create-001");
-  assert.equal(snapshot.githubDraftPullRequests[0].status, "completed");
-  assert.equal(snapshot.githubDraftPullRequests[0].pullRequest.number, 3);
+  assert.throws(
+    () => replayTaskEvents([
+      ...lifecycle,
+      event("draft-approved", "github.draft_pr.approved", {
+        approvalId: "approval-001",
+        ...binding,
+        decision: "approved",
+        approverType: "human",
+      }),
+    ]),
+    /completed exact-head branch push/u,
+  );
 });
 
 function createdEvent({ at = "2026-07-13T10:00:00.000Z" } = {}) {
