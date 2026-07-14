@@ -31,6 +31,8 @@ Human-selected synthesis checks are documented in the
 [scout follow-up guide](docs/scout-follow-up.md).
 Durable workspace-write execution is documented in the
 [mutating Codex worker guide](docs/codex-ship.md).
+Controlled commit creation and pinned exact-head validation are documented in
+the [commit and validation guide](docs/controlled-commit-validation.md).
 
 ## Current status
 
@@ -79,15 +81,20 @@ Implemented repository artifacts include:
   authority;
 - a durable Treehouse-bound mutating-worker supervisor with crash-recoverable
   artifacts and exact staged, unstaged, and untracked path verification;
+- a durable Firstmate-controlled Git commit stage with fixed identity,
+  single-parent verification, exact changed-path binding, and read-only crash
+  reconciliation;
+- runtime verification of the pinned no-mistakes binary, plus durable
+  exact-head validation intent and result evidence before publication;
 - a local Codex MCP runtime wrapped as one strict, read-only Firstmate scout
   tool with no conversational handoff;
 - architecture and GitHub governance documentation;
 - live, sanitized Herdr execution visibility for Firstmate scouts and the local
   implementation worker.
 
-Crash-safe Codex thread continuation and exactly two concurrent read-only
-scouts are implemented. A durable supervisor for mutating workers is still
-planned work.
+Crash-safe Codex thread continuation, exactly two concurrent read-only scouts,
+one durable mutating worker, controlled commit creation, and pinned local
+validation are implemented.
 
 ## How we developed ShipMates
 
@@ -468,6 +475,17 @@ structured report. Verified uncommitted changes remain in the lease for the
 next commit and validation stage. See the
 [mutating worker guide](docs/codex-ship.md).
 
+### Step 27: Create and validate the exact task commit
+
+Firstmate now records commit intent before staging the independently verified
+worker paths. It creates one fixed-identity, single-parent task commit, verifies
+the message, parent, tree, branch, cleanliness, and exact base-to-head path set,
+then advances the leased authoritative SHA. A digest-verified no-mistakes
+binary validates that exact clean commit with every remote-capable step
+disabled. Both commit and validation crash windows fail closed without an
+automatic repeat. See the
+[commit and validation guide](docs/controlled-commit-validation.md).
+
 ## Running the current checks
 
 Run the ShipMates tests after `npm install`:
@@ -523,9 +541,9 @@ at its expected head.
 - The draft-PR gateway does not push branches, update PRs, rerun workflows, mark
   PRs ready, comment, merge, or delete anything. Its live write path has not
   been exercised in this stage.
-- no-mistakes and lavish-axi review are not yet wired into the full executable
-  path. Herdr now receives best-effort live worker status in addition to its
-  deterministic read-only projection, but it remains non-authoritative.
+- lavish-axi review is not yet wired into the full executable path. Herdr
+  receives best-effort live worker, commit, and validation status in addition
+  to its deterministic read-only projection, but it remains non-authoritative.
 - Mutating-worker concurrency remains deliberately disabled; the only parallel
   path is exactly two read-only scouts.
 - Synthesis is exact and deliberately non-semantic. Similar claims with
@@ -536,9 +554,9 @@ at its expected head.
 
 The next sequence is:
 
-1. add a Firstmate-controlled Git commit stage for the verified changed paths,
-   then run the pinned local-only no-mistakes gate against that exact commit
-   before requesting any publishing authority.
+1. add an explicitly human-approved, exact-head branch push, then connect the
+   existing draft-PR and exact-head CI gateways without broadening worker
+   authority.
 
 We will keep using `Shipmates-Practice` for each stage and will not advance a
 sensitive transition without exact evidence and explicit human approval.

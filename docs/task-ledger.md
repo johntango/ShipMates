@@ -132,6 +132,13 @@ Mutating workers reuse the worker lifecycle with `mode=ship` and
 commit and branch plus the exact staged, unstaged, and untracked path set. It is
 not a no-mutation proof and does not authorize commit or publication.
 
+The controlled commit stage adds `git.commit.requested` before staging and
+`git.commit.completed` only after independent single-parent, identity, message,
+tree, cleanliness, and changed-path verification. Completion advances the
+active lease's authoritative head. The validation stage similarly records
+`validation.local.requested` before invoking the pinned local-only gate and
+binds its result to that exact head, branch, intent digest, and binary pin.
+
 The Herdr adapter reads the replaceable task snapshot and creates an ephemeral
 operator projection. It never writes a status event back into the ledger; see
 the [Herdr status guide](herdr-status.md).

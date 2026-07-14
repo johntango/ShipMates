@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { CodexWorkerRuntime } from "../src/adapters/codex-worker.js";
 import { HerdrExecutionObserver } from "../src/adapters/herdr-execution.js";
 import { HerdrPaneClient, HerdrPanePool } from "../src/adapters/herdr-pane.js";
+import { ControlledGitCommitAdapter } from "../src/adapters/git-commit.js";
+import { NoMistakesLocalGate } from "../src/adapters/no-mistakes.js";
 import { TreehouseWorktreeManager } from "../src/adapters/treehouse.js";
 import {
   createFirstmateId,
@@ -15,6 +17,8 @@ import { FirstmateShell } from "../src/workflows/firstmate.js";
 import { FirstmateLocalExecutor } from "../src/workflows/firstmate-local-executor.js";
 import { prepareFirstmateLocalWrite } from "../src/workflows/firstmate-local-write.js";
 import { CodexShipWorkflow } from "../src/workflows/codex-ship.js";
+import { FirstmateCommitWorkflow } from "../src/workflows/firstmate-commit.js";
+import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
 
 const rawArgs = process.argv.slice(2);
 const classifyOnlyIndex = rawArgs.indexOf("--classify-only");
@@ -83,7 +87,16 @@ if (!classifyOnly) {
     new URL("../schemas/codex-worker-report.schema.json", import.meta.url),
   );
   let implementationWorkflow = null;
+  let commitWorkflow = null;
+  let validationWorkflow = null;
   if (result.classification.requiredAuthority === "local_write") {
+    const binaryPath = process.env.NO_MISTAKES_BIN ||
+      "/private/tmp/shipmates-no-mistakes-v1.37.0/no-mistakes";
+    const gate = new NoMistakesLocalGate({
+      binaryPath,
+      stateRoot: path.join(rootDir, "no-mistakes"),
+    });
+    await gate.verifyPin();
     const manager = new TreehouseWorktreeManager();
     const prepared = await prepareFirstmateLocalWrite({
       store,
@@ -100,6 +113,16 @@ if (!classifyOnly) {
       schemaPath,
       actor: "firstmate",
       observer: herdrObserver,
+    });
+    commitWorkflow = new FirstmateCommitWorkflow({
+      store,
+      commitAdapter: new ControlledGitCommitAdapter(),
+      actor: "firstmate",
+    });
+    validationWorkflow = new LocalValidationWorkflow({
+      store,
+      gate,
+      actor: "firstmate",
     });
   }
   console.error(
@@ -122,6 +145,36 @@ if (!classifyOnly) {
     message,
     classification: result.classification,
   });
+  if (execution.implementation?.report.status === "completed") {
+    await herdrObserver?.firstmateStage({
+      taskId,
+      repoPath,
+      message: "Creating controlled task commit",
+      customStatus: "committing",
+    });
+    const committed = await commitWorkflow.run({ taskId });
+    await herdrObserver?.firstmateStage({
+      taskId,
+      repoPath,
+      message: "Running pinned local validation",
+      customStatus: "validating",
+    });
+    const validated = await validationWorkflow.run({ taskId, intent: message });
+    execution.delivery = {
+      status: validated.report.passed ? "validated" : "validation_failed",
+      commit: committed.commit,
+      validation: validated.report,
+    };
+    await herdrObserver?.firstmateStage({
+      taskId,
+      repoPath,
+      state: validated.report.passed ? "idle" : "blocked",
+      message: validated.report.passed
+        ? "Exact task commit passed pinned local validation"
+        : "Local validation did not pass",
+      customStatus: execution.delivery.status,
+    });
+  }
 }
 if (classifyOnly) {
   await herdrObserver?.firstmateStage({

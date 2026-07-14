@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -11,6 +12,12 @@ export const LOCAL_ONLY_SKIP_STEPS = Object.freeze([
   "pr",
   "ci",
 ]);
+
+export const PINNED_NO_MISTAKES_DARWIN_ARM64 = Object.freeze({
+  version: "v1.37.0",
+  sourceCommit: "78e4dcb234274199717acafa90abca5cf7013993",
+  binarySha256: "d4558d241100cb48196a00864157fb70bb5aa241ac376bcbf48dda88fb033e34",
+});
 
 const allSteps = Object.freeze([
   "intent",
@@ -29,14 +36,22 @@ export class NoMistakesLocalGate {
     binaryPath,
     stateRoot = path.resolve(".shipmates/no-mistakes"),
     runner = runCommand,
+    binaryReader = readFile,
+    pin = PINNED_NO_MISTAKES_DARWIN_ARM64,
     clock = () => new Date(),
     timeoutMs = 30 * 60 * 1_000,
   } = {}) {
     requireNonEmpty(binaryPath, "binaryPath");
     if (typeof runner !== "function") throw new TypeError("runner must be a function");
+    if (typeof binaryReader !== "function") {
+      throw new TypeError("binaryReader must be a function");
+    }
+    validatePin(pin);
     this.binaryPath = path.resolve(binaryPath);
     this.stateRoot = path.resolve(stateRoot);
     this.runner = runner;
+    this.binaryReader = binaryReader;
+    this.pin = Object.freeze({ ...pin });
     this.clock = clock;
     this.timeoutMs = timeoutMs;
   }
@@ -46,6 +61,7 @@ export class NoMistakesLocalGate {
     requireNonEmpty(intent, "intent");
     const expected = fullSha(expectedHeadSha, "expectedHeadSha");
     const workingDirectory = path.resolve(worktreePath);
+    const pinEvidence = await this.verifyPin();
     const before = await this.#inspect(workingDirectory);
     if (before.headSha !== expected || before.dirty) {
       throw new NoMistakesGateError(
@@ -100,9 +116,14 @@ export class NoMistakesLocalGate {
       tool: {
         name: "no-mistakes",
         binary: this.binaryPath,
+        pinned: true,
+        version: pinEvidence.version,
+        sourceCommit: pinEvidence.sourceCommit,
+        binarySha256: pinEvidence.binarySha256,
       },
       mode: "local-only",
       remoteOperations: false,
+      intentSha256: digest(intent),
       command: {
         args,
         skipSteps: [...LOCAL_ONLY_SKIP_STEPS],
@@ -126,6 +147,16 @@ export class NoMistakesLocalGate {
         stderrSha256: digest(result.stderr),
       },
     };
+  }
+
+  pinEvidence() {
+    return Object.freeze({
+      name: "no-mistakes",
+      pinned: true,
+      version: this.pin.version,
+      sourceCommit: this.pin.sourceCommit,
+      binarySha256: this.pin.binarySha256,
+    });
   }
 
   async #inspect(worktreePath) {
@@ -154,6 +185,34 @@ export class NoMistakesLocalGate {
       branch: requireNonEmpty(branch.stdout.trim(), "Git branch"),
       dirty: status.stdout.length > 0,
     };
+  }
+
+  async verifyPin() {
+    let bytes;
+    try {
+      bytes = await this.binaryReader(this.binaryPath);
+    } catch (cause) {
+      throw new NoMistakesGateError("Could not read pinned no-mistakes binary", {
+        cause,
+      });
+    }
+    const binarySha256 = digest(bytes);
+    if (binarySha256 !== this.pin.binarySha256) {
+      throw new NoMistakesGateError("no-mistakes binary digest does not match its pin");
+    }
+    const result = await this.runner(this.binaryPath, ["--version"], {
+      cwd: path.dirname(this.binaryPath),
+      env: localOnlyEnvironment({ stateRoot: this.stateRoot, taskId: "pin-check" }),
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const match = /^no-mistakes version (v\d+\.\d+\.\d+) \(([a-f0-9]{7,40})\)(?:\s|$)/u
+      .exec(result.stdout.trim());
+    if (result.exitCode !== 0 || !match || match[1] !== this.pin.version ||
+      !this.pin.sourceCommit.startsWith(match[2])) {
+      throw new NoMistakesGateError("no-mistakes version does not match its pin");
+    }
+    return this.pin;
   }
 }
 
@@ -354,4 +413,13 @@ function requireNonEmpty(value, label) {
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function validatePin(pin) {
+  if (!pin || typeof pin !== "object" ||
+    !/^v\d+\.\d+\.\d+$/u.test(pin.version) ||
+    !/^[a-f0-9]{40}$/u.test(pin.sourceCommit) ||
+    !/^[a-f0-9]{64}$/u.test(pin.binarySha256)) {
+    throw new TypeError("pin must contain exact version, source commit, and binary digest");
+  }
 }

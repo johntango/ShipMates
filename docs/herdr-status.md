@@ -17,6 +17,7 @@ The projection includes:
 - Treehouse worktree status and exact head;
 - worker backend, pane, status, thread, verification kind, changed-path count,
   and reply status;
+- controlled commit status, exact head, tree, and changed-path count;
 - latest local validation;
 - draft-PR creation and latest exact-head CI observation;
 - merge and draft-PR approvals;
@@ -36,6 +37,8 @@ audit as `stale` and adds an attention item. A synthesis with outcome
 `review_required` also becomes an attention item, while its report prose and
 proposed-check text remain outside the projection. Selected follow-ups remain
 attention items until their verified replies are durably resolved.
+Incomplete commit or validation intent also appears as a reconciliation
+attention item.
 
 ## Commands
 

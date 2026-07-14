@@ -34,6 +34,8 @@ test("projects deterministic monitoring state without prompt or report content",
   assert.doesNotMatch(serialized, /SECRET BRIEF|SECRET REPORT|SECRET BODY/u);
   assert.equal(first.workers[0].threadId, "thread-001");
   assert.equal(first.workers[0].paneId, "w1:p2");
+  assert.equal(first.commits[0].headSha, "a".repeat(40));
+  assert.equal(first.commits[0].changedPaths, 1);
 });
 
 test("reads a real task without changing authoritative or snapshot bytes", async (t) => {
@@ -173,6 +175,20 @@ function richSnapshot() {
         failure: null,
       }],
     }],
+    gitCommits: [{
+      operationId: "commit-v1",
+      status: "completed",
+      baseHeadSha: "b".repeat(40),
+      branch: "shipmates/task-001",
+      changedPaths: ["src/change.js"],
+      requestEventId: "commit-request",
+      completedEventId: "commit-completed",
+      result: {
+        headSha,
+        treeSha: "c".repeat(40),
+      },
+    }],
+    validationRequests: [],
     validationRuns: [{
       runId: "validation-001",
       passed: false,

@@ -127,19 +127,14 @@ test("rejects GitHub evidence for the wrong repository or head SHA", () => {
 
 test("records capability-limited local validation and rejects a remote step", () => {
   const report = localValidationReport();
-  const snapshot = replayTaskEvents([
-    createdEvent(),
-    event("validation", "validation.local.recorded", { report }),
-  ]);
+  const lifecycle = validationLifecycleEvents(report).slice(0, -1);
+  const snapshot = replayTaskEvents(lifecycle);
   assert.equal(snapshot.validationRuns[0].passed, true);
 
   const unsafe = localValidationReport();
   unsafe.steps.find(({ step }) => step === "push").status = "completed";
   assert.throws(
-    () => replayTaskEvents([
-      createdEvent(),
-      event("validation", "validation.local.recorded", { report: unsafe }),
-    ]),
+    () => replayTaskEvents(validationLifecycleEvents(unsafe).slice(0, -1)),
     /remote step push was not skipped/u,
   );
 });
@@ -379,6 +374,15 @@ function localValidationReport() {
     taskId: "ledger-test-001",
     mode: "local-only",
     remoteOperations: false,
+    intentSha256: createHash("sha256").update("Validate locally").digest("hex"),
+    tool: {
+      name: "no-mistakes",
+      binary: "/private/tmp/no-mistakes",
+      pinned: true,
+      version: "v1.37.0",
+      sourceCommit: "d".repeat(40),
+      binarySha256: "e".repeat(64),
+    },
     startedAt: "2026-07-13T10:00:00.000Z",
     completedAt: "2026-07-13T10:00:00.000Z",
     branch: "feature/local-gate",

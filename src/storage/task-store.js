@@ -147,14 +147,54 @@ export class TaskStore {
     });
   }
 
-  async recordLocalValidation({ taskId, actor, report, eventId, at }) {
+  async requestGitCommit({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.commit.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordGitCommitCompleted({
+    taskId, actor, operationId, requestEventId, result, eventId, at,
+  }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "git.commit.completed",
+      at,
+      actor,
+      data: { operationId, requestEventId, result },
+    });
+  }
+
+  async requestLocalValidation({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "validation.local.requested",
+      at,
+      actor,
+      data: request,
+    });
+  }
+
+  async recordLocalValidation({
+    taskId, actor, report, operationId, requestEventId, eventId, at,
+  }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),
       taskId,
       type: "validation.local.recorded",
       at,
       actor,
-      data: { report },
+      data: {
+        report,
+        ...(operationId ? { operationId, requestEventId } : {}),
+      },
     });
   }
 

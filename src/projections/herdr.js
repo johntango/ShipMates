@@ -23,9 +23,11 @@ export function projectHerdrSnapshot(snapshot) {
   const draftPullRequests = (snapshot.githubDraftPullRequests || []).map(
     projectDraftPullRequest,
   );
+  const commits = (snapshot.gitCommits || []).map(projectGitCommit);
   const attention = deriveAttention({
     snapshot,
     workers,
+    commits,
     draftPullRequests,
     latestValidation,
     latestGitHub,
@@ -53,6 +55,7 @@ export function projectHerdrSnapshot(snapshot) {
     },
     worktree: projectWorktree(snapshot.worktree),
     workers,
+    commits,
     validation: projectValidation(latestValidation),
     github: {
       draftPullRequests,
@@ -253,6 +256,20 @@ function projectValidation(validation) {
   };
 }
 
+function projectGitCommit(operation) {
+  return {
+    operationId: operation.operationId,
+    status: operation.status,
+    baseHeadSha: operation.baseHeadSha,
+    branch: operation.branch,
+    changedPaths: operation.changedPaths.length,
+    headSha: operation.result?.headSha || null,
+    treeSha: operation.result?.treeSha || null,
+    requestEventId: operation.requestEventId,
+    completedEventId: operation.completedEventId || null,
+  };
+}
+
 function projectDraftPullRequest(operation) {
   return {
     operationId: operation.operationId,
@@ -294,7 +311,7 @@ function projectCi(observation) {
 }
 
 function deriveAttention({
-  snapshot, workers, draftPullRequests, latestValidation, latestGitHub,
+  snapshot, workers, commits, draftPullRequests, latestValidation, latestGitHub,
   latestRecovery, recoveryCurrent, syntheses, followUps,
 }) {
   const result = [];
@@ -321,6 +338,20 @@ function deriveAttention({
         `Draft PR operation ${operation.operationId} needs reconciliation`,
       ));
     }
+  }
+  for (const operation of commits) {
+    if (operation.status === "requested") {
+      result.push(item(
+        "git_commit_reconciliation",
+        `Git commit operation ${operation.operationId} needs reconciliation`,
+      ));
+    }
+  }
+  if ((snapshot.validationRequests || []).some(({ status }) => status === "requested")) {
+    result.push(item(
+      "validation_reconciliation",
+      "Pinned local validation needs manual reconciliation",
+    ));
   }
   if (latestValidation && latestValidation.passed !== true) {
     result.push(item("validation_not_passing", "Latest local validation is not passing"));

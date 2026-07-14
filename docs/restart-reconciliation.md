@@ -21,6 +21,10 @@ The reconciler:
   terminal independently verified workspace-write worker;
 - distinguishes selected scout follow-ups that need safe dispatch, reply-artifact
   reconciliation, or resolution from an already verified reply;
+- identifies controlled commit intent without a result and directs the operator
+  to read-only commit reconciliation;
+- identifies pinned local validation intent without a result and refuses an
+  automatic rerun;
 - checks whether validation evidence matches the active lease;
 - re-reads every recorded PR's immutable head, state, and required checks.
 

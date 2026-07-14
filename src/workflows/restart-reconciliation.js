@@ -27,6 +27,7 @@ export class RestartReconciler {
       ...(await this.#worktreeChecks(snapshot)),
       workerCheck(snapshot),
       ...scoutFollowUpChecks(snapshot),
+      commitCheck(snapshot),
       validationCheck(snapshot),
       draftPullRequestCheck(snapshot),
       ...(await this.#githubChecks(snapshot)),
@@ -402,6 +403,16 @@ function scoutFollowUpChecks(snapshot) {
 }
 
 function validationCheck(snapshot) {
+  const pending = (snapshot.validationRequests || []).find(({ status }) =>
+    status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "validation",
+      `Local validation ${pending.operationId} has intent but no durable result`,
+      "reconcile_local_validation_manually",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
   const latest = snapshot.validationRuns.at(-1);
   const requiresPass = new Set([
     "awaiting_human",
@@ -438,6 +449,40 @@ function validationCheck(snapshot) {
   return check("validation", "pass", `Local validation ${latest.runId} passed`, {
     source: { kind: "task-ledger", eventId: latest.eventId },
     observed: { runId: latest.runId, headSha: latest.finalHeadSha },
+  });
+}
+
+function commitCheck(snapshot) {
+  const operations = snapshot.gitCommits || [];
+  const pending = operations.find(({ status }) => status === "requested");
+  if (pending) {
+    return recoveryCheck(
+      "git-commit",
+      `Git commit ${pending.operationId} has durable intent but no result`,
+      "reconcile_git_commit",
+      { source: { kind: "task-ledger", eventId: pending.requestEventId } },
+    );
+  }
+  const completed = operations.at(-1);
+  if (!completed) {
+    return check("git-commit", "not_applicable", "Task has no controlled commit");
+  }
+  if (snapshot.worktree?.status !== "leased" ||
+    completed.result?.headSha !== snapshot.worktree.headSha ||
+    completed.result?.clean !== true) {
+    return recoveryCheck(
+      "git-commit",
+      "Controlled commit evidence does not match the active lease",
+      "inspect_controlled_commit_manually",
+    );
+  }
+  return check("git-commit", "pass", `Controlled commit ${completed.result.headSha} recorded`, {
+    source: { kind: "task-ledger", eventId: completed.completedEventId },
+    observed: {
+      operationId: completed.operationId,
+      headSha: completed.result.headSha,
+      treeSha: completed.result.treeSha,
+    },
   });
 }
 

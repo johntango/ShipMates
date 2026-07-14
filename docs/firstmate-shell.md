@@ -84,17 +84,21 @@ The classified authority controls execution:
 - local-write requests run both scouts, then one workspace-write implementation
   worker with the scout reports as advisory context. The local-write path first
   acquires a task-bound Treehouse lease and records durable worker intent,
-  artifacts, and independently verified changed paths;
+  artifacts, and independently verified changed paths. Firstmate then creates
+  one exact task commit and runs the pinned local-only no-mistakes gate against
+  that commit;
 - external-write and destructive requests stop at their human-approval boundary
   before any local worker starts.
 
 Workers receive no `OPENAI_API_KEY`, `GH_TOKEN`, or `GITHUB_TOKEN`. The local
 implementation worker is told not to commit or publish and runs in Codex's
 `workspace-write` sandbox. Its exact Git changes must match its report before
-acceptance. Execution evidence is recorded under the task ledger and detailed
-worker artifacts remain under ignored `.shipmates/tasks/` state. Verified
-changes remain uncommitted in the leased `workspacePath`; they are not copied
-into the primary checkout.
+acceptance. Firstmate alone stages the verified paths with a fixed identity,
+records the resulting single-parent commit, and validates its exact SHA with a
+digest-verified no-mistakes binary. Execution evidence is recorded under the
+task ledger and detailed worker artifacts remain under ignored
+`.shipmates/tasks/` state. The committed lease is not pushed or copied into the
+primary checkout.
 
 When invoked from a Herdr pane, Firstmate also creates live worker-pane
 visibility for both scouts and the implementer. Sanitized status updates show

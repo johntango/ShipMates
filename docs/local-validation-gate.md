@@ -12,6 +12,16 @@ The binary reports source commit `78e4dcb`, matching the inspected
 `johntango/no-mistakes` commit
 `78e4dcb234274199717acafa90abca5cf7013993`.
 
+The extracted Darwin ARM64 executable is independently pinned at runtime with
+SHA-256:
+
+```text
+d4558d241100cb48196a00864157fb70bb5aa241ac376bcbf48dda88fb033e34
+```
+
+Firstmate verifies the binary digest, reported version, and source commit
+before acquiring a local-write lease and again when validation begins.
+
 ## Capability boundary
 
 The adapter always calls:
@@ -35,7 +45,8 @@ invalid.
 
 ## Evidence and refusal behavior
 
-Before execution, Firstmate independently requires the leased worktree to be
+Before execution, Firstmate records durable validation intent and independently
+requires the leased worktree to be
 clean at the recorded full SHA. After execution, it re-reads the branch, full
 SHA, and worktree status. A changed branch, dirty worktree, malformed TOON
 output, output/Git SHA disagreement, approval gate, failed step, or validator
@@ -43,7 +54,8 @@ commit cannot count as a passing local gate.
 
 The ledger stores normalized step states, findings count, exact command
 arguments, initial and final SHAs, process exit status, and SHA-256 digests of
-stdout and stderr. Raw terminal output is not authoritative evidence.
+stdout and stderr. Raw terminal output is not authoritative evidence. A
+request without a result is not automatically rerun after restart.
 
 Run an already-initialized, actively leased task in `validating` state with:
 

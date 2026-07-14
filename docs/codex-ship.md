@@ -39,8 +39,9 @@ at least one path; a blocked worker may truthfully finish with no mutation.
 
 The ledger records a `workspace-write` verification with the base and final
 SHA, before/after branch, exact changed paths, dirty state, and explicit
-`commitCreated: false`. The work remains uncommitted and leased for the next
-Firstmate-controlled commit and validation stage.
+`commitCreated: false`. Firstmate, not the worker, then creates and validates
+the exact task commit through the
+[controlled commit guide](controlled-commit-validation.md).
 
 ## Crash safety
 
@@ -74,5 +75,5 @@ the inconsistent artifacts and worktree cannot be mistaken for accepted work.
 For `local_write`, `npm run firstmate` now advances the clarified task to
 `approved_for_dispatch`, obtains a durable Treehouse lease, runs both scouts in
 that isolated workspace, and delegates implementation to this supervisor. The
-result prints the leased `workspacePath`; it does not copy uncommitted changes
-back into the primary checkout.
+result prints the leased `workspacePath`; changes and the controlled task commit
+remain in that lease and are not copied into the primary checkout.

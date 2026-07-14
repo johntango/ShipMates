@@ -25,6 +25,7 @@ test("records a safe audit when applicable durable and live state agree", async 
       { kind: "worktree", status: "not_applicable" },
       { kind: "workers", status: "not_applicable" },
       { kind: "scout-follow-ups", status: "not_applicable" },
+      { kind: "git-commit", status: "not_applicable" },
       { kind: "validation", status: "not_applicable" },
       { kind: "github-draft-pr", status: "not_applicable" },
       { kind: "github", status: "not_applicable" },
@@ -275,6 +276,45 @@ test("requires GitHub reconciliation for an interrupted draft PR write", async (
 
   assert.equal(result.report.safeToResume, false);
   assert.deepEqual(result.report.recommendedActions, ["reconcile_draft_pr_create"]);
+});
+
+test("requires read-only reconciliation for an interrupted controlled commit", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.gitCommits = [{
+    operationId: "commit-v1",
+    status: "requested",
+    requestEventId: "commit-request",
+  }];
+  const store = new MemoryStore(snapshot);
+  const reconciler = new RestartReconciler({ store, clock: () => NOW });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-commit",
+  });
+
+  assert.deepEqual(result.report.recommendedActions, ["reconcile_git_commit"]);
+});
+
+test("refuses to repeat local validation with durable intent and no result", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.validationRequests = [{
+    operationId: "validation-v1",
+    status: "requested",
+    requestEventId: "validation-request",
+  }];
+  const store = new MemoryStore(snapshot);
+  const reconciler = new RestartReconciler({ store, clock: () => NOW });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-validation",
+  });
+
+  assert.deepEqual(
+    result.report.recommendedActions,
+    ["reconcile_local_validation_manually"],
+  );
 });
 
 class MemoryStore {

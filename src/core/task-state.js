@@ -94,6 +94,8 @@ export function replayTaskEvents(events) {
     githubObservations: [],
     githubDraftPrApprovals: [],
     githubDraftPullRequests: [],
+    gitCommits: [],
+    validationRequests: [],
     validationRuns: [],
     recoveryAudits: [],
     firstmateRuns: [],
@@ -177,6 +179,20 @@ function applyEvent(snapshot, event, index) {
         ) {
           throw new TaskStateError(
             "A passing local validation for the active lease is required before human review",
+          );
+        }
+      }
+      if (to === "validating") {
+        const mutation = [...snapshot.workers].reverse().find((worker) =>
+          worker.mode === "ship" && worker.status === "reported" &&
+          worker.verification?.dirty === true);
+        const commit = snapshot.gitCommits.at(-1);
+        if (mutation && (commit?.status !== "completed" ||
+          commit.result?.headSha !== snapshot.worktree?.headSha ||
+          !sameArray(commit.result?.changedPaths || [],
+            mutation.verification.changedPaths))) {
+          throw new TaskStateError(
+            "Mutating work must have an exact controlled commit before validation",
           );
         }
       }
@@ -315,16 +331,88 @@ function applyEvent(snapshot, event, index) {
       break;
     }
 
+    case "git.commit.requested": {
+      requireCreated(snapshot, event);
+      const request = event.data;
+      validateCommitRequest(snapshot, request);
+      if (snapshot.gitCommits.some(({ operationId }) =>
+        operationId === request.operationId)) {
+        throw new TaskStateError(`Git commit operation already exists: ${request.operationId}`);
+      }
+      snapshot.gitCommits.push({
+        ...request,
+        status: "requested",
+        requestEventId: event.id,
+        result: null,
+      });
+      break;
+    }
+
+    case "git.commit.completed": {
+      requireCreated(snapshot, event);
+      const operation = snapshot.gitCommits.find(({ operationId }) =>
+        operationId === event.data.operationId);
+      if (!operation || operation.status !== "requested" ||
+        event.data.requestEventId !== operation.requestEventId) {
+        throw new TaskStateError("Git commit result does not match a pending request");
+      }
+      validateCommitResult(operation, event.data.result);
+      operation.status = "completed";
+      operation.result = { ...event.data.result };
+      operation.completedEventId = event.id;
+      snapshot.worktree.headSha = event.data.result.headSha;
+      snapshot.worktree.proof = null;
+      break;
+    }
+
+    case "validation.local.requested": {
+      requireCreated(snapshot, event);
+      validateLocalValidationRequest(snapshot, event.data);
+      if (snapshot.validationRequests.some(({ operationId }) =>
+        operationId === event.data.operationId)) {
+        throw new TaskStateError(
+          `Local validation operation already exists: ${event.data.operationId}`,
+        );
+      }
+      snapshot.validationRequests.push({
+        ...event.data,
+        status: "requested",
+        requestEventId: event.id,
+      });
+      break;
+    }
+
     case "validation.local.recorded": {
       requireCreated(snapshot, event);
       const { report } = event.data;
       validateLocalValidationReport(snapshot, report);
+      const request = snapshot.validationRequests.find(({ operationId }) =>
+        operationId === event.data.operationId);
+      if (snapshot.validationRequests.length > 0 &&
+        (!request || request.status !== "requested" ||
+          event.data.requestEventId !== request.requestEventId ||
+          request.headSha !== report.initialHeadSha ||
+          request.branch !== report.branch ||
+          request.intentSha256 !== report.intentSha256 ||
+          request.tool.binarySha256 !== report.tool.binarySha256 ||
+          request.tool.sourceCommit !== report.tool.sourceCommit ||
+          request.tool.version !== report.tool.version)) {
+        throw new TaskStateError(
+          "Local validation result does not match its durable exact-head request",
+        );
+      }
       snapshot.validationRuns.push({
         ...report,
         eventId: event.id,
         at: event.at,
         actor: event.actor,
       });
+      if (request) {
+        request.status = "completed";
+        request.completedEventId = event.id;
+        request.runId = report.runId;
+        request.passed = report.passed;
+      }
       break;
     }
 
@@ -918,7 +1006,8 @@ function validateShipWorkerVerification(snapshot, worker, report, verification) 
 }
 
 function pathIsUnsafe(value) {
-  return value.startsWith("/") || value.split("/").includes("..") ||
+  return value.startsWith("/") || value.startsWith(":") ||
+    value.split("/").includes("..") ||
     /[\p{Cc}\p{Cf}]/u.test(value) ||
     value === ".git" || value.startsWith(".git/") ||
     value === ".shipmates" || value.startsWith(".shipmates/");
@@ -1125,6 +1214,112 @@ function requirePassingActiveValidation(snapshot) {
   ) {
     throw new TaskStateError(
       "Draft PR creation requires passing validation for the active leased head",
+    );
+  }
+}
+
+function validateCommitRequest(snapshot, request) {
+  const expectedKeys = [
+    "attemptId", "baseHeadSha", "branch", "changedPaths", "message", "messageSha256",
+    "operationId", "workerId", "workerReportEventId",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git commit request fields are invalid");
+  }
+  requireIdentifier("Git commit operation ID", request.operationId);
+  requireIdentifier("Git commit attempt ID", request.attemptId);
+  requireNonEmpty("Git commit worker ID", request.workerId);
+  requireNonEmpty("Git commit worker report event ID", request.workerReportEventId);
+  requireFullSha("Git commit base SHA", request.baseHeadSha);
+  requireNonEmpty("Git commit branch", request.branch);
+  requireNonEmpty("Git commit message", request.message);
+  requireSha256("Git commit message digest", request.messageSha256);
+  if (request.message !== `ShipMates task ${snapshot.id}` ||
+    digestText(request.message) !== request.messageSha256 ||
+    snapshot.state !== "running" || snapshot.worktree?.status !== "leased" ||
+    snapshot.worktree.headSha !== request.baseHeadSha ||
+    snapshot.worktree.branch !== request.branch || snapshot.gitCommits.length !== 0) {
+    throw new TaskStateError("Git commit request does not match active task authority");
+  }
+  if (!Array.isArray(request.changedPaths) || request.changedPaths.length === 0 ||
+    !sameArray(request.changedPaths, [...request.changedPaths].sort()) ||
+    new Set(request.changedPaths).size !== request.changedPaths.length ||
+    request.changedPaths.some((value) => typeof value !== "string" || pathIsUnsafe(value))) {
+    throw new TaskStateError("Git commit paths are not a safe exact set");
+  }
+  const worker = snapshot.workers.find(({ id }) => id === request.workerId);
+  if (!worker || worker.status !== "reported" || worker.mode !== "ship" ||
+    worker.report?.status !== "completed" ||
+    worker.reportEventId !== request.workerReportEventId ||
+    worker.verification?.kind !== "workspace-write" ||
+    worker.verification?.baseHeadSha !== request.baseHeadSha ||
+    worker.verification?.headSha !== request.baseHeadSha ||
+    worker.verification?.commitCreated !== false ||
+    worker.verification?.dirty !== true ||
+    !sameArray(worker.verification.changedPaths, request.changedPaths)) {
+    throw new TaskStateError("Git commit request lacks exact verified worker changes");
+  }
+}
+
+function validateCommitResult(operation, result) {
+  const expectedKeys = [
+    "author", "baseHeadSha", "branch", "changedPaths", "clean",
+    "commitCreated", "committer", "headSha", "messageSha256", "parentSha",
+    "treeSha",
+  ];
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+    Object.keys(result).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Git commit result fields are invalid");
+  }
+  for (const [label, value] of [
+    ["Git commit base SHA", result.baseHeadSha],
+    ["Git commit head SHA", result.headSha],
+    ["Git commit parent SHA", result.parentSha],
+    ["Git commit tree SHA", result.treeSha],
+  ]) requireFullSha(label, value);
+  const expectedIdentity = {
+    name: "ShipMates Firstmate",
+    email: "firstmate@shipmates.local",
+  };
+  if (result.baseHeadSha !== operation.baseHeadSha ||
+    result.parentSha !== operation.baseHeadSha ||
+    result.headSha === operation.baseHeadSha || result.branch !== operation.branch ||
+    result.messageSha256 !== operation.messageSha256 ||
+    !Array.isArray(result.changedPaths) ||
+    !sameArray(result.changedPaths, operation.changedPaths) ||
+    result.clean !== true || result.commitCreated !== true ||
+    JSON.stringify(result.author) !== JSON.stringify(expectedIdentity) ||
+    JSON.stringify(result.committer) !== JSON.stringify(expectedIdentity)) {
+    throw new TaskStateError("Git commit result does not match its durable request");
+  }
+}
+
+function validateLocalValidationRequest(snapshot, request) {
+  const expectedKeys = [
+    "attemptId", "branch", "headSha", "intentSha256", "operationId", "tool",
+  ];
+  if (!request || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Local validation request fields are invalid");
+  }
+  requireIdentifier("Local validation operation ID", request.operationId);
+  requireIdentifier("Local validation attempt ID", request.attemptId);
+  requireFullSha("Local validation requested head", request.headSha);
+  requireNonEmpty("Local validation requested branch", request.branch);
+  requireSha256("Local validation intent digest", request.intentSha256);
+  requireNonEmpty("Local validation tool version", request.tool?.version);
+  requireFullSha("Local validation tool source commit", request.tool?.sourceCommit);
+  requireSha256("Local validation tool binary digest", request.tool?.binarySha256);
+  const toolKeys = ["binarySha256", "name", "pinned", "sourceCommit", "version"];
+  if (Object.keys(request.tool || {}).sort().join(",") !== toolKeys.join(",") ||
+    request.tool?.name !== "no-mistakes" || request.tool?.pinned !== true ||
+    snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    snapshot.worktree.headSha !== request.headSha ||
+    snapshot.worktree.branch !== request.branch ||
+    snapshot.validationRequests.length !== 0) {
+    throw new TaskStateError(
+      "Local validation request is not pinned to the active committed lease",
     );
   }
 }
@@ -1443,6 +1638,24 @@ function validateLocalValidationReport(snapshot, report) {
   requireNonEmpty("Local validation branch", report.branch);
   requireNonEmpty("Local validation run ID", report.runId);
   requireNonEmpty("Local validation run status", report.runStatus);
+  requireSha256("Local validation intent digest", report.intentSha256);
+  requireNonEmpty("Local validation tool version", report.tool?.version);
+  requireNonEmpty("Local validation tool binary", report.tool?.binary);
+  requireFullSha("Local validation tool source commit", report.tool?.sourceCommit);
+  requireSha256("Local validation tool binary digest", report.tool?.binarySha256);
+  const reportToolKeys = [
+    "binary", "binarySha256", "name", "pinned", "sourceCommit", "version",
+  ];
+  if (Object.keys(report.tool || {}).sort().join(",") !== reportToolKeys.join(",") ||
+    report.tool?.name !== "no-mistakes" || report.tool?.pinned !== true ||
+    snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    report.branch !== snapshot.worktree.branch ||
+    report.initialHeadSha !== snapshot.worktree.headSha ||
+    report.finalHeadSha !== snapshot.worktree.headSha) {
+    throw new TaskStateError(
+      "Local validation is not pinned to the exact active committed lease",
+    );
+  }
   const expectedSteps = [
     "intent",
     "rebase",
@@ -1472,7 +1685,12 @@ function validateLocalValidationReport(snapshot, report) {
   }
   if (
     report.command?.skipSteps?.join(",") !== "rebase,push,pr,ci" ||
-    !Array.isArray(report.command?.args) ||
+    !Array.isArray(report.command?.args) || report.command.args.length !== 6 ||
+    report.command.args[0] !== "axi" || report.command.args[1] !== "run" ||
+    report.command.args[2] !== "--intent" ||
+    digestText(report.command.args[3]) !== report.intentSha256 ||
+    report.command.args[4] !== "--skip" ||
+    report.command.args[5] !== "rebase,push,pr,ci" ||
     report.command.args.includes("--yes")
   ) {
     throw new TaskStateError("Local validation command is not capability-limited");
