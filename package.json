@@ -10,6 +10,7 @@
 		"codex:mcp-scout": "node scripts/codex-mcp-scout.js",
 		"codex:mcp-pair": "node scripts/codex-mcp-pair.js",
 		"scout:synthesize": "node scripts/scout-synthesis.js",
+		"scout:follow-up": "node scripts/scout-follow-up.js",
 		"firstmate": "node --env-file=.env scripts/firstmate.js",
 		"github:draft-pr": "node scripts/github-draft-pr.js",
 		"herdr:status": "node scripts/herdr-status.js"

@@ -119,11 +119,13 @@ we have a recovery protocol with stronger process-identity evidence.
 
 The Treehouse workflow appends typed lease request, lease result, proof, return
 request, and return result events automatically. The Codex scout workflow adds
-dispatch, thread, report, and independent-verification events. The approved
-draft-PR workflow adds human approval, pre-write intent, confirmed result, and
-recovery events; CI observations remain read-only. `.shipmates/` is local
-operational state and must not contain credentials or replace GitHub as the
-authority for remote repository facts.
+dispatch, thread, report, reply, and independent-verification events. Scout
+follow-ups add a human selection bound to a synthesis artifact and a resolution
+bound to one verified read-only reply. The approved draft-PR workflow adds human
+approval, pre-write intent, confirmed result, and recovery events; CI
+observations remain read-only. `.shipmates/` is local operational state and must
+not contain credentials or replace GitHub as the authority for remote
+repository facts.
 
 The Herdr adapter reads the replaceable task snapshot and creates an ephemeral
 operator projection. It never writes a status event back into the ledger; see

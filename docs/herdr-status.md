@@ -21,6 +21,8 @@ The projection includes:
 - merge and draft-PR approvals;
 - latest restart audit and recommended recovery actions;
 - two-scout synthesis identity, exact-head binding, outcome, and counts;
+- human-selected follow-up binding, read-only reply lifecycle, outcome, and
+  evidence counts;
 - deterministic attention items and summary counts.
 
 Worker briefs, prompts, report prose, PR bodies, API keys, GitHub tokens, and raw
@@ -31,7 +33,8 @@ JSON.
 If any event is appended after the latest restart audit, Herdr displays that
 audit as `stale` and adds an attention item. A synthesis with outcome
 `review_required` also becomes an attention item, while its report prose and
-proposed-check text remain outside the projection.
+proposed-check text remain outside the projection. Selected follow-ups remain
+attention items until their verified replies are durably resolved.
 
 ## Commands
 

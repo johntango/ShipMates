@@ -23,10 +23,11 @@ test("records a safe audit when applicable durable and live state agree", async 
     [
       { kind: "ledger", status: "pass" },
       { kind: "worktree", status: "not_applicable" },
-    { kind: "workers", status: "not_applicable" },
-    { kind: "validation", status: "not_applicable" },
-    { kind: "github-draft-pr", status: "not_applicable" },
-    { kind: "github", status: "not_applicable" },
+      { kind: "workers", status: "not_applicable" },
+      { kind: "scout-follow-ups", status: "not_applicable" },
+      { kind: "validation", status: "not_applicable" },
+      { kind: "github-draft-pr", status: "not_applicable" },
+      { kind: "github", status: "not_applicable" },
     ],
   );
 });
@@ -176,6 +177,32 @@ test("requires artifact reconciliation for an interrupted worker reply", async (
 
   assert.equal(result.report.safeToResume, false);
   assert.deepEqual(result.report.recommendedActions, ["reconcile_worker_replies"]);
+});
+
+test("distinguishes a selected follow-up before reply intent", async () => {
+  const snapshot = baseSnapshot();
+  snapshot.scoutFollowUps = [{
+    followUpId: "follow-up-001",
+    status: "selected",
+    workerId: "scout-001",
+    replyId: "reply-001",
+  }];
+  snapshot.workers = [{
+    id: "scout-001",
+    status: "reported",
+    threadId: "thread-1",
+    replies: [],
+  }];
+  const store = new MemoryStore(snapshot);
+  const reconciler = new RestartReconciler({ store, clock: () => NOW });
+
+  const result = await reconciler.audit({
+    taskId: "recovery-001",
+    auditId: "restart-follow-up",
+  });
+
+  assert.equal(result.report.safeToResume, false);
+  assert.deepEqual(result.report.recommendedActions, ["resume_scout_follow_ups"]);
 });
 
 test("requires GitHub reconciliation for an interrupted draft PR write", async () => {

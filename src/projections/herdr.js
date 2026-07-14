@@ -18,6 +18,7 @@ export function projectHerdrSnapshot(snapshot) {
   const latestRecovery = snapshot.recoveryAudits.at(-1) || null;
   const recoveryCurrent = latestRecovery?.eventId === snapshot.lastEventId;
   const syntheses = (snapshot.scoutSyntheses || []).map(projectScoutSynthesis);
+  const followUps = (snapshot.scoutFollowUps || []).map(projectScoutFollowUp);
   const workers = snapshot.workers.map(projectWorker);
   const draftPullRequests = (snapshot.githubDraftPullRequests || []).map(
     projectDraftPullRequest,
@@ -31,6 +32,7 @@ export function projectHerdrSnapshot(snapshot) {
     latestRecovery,
     recoveryCurrent,
     syntheses,
+    followUps,
   });
   return {
     schemaVersion: 1,
@@ -85,6 +87,7 @@ export function projectHerdrSnapshot(snapshot) {
       current: recoveryCurrent,
     },
     syntheses,
+    followUps,
     attention,
     summary: {
       workers: workers.length,
@@ -103,6 +106,8 @@ export function projectHerdrSnapshot(snapshot) {
       requiredChecksSatisfied: latestGitHub?.requiredChecks?.satisfied ?? null,
       attentionItems: attention.length,
       syntheses: syntheses.length,
+      followUps: followUps.length,
+      pendingFollowUps: followUps.filter(({ status }) => status === "selected").length,
     },
   };
 }
@@ -120,6 +125,7 @@ export function renderHerdrView(projection) {
     `CI required checks: ${formatNullableBoolean(projection.summary.requiredChecksSatisfied)}`,
     `recovery: ${projection.recovery ? (!projection.recovery.current ? "stale" : projection.recovery.safeToResume ? "safe" : "required") : "not audited"}`,
     `scout syntheses: ${projection.summary.syntheses}`,
+    `scout follow-ups: ${projection.summary.followUps} (${projection.summary.pendingFollowUps} pending)`,
   ];
   if (projection.workers.length > 0) {
     lines.push("", "Workers");
@@ -145,6 +151,14 @@ export function renderHerdrView(projection) {
     for (const synthesis of projection.syntheses) {
       lines.push(
         `- ${safe(synthesis.id)}: ${safe(synthesis.outcome)}; agreements=${synthesis.counts.agreements}; disagreements=${synthesis.counts.disagreements}; unsupported=${synthesis.counts.unsupportedClaims}; follow-ups=${synthesis.counts.followUpChecks}`,
+      );
+    }
+  }
+  if (projection.followUps.length > 0) {
+    lines.push("", "Scout follow-ups");
+    for (const followUp of projection.followUps) {
+      lines.push(
+        `- ${safe(followUp.id)}: ${safe(followUp.status)}; synthesis=${safe(followUp.synthesisId)}; check=${followUp.checkIndex}; action=${safe(followUp.action)}; worker=${safe(followUp.workerId)}; outcome=${safe(followUp.outcome || "pending")}`,
       );
     }
   }
@@ -189,6 +203,28 @@ function projectScoutSynthesis(synthesis) {
     artifactSha256: synthesis.artifactSha256,
     outcome: synthesis.outcome,
     counts: { ...synthesis.counts },
+  };
+}
+
+function projectScoutFollowUp(followUp) {
+  return {
+    id: followUp.followUpId,
+    status: followUp.status,
+    synthesisId: followUp.synthesisId,
+    synthesisEventId: followUp.synthesisEventId,
+    synthesisArtifactSha256: followUp.synthesisArtifactSha256,
+    leaseHeadSha: followUp.leaseHeadSha,
+    checkIndex: followUp.checkIndex,
+    checkSha256: followUp.checkSha256,
+    action: followUp.action,
+    workerId: followUp.workerId,
+    replyId: followUp.replyId,
+    selectionEventId: followUp.selectionEventId,
+    selectedBy: followUp.selectedBy,
+    outcome: followUp.outcome,
+    counts: followUp.counts === null ? null : { ...followUp.counts },
+    replyEventId: followUp.replyEventId,
+    resolvedEventId: followUp.resolvedEventId,
   };
 }
 
@@ -256,7 +292,7 @@ function projectCi(observation) {
 
 function deriveAttention({
   snapshot, workers, draftPullRequests, latestValidation, latestGitHub,
-  latestRecovery, recoveryCurrent, syntheses,
+  latestRecovery, recoveryCurrent, syntheses, followUps,
 }) {
   const result = [];
   if (new Set(["lease_requested", "return_requested"]).has(snapshot.worktree?.status)) {
@@ -297,6 +333,19 @@ function deriveAttention({
       result.push(item(
         "scout_synthesis_review",
         `Scout synthesis ${synthesis.id} has disagreements or uncorroborated claims`,
+      ));
+    }
+  }
+  for (const followUp of followUps) {
+    if (followUp.status === "selected") {
+      result.push(item(
+        "scout_follow_up_pending",
+        `Scout follow-up ${followUp.id} needs execution or reconciliation`,
+      ));
+    } else if (followUp.outcome !== "completed") {
+      result.push(item(
+        "scout_follow_up_unresolved",
+        `Scout follow-up ${followUp.id} ended ${followUp.outcome}`,
       ));
     }
   }

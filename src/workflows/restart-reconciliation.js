@@ -26,6 +26,7 @@ export class RestartReconciler {
       ledgerCheck(snapshot),
       ...(await this.#worktreeChecks(snapshot)),
       workerCheck(snapshot),
+      ...scoutFollowUpChecks(snapshot),
       validationCheck(snapshot),
       draftPullRequestCheck(snapshot),
       ...(await this.#githubChecks(snapshot)),
@@ -316,6 +317,53 @@ function workerCheck(snapshot) {
       id, status, threadId, paneId: paneId ?? null,
     })) },
   );
+}
+
+function scoutFollowUpChecks(snapshot) {
+  const followUps = snapshot.scoutFollowUps || [];
+  const pending = followUps.filter(({ status }) => status === "selected");
+  if (pending.length === 0) {
+    return [check(
+      "scout-follow-ups",
+      followUps.length === 0 ? "not_applicable" : "pass",
+      followUps.length === 0
+        ? "Task has no human-selected scout follow-up"
+        : "Every selected scout follow-up has a durable resolution",
+    )];
+  }
+  const withCompletedReply = [];
+  const withoutReplyIntent = [];
+  const withUncertainReply = [];
+  for (const followUp of pending) {
+    const worker = snapshot.workers.find(({ id }) => id === followUp.workerId);
+    const reply = worker?.replies?.find(({ id }) => id === followUp.replyId);
+    if (reply?.status === "completed") withCompletedReply.push(followUp.followUpId);
+    else if (reply?.status === "requested") withUncertainReply.push(followUp.followUpId);
+    else withoutReplyIntent.push(followUp.followUpId);
+  }
+  const checks = [];
+  if (withUncertainReply.length > 0) {
+    checks.push(recoveryCheck(
+      "scout-follow-ups",
+      `Selected follow-ups have uncertain replies: ${withUncertainReply.join(", ")}`,
+      "reconcile_worker_replies",
+    ));
+  }
+  if (withCompletedReply.length > 0) {
+    checks.push(recoveryCheck(
+      "scout-follow-ups",
+      `Verified replies need follow-up resolution: ${withCompletedReply.join(", ")}`,
+      "resolve_scout_follow_ups",
+    ));
+  }
+  if (withoutReplyIntent.length > 0) {
+    checks.push(recoveryCheck(
+      "scout-follow-ups",
+      `Selected checks have no reply intent: ${withoutReplyIntent.join(", ")}`,
+      "resume_scout_follow_ups",
+    ));
+  }
+  return checks;
 }
 
 function validationCheck(snapshot) {

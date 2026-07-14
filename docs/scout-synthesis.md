@@ -65,6 +65,9 @@ npm run scout:synthesize -- run \
 
 The CLI prints only the durable binding and counts, not the embedded reports.
 
+A human can bind and execute one proposed check through the read-only continuation
+gate described in the [scout follow-up guide](scout-follow-up.md).
+
 ## Verified live exercise
 
 `pair-evidence-review-v1` synthesized `scout-pane-left-v2` and

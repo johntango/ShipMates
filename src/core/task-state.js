@@ -98,6 +98,7 @@ export function replayTaskEvents(events) {
     recoveryAudits: [],
     firstmateRuns: [],
     scoutSyntheses: [],
+    scoutFollowUps: [],
   };
   const eventIds = new Set();
 
@@ -653,6 +654,32 @@ function applyEvent(snapshot, event, index) {
       break;
     }
 
+    case "scout.follow_up.selected": {
+      requireCreated(snapshot, event);
+      const selection = event.data;
+      validateScoutFollowUpSelection(snapshot, selection);
+      if (snapshot.scoutFollowUps.some(({ followUpId }) =>
+        followUpId === selection.followUpId)) {
+        throw new TaskStateError(
+          `Scout follow-up already exists: ${selection.followUpId}`,
+        );
+      }
+      snapshot.scoutFollowUps.push({
+        ...selection,
+        status: "selected",
+        selectionEventId: event.id,
+        selectedAt: event.at,
+        selectedBy: event.actor,
+        outcome: null,
+        reportSha256: null,
+        counts: null,
+        replyEventId: null,
+        resolvedEventId: null,
+        resolvedAt: null,
+      });
+      break;
+    }
+
     case "worker.reply.requested": {
       const worker = findWorker(snapshot, event.data.workerId);
       const { replyId, threadId, leaseHeadSha, sandbox, promptSha256 } = event.data;
@@ -731,6 +758,29 @@ function applyEvent(snapshot, event, index) {
       break;
     }
 
+    case "scout.follow_up.resolved": {
+      requireCreated(snapshot, event);
+      const resolution = event.data;
+      const followUp = snapshot.scoutFollowUps.find(({ followUpId }) =>
+        followUpId === resolution.followUpId);
+      if (!followUp || followUp.status !== "selected") {
+        throw new TaskStateError(
+          `Scout follow-up cannot be resolved: ${resolution.followUpId}`,
+        );
+      }
+      validateScoutFollowUpResolution(snapshot, followUp, resolution);
+      Object.assign(followUp, {
+        status: "resolved",
+        outcome: resolution.outcome,
+        reportSha256: resolution.reportSha256,
+        counts: { ...resolution.counts },
+        replyEventId: resolution.replyEventId,
+        resolvedEventId: event.id,
+        resolvedAt: event.at,
+      });
+      break;
+    }
+
     default:
       throw new TaskStateError(`Unknown event type: ${event.type}`);
   }
@@ -806,6 +856,100 @@ function validateScoutSynthesisRecord(snapshot, record) {
   if (first.worktreePath !== second.worktreePath ||
     first.worktreePath !== snapshot.worktree.worktreePath) {
     throw new TaskStateError("Scout synthesis workers have different worktree authority");
+  }
+}
+
+function validateScoutFollowUpSelection(snapshot, selection) {
+  if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
+    throw new TaskStateError("Scout follow-up selection must be an object");
+  }
+  const expectedKeys = [
+    "action", "checkIndex", "checkSha256", "followUpId", "leaseHeadSha",
+    "promptSha256", "replyId", "selectorType", "synthesisArtifactSha256",
+    "synthesisEventId", "synthesisId", "workerId",
+  ];
+  if (Object.keys(selection).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Scout follow-up selection fields are invalid");
+  }
+  for (const field of [
+    "followUpId", "synthesisId", "synthesisEventId", "leaseHeadSha", "action",
+    "workerId", "replyId",
+  ]) requireNonEmpty(`follow-up ${field}`, selection[field]);
+  requireIdentifier("followUpId", selection.followUpId);
+  requireIdentifier("replyId", selection.replyId);
+  requireSha256("follow-up synthesis digest", selection.synthesisArtifactSha256);
+  requireSha256("follow-up check digest", selection.checkSha256);
+  requireSha256("follow-up prompt digest", selection.promptSha256);
+  if (selection.selectorType !== "human") {
+    throw new TaskStateError("Scout follow-up selection requires a human selector");
+  }
+  const synthesis = snapshot.scoutSyntheses.find(({ synthesisId }) =>
+    synthesisId === selection.synthesisId);
+  if (!synthesis || synthesis.eventId !== selection.synthesisEventId ||
+    synthesis.artifactSha256 !== selection.synthesisArtifactSha256 ||
+    synthesis.leaseHeadSha !== selection.leaseHeadSha ||
+    !synthesis.workerIds.includes(selection.workerId)) {
+    throw new TaskStateError("Scout follow-up does not match its synthesis authority");
+  }
+  if (!Number.isSafeInteger(selection.checkIndex) || selection.checkIndex < 0 ||
+    selection.checkIndex >= synthesis.counts.followUpChecks) {
+    throw new TaskStateError("Scout follow-up check index is invalid");
+  }
+  if (snapshot.state !== "running" || snapshot.worktree?.status !== "leased" ||
+    snapshot.worktree.headSha !== selection.leaseHeadSha) {
+    throw new TaskStateError(
+      "Scout follow-up requires a running task with its matching active lease",
+    );
+  }
+  const worker = snapshot.workers.find(({ id }) => id === selection.workerId);
+  if (!worker || worker.status !== "reported" || worker.mode !== "scout" ||
+    worker.sandbox !== "read-only" || worker.verification?.noMutation !== true ||
+    worker.verification?.dirty !== false ||
+    worker.verification?.headSha !== selection.leaseHeadSha ||
+    worker.replies?.some(({ id }) => id === selection.replyId)) {
+    throw new TaskStateError("Scout follow-up worker lacks matching read-only authority");
+  }
+}
+
+function validateScoutFollowUpResolution(snapshot, followUp, resolution) {
+  const expectedKeys = [
+    "counts", "followUpId", "leaseHeadSha", "outcome", "replyEventId",
+    "replyId", "reportSha256", "selectionEventId", "workerId",
+  ];
+  if (!resolution || typeof resolution !== "object" || Array.isArray(resolution) ||
+    Object.keys(resolution).sort().join(",") !== expectedKeys.sort().join(",")) {
+    throw new TaskStateError("Scout follow-up resolution fields are invalid");
+  }
+  if (resolution.selectionEventId !== followUp.selectionEventId ||
+    resolution.workerId !== followUp.workerId ||
+    resolution.replyId !== followUp.replyId ||
+    resolution.leaseHeadSha !== followUp.leaseHeadSha) {
+    throw new TaskStateError("Scout follow-up resolution changed its selection binding");
+  }
+  requireNonEmpty("follow-up reply event", resolution.replyEventId);
+  requireSha256("follow-up report digest", resolution.reportSha256);
+  const worker = snapshot.workers.find(({ id }) => id === followUp.workerId);
+  const reply = worker?.replies?.find(({ id }) => id === followUp.replyId);
+  if (!reply || reply.status !== "completed" ||
+    reply.completedEventId !== resolution.replyEventId ||
+    reply.promptSha256 !== followUp.promptSha256 ||
+    reply.leaseHeadSha !== followUp.leaseHeadSha ||
+    reply.verification?.noMutation !== true || reply.verification?.dirty !== false ||
+    reply.verification?.headSha !== followUp.leaseHeadSha ||
+    resolution.reportSha256 !== digestText(stableStringify(reply.report)) ||
+    resolution.outcome !== reply.report.status) {
+    throw new TaskStateError("Scout follow-up resolution lacks its verified reply evidence");
+  }
+  const countKeys = ["files", "risks", "tests"];
+  if (!resolution.counts || typeof resolution.counts !== "object" ||
+    Array.isArray(resolution.counts) ||
+    Object.keys(resolution.counts).sort().join(",") !== countKeys.join(",") ||
+    countKeys.some((key) => !Number.isSafeInteger(resolution.counts[key]) ||
+      resolution.counts[key] < 0) ||
+    resolution.counts.files !== reply.report.files.length ||
+    resolution.counts.tests !== reply.report.tests.length ||
+    resolution.counts.risks !== reply.report.risks.length) {
+    throw new TaskStateError("Scout follow-up resolution counts are invalid");
   }
 }
 
@@ -963,6 +1107,19 @@ function validateCreatedDraftPullRequest(snapshot, operation, pullRequest) {
 
 function digestText(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function stableStringify(value) {
+  return JSON.stringify(sortValue(value));
+}
+
+function sortValue(value) {
+  if (Array.isArray(value)) return value.map(sortValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) =>
+      [key, sortValue(value[key])]));
+  }
+  return value;
 }
 
 function requireSha256(label, value) {

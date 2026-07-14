@@ -17,6 +17,8 @@ The reconciler:
 - compares Treehouse state and holder with the durable worktree lifecycle;
 - independently checks the active worktree SHA and cleanliness;
 - identifies worker starts whose durable artifacts need reconciliation;
+- distinguishes selected scout follow-ups that need safe dispatch, reply-artifact
+  reconciliation, or resolution from an already verified reply;
 - checks whether validation evidence matches the active lease;
 - re-reads every recorded PR's immutable head, state, and required checks.
 

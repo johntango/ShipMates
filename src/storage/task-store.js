@@ -439,6 +439,28 @@ export class TaskStore {
     });
   }
 
+  async recordScoutFollowUpSelection({ taskId, actor, selection, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "scout.follow_up.selected",
+      at,
+      actor,
+      data: selection,
+    });
+  }
+
+  async recordScoutFollowUpResolution({ taskId, actor, resolution, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "scout.follow_up.resolved",
+      at,
+      actor,
+      data: resolution,
+    });
+  }
+
   async requestWorkerReply({
     taskId, actor, workerId, replyId, threadId, leaseHeadSha, sandbox,
     promptSha256, eventId, at,

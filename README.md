@@ -27,6 +27,8 @@ The human-facing intake boundary is documented in the
 [one-agent Firstmate shell guide](docs/firstmate-shell.md).
 The bounded Codex MCP integration is documented in the
 [Codex MCP specialist guide](docs/codex-mcp-specialist.md).
+Human-selected synthesis checks are documented in the
+[scout follow-up guide](docs/scout-follow-up.md).
 
 ## Current status
 
@@ -442,6 +444,15 @@ Herdr panes, validation, or GitHub. Herdr displays only its outcome and counts
 and now marks a restart audit stale when later evidence is appended. See the
 [synthesis guide](docs/scout-synthesis.md).
 
+### Step 25: Run one human-selected read-only follow-up
+
+A human can now select one exact proposed check from a bound synthesis and
+continue either source scout through the existing crash-safe Codex MCP reply
+path. The selection binds the synthesis event, artifact digest, check digest,
+leased SHA, worker thread, reply ID, and prompt digest before execution. The
+result is independently verified for no mutation and recorded by reply event
+and report digest. See the [scout follow-up guide](docs/scout-follow-up.md).
+
 ## Running the current checks
 
 Run the ShipMates tests after `npm install`:
@@ -509,9 +520,9 @@ at its expected head.
 
 The next sequence is:
 
-1. add a human-selected, read-only follow-up gate that can bind one proposed
-   synthesis check to the existing scout evidence and record its resolution
-   without granting edit or GitHub authority.
+1. replace the direct local implementation launcher with a durable mutating
+   worker supervisor that uses Treehouse authority, crash-safe Codex artifacts,
+   independent validation, and restart reconciliation.
 
 We will keep using `Shipmates-Practice` for each stage and will not advance a
 sensitive transition without exact evidence and explicit human approval.
