@@ -405,6 +405,24 @@ function deriveAttention({
       "Validated task commit awaits exact-head push approval",
     ));
   }
+  const completedPush = [...pushes].reverse().find(({ status }) => status === "completed");
+  if (latestValidation?.passed === true && completedPush && draftPullRequests.length === 0) {
+    result.push(item(
+      "draft_pr_approval",
+      "Pushed exact task head awaits separate draft-PR approval",
+    ));
+  }
+  const completedDraft = [...draftPullRequests].reverse().find(
+    ({ status }) => status === "completed",
+  );
+  if (completedDraft && (!latestGitHub ||
+    latestGitHub.pullRequest.number !== completedDraft.pullRequest?.number ||
+    latestGitHub.pullRequest.head.sha !== completedDraft.headSha)) {
+    result.push(item(
+      "ci_observation_required",
+      "Completed draft PR awaits exact-head CI observation",
+    ));
+  }
   if ((snapshot.validationRequests || []).some(({ status }) => status === "requested")) {
     result.push(item(
       "validation_reconciliation",

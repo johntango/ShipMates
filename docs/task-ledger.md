@@ -145,6 +145,11 @@ approval is bound to one repository, new task branch, and full validated SHA.
 Uncertain requested operations remain durable and must be reconciled remotely
 without repeating the push.
 
+Firstmate delivery mode adds no competing state store. It derives its stage
+from these push events, the existing separately approved draft-PR events, and
+`github.status.recorded` observations. CI evidence is accepted for delivery only
+when the PR number and head match the completed draft operation's approved SHA.
+
 The Herdr adapter reads the replaceable task snapshot and creates an ephemeral
 operator projection. It never writes a status event back into the ledger; see
 the [Herdr status guide](herdr-status.md).

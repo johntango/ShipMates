@@ -203,6 +203,12 @@ test("records an exact approved push before permitting separate draft PR approva
     store,
     writeGateway: { create: async () => pull },
     readGateway: {
+      readRepository: async () => ({
+        nameWithOwner: "johntango/ShipMates",
+        defaultBranch: "main",
+        archived: false,
+        disabled: false,
+      }),
       readBranchHead: async () => ({ sha: HEAD }),
       readPullRequest: async () => pull,
       listPullRequests: async () => [pull],

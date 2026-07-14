@@ -187,6 +187,55 @@ test("shows exact-head push approval and remote reconciliation states", () => {
   assert.match(renderHerdrView(recoveryProjection), /push-001: requested/u);
 });
 
+test("shows the separate draft approval and exact-head CI delivery stages", () => {
+  const snapshot = richSnapshot();
+  snapshot.validationRuns[0].passed = true;
+  snapshot.validationRuns[0].outcome = "passed";
+  snapshot.gitPushes = [{
+    operationId: "push-001",
+    approvalId: "push-approval-001",
+    status: "completed",
+    repository: snapshot.repo,
+    branch: snapshot.worktree.branch,
+    headSha: snapshot.worktree.headSha,
+    result: { remoteHeadSha: snapshot.worktree.headSha },
+    failure: null,
+    requestEventId: "push-request",
+    completedEventId: "push-completed",
+  }];
+  snapshot.githubDraftPullRequests = [];
+  snapshot.githubObservations = [];
+
+  const awaitingApproval = projectHerdrSnapshot(snapshot);
+  assert.equal(
+    awaitingApproval.attention.some(({ code }) => code === "draft_pr_approval"),
+    true,
+  );
+
+  snapshot.githubDraftPullRequests = [{
+    operationId: "draft-001",
+    approvalId: "draft-approval-001",
+    status: "completed",
+    repository: snapshot.repo,
+    headBranch: snapshot.worktree.branch,
+    headSha: snapshot.worktree.headSha,
+    baseBranch: "main",
+    failure: null,
+    pullRequest: {
+      number: 7,
+      url: "https://github.com/johntango/Shipmates-Practice/pull/7",
+      state: "open",
+      draft: true,
+      head: { sha: snapshot.worktree.headSha },
+    },
+  }];
+  const awaitingCi = projectHerdrSnapshot(snapshot);
+  assert.equal(
+    awaitingCi.attention.some(({ code }) => code === "ci_observation_required"),
+    true,
+  );
+});
+
 function richSnapshot() {
   const headSha = "a".repeat(40);
   return {

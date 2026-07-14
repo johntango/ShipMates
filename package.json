@@ -15,6 +15,7 @@
 		"scout:synthesize": "node scripts/scout-synthesis.js",
 		"scout:follow-up": "node scripts/scout-follow-up.js",
 		"firstmate": "node --env-file=.env scripts/firstmate.js",
+		"firstmate:delivery": "node --env-file=.env scripts/firstmate.js --delivery",
 		"github:draft-pr": "node scripts/github-draft-pr.js",
 		"herdr:status": "node scripts/herdr-status.js"
 	},

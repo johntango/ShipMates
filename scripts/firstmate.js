@@ -12,6 +12,7 @@ import {
   discoverFirstmateContext,
 } from "../src/cli/firstmate-context.js";
 import { readFirstmateMessage } from "../src/cli/firstmate-message.js";
+import { runFirstmateDeliveryCli } from "../src/cli/firstmate-delivery.js";
 import { TaskStore } from "../src/storage/task-store.js";
 import { FirstmateShell } from "../src/workflows/firstmate.js";
 import { FirstmateLocalExecutor } from "../src/workflows/firstmate-local-executor.js";
@@ -21,6 +22,10 @@ import { FirstmateCommitWorkflow } from "../src/workflows/firstmate-commit.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
 
 const rawArgs = process.argv.slice(2);
+if (rawArgs[0] === "--delivery") {
+  await runFirstmateDeliveryCli({ args: rawArgs.slice(1) });
+  process.exit(0);
+}
 const classifyOnlyIndex = rawArgs.indexOf("--classify-only");
 const classifyOnly = classifyOnlyIndex !== -1;
 if (classifyOnly) rawArgs.splice(classifyOnlyIndex, 1);

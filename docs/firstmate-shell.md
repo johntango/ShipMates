@@ -3,7 +3,9 @@
 ShipMates now has an OpenAI Agents SDK intake shell backed by a bounded local
 executor. It owns the first conversation boundary, classifies the requested
 work, records durable intent and result events, and can dispatch local Codex
-workers. It never writes to GitHub.
+workers. Intake mode never writes to GitHub. Explicit delivery mode can invoke
+the separately approved exact-head push and draft-PR gateways for an existing
+validated task.
 
 ## Runtime boundary
 
@@ -99,7 +101,7 @@ records the resulting single-parent commit, and validates its exact SHA with a
 digest-verified no-mistakes binary. Execution evidence is recorded under the
 task ledger and detailed worker artifacts remain under ignored
 `.shipmates/tasks/` state. The committed lease is not copied into the primary
-checkout and is not pushed by the interactive run. The separate
+checkout and is not pushed by the intake run. The separate
 [`firstmate:push` workflow](exact-head-push.md) owns that exact external write.
 
 When invoked from a Herdr pane, Firstmate also creates live worker-pane
@@ -112,6 +114,20 @@ For classification without worker execution:
 ```sh
 npm run firstmate -- --classify-only
 ```
+
+## Continuing a validated task
+
+Delivery mode resumes an existing task without asking for a new prompt or
+dispatching workers:
+
+```sh
+npm run firstmate -- --delivery status TASK_ID
+```
+
+It coordinates ledger-derived exact-head push, separately approved draft-PR
+creation, and read-only CI observation. See the
+[Firstmate delivery guide](firstmate-delivery.md) for the approval and recovery
+commands.
 
 ## Explicit automation protocol
 

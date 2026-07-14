@@ -107,6 +107,7 @@ test("creates once after exact human approval and then observes CI read-only", a
     repository,
     prNumber: 3,
     requiredChecks: ["test"],
+    expectedHeadSha: headSha,
   }]);
 });
 
@@ -170,6 +171,14 @@ function workflowFor({ store, writeCalls, statusCalls = [], writeFailure = false
       },
     },
     readGateway: {
+      async readRepository() {
+        return {
+          nameWithOwner: repository,
+          defaultBranch: "main",
+          archived: false,
+          disabled: false,
+        };
+      },
       async readBranchHead() {
         return { sha: headSha };
       },
@@ -188,6 +197,22 @@ function workflowFor({ store, writeCalls, statusCalls = [], writeFailure = false
     },
   });
 }
+
+test("refuses a draft whose base is not the repository default branch", async () => {
+  const store = new MemoryStore();
+  const workflow = workflowFor({ store, writeCalls: [] });
+
+  await assert.rejects(
+    workflow.approve({
+      ...target,
+      baseBranch: "release",
+      approvalId: "approval-001",
+      humanActor: "john",
+    }),
+    /default branch/u,
+  );
+  assert.equal(store.snapshot.githubDraftPrApprovals.length, 0);
+});
 
 class MemoryStore {
   constructor() {

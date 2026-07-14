@@ -40,7 +40,9 @@ proposed-check text remain outside the projection. Selected follow-ups remain
 attention items until their verified replies are durably resolved.
 Incomplete commit, push, or validation intent also appears as a reconciliation
 attention item. A passing validated head with no push is shown as awaiting
-exact-head push approval.
+exact-head push approval. A completed push with no draft PR is shown as awaiting
+the separate draft-PR approval, and a completed draft with no matching
+observation is shown as awaiting exact-head CI evidence.
 
 ## Commands
 

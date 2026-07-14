@@ -8,7 +8,8 @@ export class GitHubDraftPullRequestWorkflow {
     statusWorkflow = null,
     actor = "firstmate",
   } = {}) {
-    if (!store || !writeGateway || !readGateway) {
+    if (!store || !writeGateway || !readGateway ||
+      typeof readGateway.readRepository !== "function") {
       throw new TypeError(
         "GitHubDraftPullRequestWorkflow requires store, writeGateway, and readGateway",
       );
@@ -33,6 +34,7 @@ export class GitHubDraftPullRequestWorkflow {
     }
     const snapshot = await this.store.getSnapshot(taskId);
     validateTaskTarget(snapshot, { repository, headSha });
+    await this.#requireDefaultBase({ repository, baseBranch });
     const approval = binding({
       repository, headBranch, headSha, baseBranch, title, body,
     });
@@ -96,6 +98,7 @@ export class GitHubDraftPullRequestWorkflow {
       );
     }
     const { owner, repo } = parseRepository(repository);
+    await this.#requireDefaultBase({ repository, baseBranch });
     const branch = await this.readGateway.readBranchHead({
       owner,
       repo,
@@ -206,7 +209,20 @@ export class GitHubDraftPullRequestWorkflow {
       repository: operation.repository,
       prNumber: operation.pullRequest.number,
       requiredChecks,
+      expectedHeadSha: operation.headSha,
     });
+  }
+
+  async #requireDefaultBase({ repository, baseBranch }) {
+    const { owner, repo } = parseRepository(repository);
+    const observed = await this.readGateway.readRepository({ owner, repo });
+    if (observed.nameWithOwner.toLowerCase() !== repository.toLowerCase() ||
+      observed.archived === true || observed.disabled === true ||
+      observed.defaultBranch !== baseBranch) {
+      throw new GitHubDraftPullRequestWorkflowError(
+        "Draft PR base must be the active repository's default branch",
+      );
+    }
   }
 
   async #recordCompleted({

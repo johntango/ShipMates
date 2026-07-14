@@ -40,7 +40,13 @@ requires exactly one matching draft. It never repeats the POST.
 CI uses the existing read-only status workflow. It re-reads the PR, branch
 protection, check runs, reviews, and workflow runs, then re-reads the PR head to
 reject moved-head evidence. Required checks are evaluated only against that
-exact SHA. This stage cannot rerun or modify a workflow.
+exact SHA. Delivery observations additionally require the stable PR head to
+equal the approved pushed SHA. Required names are the union of live
+default-branch protection and any explicit additional names. This stage cannot
+rerun or modify a workflow.
+
+Approval and creation also re-read repository metadata and require the approved
+base to be the active repository's current default branch.
 
 ## Commands
 
@@ -69,3 +75,5 @@ npm run github:draft-pr -- ci TASK_ID OPERATION_ID REQUIRED_CHECK ...
 ```
 
 Routine tests inject GitHub clients and perform no network calls or writes.
+The coordinated operator path is documented in the
+[Firstmate delivery guide](firstmate-delivery.md).

@@ -38,6 +38,50 @@ test("records a typed exact-head status report and identifies missing checks", a
   assert.equal(gateway.pullReads, 2);
 });
 
+test("binds delivery CI to the expected head and protected check policy", async () => {
+  const store = new MemoryStore();
+  const gateway = fakeGateway();
+  gateway.readBranchProtection = async () => observation({
+    repository: "johntango/Shipmates-Practice",
+    branch: "main",
+    requiredStatusChecks: {
+      contexts: ["test"],
+      checks: [{ context: "lint", appId: 1 }],
+    },
+  });
+  gateway.listCheckRuns = async () => [
+    observation(check()),
+    observation({ ...check(), id: 11, name: "lint" }),
+  ];
+  const workflow = new GitHubStatusWorkflow({ store, gateway });
+
+  const snapshot = await workflow.inspectPullRequest({
+    taskId: "github-read-001",
+    repository: "johntango/Shipmates-Practice",
+    prNumber: 2,
+    expectedHeadSha: HEAD,
+  });
+
+  assert.deepEqual(snapshot.report.requiredChecks.names, ["test", "lint"]);
+  assert.equal(snapshot.report.requiredChecks.satisfied, true);
+});
+
+test("refuses a stable PR head that differs from the approved delivery SHA", async () => {
+  const store = new MemoryStore();
+  const workflow = new GitHubStatusWorkflow({ store, gateway: fakeGateway() });
+
+  await assert.rejects(
+    workflow.inspectPullRequest({
+      taskId: "github-read-001",
+      repository: "johntango/Shipmates-Practice",
+      prNumber: 2,
+      expectedHeadSha: MOVED_HEAD,
+    }),
+    GitHubHeadMovedError,
+  );
+  assert.equal(store.records.length, 0);
+});
+
 test("refuses moved-head evidence without writing the ledger", async () => {
   const store = new MemoryStore();
   const gateway = fakeGateway({ confirmedHead: MOVED_HEAD });
@@ -71,6 +115,30 @@ test("refuses ambiguous check names", async () => {
     /Ambiguous check name/u,
   );
   assert.equal(store.records.length, 0);
+});
+
+test("records later CI observations at the same exact head as distinct evidence", async () => {
+  const store = new MemoryStore();
+  const gateway = fakeGateway();
+  let id = 0;
+  const workflow = new GitHubStatusWorkflow({
+    store,
+    gateway,
+    idFactory: () => `observation-${++id}`,
+  });
+  const input = {
+    taskId: "github-read-001",
+    repository: "johntango/Shipmates-Practice",
+    prNumber: 2,
+    expectedHeadSha: HEAD,
+    requiredChecks: ["test"],
+  };
+
+  await workflow.inspectPullRequest(input);
+  await workflow.inspectPullRequest(input);
+
+  assert.equal(store.records.length, 2);
+  assert.notEqual(store.records[0].eventId, store.records[1].eventId);
 });
 
 class MemoryStore {
