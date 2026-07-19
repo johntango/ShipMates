@@ -169,6 +169,26 @@ test("recovers only claimed tasks that never received a durable task id", async 
   assert.equal(refreshed.tasks[1].taskId, "task-active");
 });
 
+test("blocks a claimed task when dispatch returns without a durable task id", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "block-orphan-claim-project-"));
+  const store = new ProjectStore({ rootDir });
+  const project = await store.create({
+    name: "Dispatch", repo: "owner/app", repoPath: "/repos/app", baseSha: "abc123",
+  });
+  await store.savePlan({ projectId: project.id, objective: "Build it", tasks: [
+    { id: "work", title: "Work", description: "Work", dependsOn: [] },
+  ] });
+  await store.approve(project.id);
+  await store.claimNextReady(project.id);
+
+  assert.equal(await store.blockOrphanedClaim({
+    projectId: project.id, planTaskId: "work", reason: "Dispatch returned early",
+  }), true);
+  const refreshed = await store.get(project.id);
+  assert.equal(refreshed.tasks[0].status, "blocked");
+  assert.equal(refreshed.tasks[0].blockingReason, "Dispatch returned early");
+});
+
 test("binds the next planned task to its completed dependency task", async () => {
   const rootDir = await mkdtemp(path.join(tmpdir(), "project-lineage-"));
   const store = new ProjectStore({ rootDir });

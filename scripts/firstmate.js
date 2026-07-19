@@ -1125,6 +1125,16 @@ async function runInteractiveFirstmate() {
       console.log(`${project.name}: automatically advancing to “${next.title}” (${reason}).`);
       try {
         await dispatchRequest(`Implement planned task ${next.id} for ${project.name}: ${next.title}. ${next.description} This request is bound to plan task id ${next.id}.`);
+        const blocked = await projectStore.blockOrphanedClaim({
+          projectId,
+          planTaskId: next.id,
+          reason: "Dispatch returned before a durable task was created",
+        });
+        if (blocked) {
+          console.error(humanInputRequired(
+            `${project.name} — ${next.title} could not be dispatched: no durable task was created. The task is blocked instead of being left claimed.`,
+          ));
+        }
       } catch (error) {
         await projectStore.updateTaskStatus({ projectId, planTaskId: next.id, status: "planned" });
         throw error;

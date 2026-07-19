@@ -305,6 +305,19 @@ export class ProjectStore {
     return structuredClone(recovered);
   }
 
+  async blockOrphanedClaim({ projectId, planTaskId, reason }) {
+    let blocked = false;
+    await this.#updateProject(projectId, (project) => {
+      const task = project.tasks.find(({ id }) => id === planTaskId);
+      if (!task) throw new Error(`Unknown planned task ${planTaskId}`);
+      if (task.status !== "claimed" || task.taskId !== null) return;
+      task.status = "blocked";
+      task.blockingReason = reason.trim() || "Dispatch ended before a durable task was created";
+      blocked = true;
+    });
+    return blocked;
+  }
+
   async dependencyTaskId({ projectId, planTaskId }) {
     const project = await this.get(projectId);
     if (!project) throw new Error(`Unknown project ${projectId}`);
