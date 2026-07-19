@@ -104,6 +104,7 @@ test("treats a pane worker failure marker as definitive", async (t) => {
           paneId: "w1:p2",
           status: "failed",
           errorName: "CodexWorkerError",
+          errorMessage: "Worker report fields do not match the schema",
           completedAt: "2026-07-14T17:00:00.000Z",
         });
       },
@@ -112,7 +113,8 @@ test("treats a pane worker failure marker as definitive", async (t) => {
 
   await assert.rejects(
     runtime.run(workerInput(directory)),
-    (error) => error instanceof HerdrCodexWorkerProcessError && error.definitive === true,
+    (error) => error instanceof HerdrCodexWorkerProcessError &&
+      error.definitive === true && /fields do not match/iu.test(error.message),
   );
 });
 
@@ -126,7 +128,7 @@ const fs = require("node:fs");
 const args = process.argv.slice(2);
 const reportPath = args[args.indexOf("--output-last-message") + 1];
 fs.writeFileSync(reportPath, JSON.stringify({
-  taskId: "task-001", status: "completed", summary: "Inspected repository",
+  taskId: "structure-design", status: "completed", summary: "Inspected repository",
   branch: "main", commit: null, files: [], tests: [], risks: []
 }));
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-pane" }) + "\\n");
@@ -164,6 +166,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
     artifactDirectory,
   });
   assert.equal(completed.threadId, "thread-pane");
+  assert.equal(completed.report.taskId, "task-001");
   await assert.rejects(readFile(jobPath), (error) => error.code === "ENOENT");
 });
 

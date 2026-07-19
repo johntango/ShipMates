@@ -36,7 +36,7 @@ export class FirstmateLocalExecutor {
 
     const workItems = normalizedWorkItems(classification, message, this.scoutLimit);
     await this.observer?.begin?.({ taskId, repoPath, workerCount: workItems.length });
-    let scouts;
+    let scouts = [];
     let implementation = null;
     let status = "inspected";
     try {
@@ -64,7 +64,20 @@ export class FirstmateLocalExecutor {
       }
     } catch (error) {
       await this.observer?.end?.({ status: "failed" });
-      throw error;
+      const result = {
+        status: "failed",
+        taskId,
+        requestId,
+        workspacePath: repoPath,
+        scouts: scouts.map(publicWorkerResult),
+        implementation: null,
+        failure: {
+          name: safeErrorName(error),
+          message: safeErrorMessage(error),
+        },
+      };
+      await this.#recordResult(result);
+      return result;
     }
 
     const result = {
@@ -143,6 +156,7 @@ export class FirstmateLocalExecutor {
               report: result.implementation.report,
             }
           : null,
+        failure: result.failure || null,
       }),
       eventId: `firstmate-${result.requestId}-local-execution`,
     });
@@ -154,12 +168,13 @@ function buildScoutPrompt({ taskId, message, workItem }) {
     `You are an independent read-only ShipMates scout for task ${taskId}.`,
     "Do not edit files, commit, push, use GitHub, or address the human.",
     "Do not inspect .shipmates, prior task artifacts, worker logs, or other orchestration state.",
+    "An empty repository is valid evidence. Do not claim that named conventions exist when they are absent.",
     "Stay focused on repository evidence directly relevant to the user request.",
     "Use no more than six tool calls. Stop as soon as you have enough evidence for the structured report.",
     "This work item is assigned only to you. Do not investigate another scout's work item.",
     `Assigned work item: ${workItem}`,
     `User request: ${message}`,
-    "Inspect the repository directly and return the required structured worker report.",
+    `Return the required structured worker report with taskId exactly "${taskId}".`,
   ].join("\n");
 }
 
@@ -177,6 +192,8 @@ function buildImplementationPrompt({ taskId, message, scouts }) {
     "Do not commit, push, open a pull request, access GitHub, or perform destructive cleanup.",
     "Do not inspect or modify .shipmates or prior task artifacts.",
     "Preserve unrelated existing changes. Make the smallest compatible production-quality change.",
+    "An empty repository is a valid starting point; create the requested files when the user asked for a new project.",
+    `Return the required structured worker report with taskId exactly "${taskId}".`,
     `User request: ${message}`,
     "Independent scout reports:",
     JSON.stringify(scouts.map(({ workerId, report }) => ({ workerId, report }))),
@@ -198,4 +215,15 @@ function requireInputs(values) {
       throw new TypeError(`${name} must be a non-empty string`);
     }
   }
+}
+
+function safeErrorName(error) {
+  return typeof error?.name === "string" && /^[A-Za-z][A-Za-z0-9]*$/u.test(error.name)
+    ? error.name
+    : "UnknownError";
+}
+
+function safeErrorMessage(error) {
+  const message = typeof error?.message === "string" ? error.message : "Worker failed";
+  return message.replaceAll(/\s+/gu, " ").trim().slice(0, 500) || "Worker failed";
 }

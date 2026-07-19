@@ -234,6 +234,19 @@ if (!classifyOnly) {
     message,
     classification: result.classification,
   });
+  if (execution.status === "failed") {
+    await herdrObserver?.firstmateStage({
+      taskId,
+      repoPath,
+      state: "blocked",
+      message: execution.failure?.message || "Local worker execution failed",
+      customStatus: "worker_failed",
+    });
+    console.error(humanInputRequired(
+      `Firstmate could not complete the local worker run: ${execution.failure?.message || "unknown worker failure"}`,
+    ));
+    process.exitCode = 1;
+  }
   if (execution.implementation?.report.status === "completed") {
     await herdrObserver?.firstmateStage({
       taskId,

@@ -78,6 +78,25 @@ test("stops before external or destructive authority", async () => {
   assert.equal(result.status, "awaiting_human");
 });
 
+test("returns a structured failure instead of throwing when a pane worker fails", async () => {
+  const recorded = [];
+  const executor = new FirstmateLocalExecutor({
+    schemaPath: "schemas/codex-worker-report.schema.json",
+    runtime: { async run() { throw new Error("report task mismatch"); } },
+    store: {
+      rootDir: "/tmp/shipmates",
+      async recordEvidence(input) { recorded.push(JSON.parse(input.value)); },
+    },
+  });
+  const result = await executor.execute({
+    taskId: "task-001", requestId: "request-001", repoPath: "/tmp/repo",
+    message: "Build the demo", classification: classification("local_write"),
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.failure.message, "report task mismatch");
+  assert.equal(recorded[0].failure.message, "report task mismatch");
+});
+
 test("assigns an indivisible work item to only one scout", async () => {
   const calls = [];
   let workerCount;

@@ -47,6 +47,7 @@ try {
       paneId: job.paneId,
       status: "failed",
       errorName: safeErrorName(error),
+      errorMessage: safeErrorMessage(error),
       completedAt: new Date().toISOString(),
     }).catch(() => {});
   }
@@ -88,6 +89,11 @@ function safeErrorName(error) {
   return typeof error?.name === "string" && /^[A-Za-z][A-Za-z0-9]*$/u.test(error.name)
     ? error.name
     : "UnknownError";
+}
+
+function safeErrorMessage(error) {
+  const message = typeof error?.message === "string" ? error.message : "Worker failed";
+  return message.replaceAll(/\s+/gu, " ").trim().slice(0, 500) || "Worker failed";
 }
 
 class PaneWorkerAuthorityError extends Error {

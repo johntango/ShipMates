@@ -61,7 +61,7 @@ export class HerdrCodexWorkerRuntime {
     const marker = await this.#waitForTerminal({ terminalPath, paneId, input });
     if (marker.status !== "completed") {
       throw new HerdrCodexWorkerProcessError(
-        `Pane Codex worker ${input.workerId} failed (${marker.errorName})`,
+        `Pane Codex worker ${input.workerId} failed (${marker.errorName}): ${marker.errorMessage || "no error details recorded"}`,
         { definitive: true },
       );
     }
@@ -123,6 +123,8 @@ function validateMarker(marker, expected) {
     marker.workerId !== expected.workerId || marker.paneId !== expected.paneId ||
     !new Set(["completed", "failed"]).has(marker.status) ||
     (marker.status === "failed" && !marker.errorName) ||
+    (marker.errorMessage !== undefined &&
+      (typeof marker.errorMessage !== "string" || marker.errorMessage.length > 500)) ||
     Number.isNaN(Date.parse(marker.completedAt))
   ) throw new HerdrCodexWorkerProcessError("Pane Codex terminal marker is invalid");
 }
