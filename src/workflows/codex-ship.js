@@ -63,6 +63,7 @@ export class CodexShipWorkflow {
     try {
       result = await this.runtime.run({
         taskId,
+        workerId,
         workingDirectory: snapshot.worktree.worktreePath,
         prompt: buildShipPrompt({ taskId, brief }),
         schemaPath: this.schemaPath,
@@ -256,7 +257,7 @@ function verifyMutation({ snapshot, before, after, paths, report }) {
     !sameArray(sortedChanged, sortedReported) ||
     sortedChanged.some(pathIsUnsafe) ||
     after.dirty !== (sortedChanged.length > 0) ||
-    (report.status === "completed" && sortedChanged.length === 0)) {
+    (report.status === "completed" && sortedChanged.length === 0 && report.tests.length === 0)) {
     throw new CodexShipAuthorityError(
       "Workspace mutation does not match the worker report and durable lease",
     );

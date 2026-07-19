@@ -211,6 +211,25 @@ test("shows exact-head push approval and remote reconciliation states", () => {
   assert.match(renderHerdrView(recoveryProjection), /push-001: requested/u);
 });
 
+test("shows approval-gated validation as awaiting human rather than blocked", () => {
+  const snapshot = richSnapshot();
+  snapshot.state = "awaiting_human";
+  snapshot.validationRuns[0].passed = false;
+  snapshot.validationRuns[0].outcome = null;
+  snapshot.validationRuns[0].gate = {
+    step: "review",
+    status: "awaiting_approval",
+  };
+
+  const projection = projectHerdrSnapshot(snapshot);
+  assert.equal(projection.task.displayState, "idle");
+  assert.deepEqual(projection.validation.gate, snapshot.validationRuns[0].gate);
+  assert.equal(projection.attention.some(({ code }) =>
+    code === "validation_approval_required"), true);
+  assert.equal(projection.attention.some(({ code }) =>
+    code === "validation_not_passing"), false);
+});
+
 test("shows the separate draft approval and exact-head CI delivery stages", () => {
   const snapshot = richSnapshot();
   snapshot.validationRuns[0].passed = true;

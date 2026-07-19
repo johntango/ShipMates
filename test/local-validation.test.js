@@ -109,9 +109,31 @@ test("explicitly reconciles one exact durable validation request", async () => {
   assert.equal(runs, 2);
 });
 
+test("moves an approval-gated validation to awaiting human", async () => {
+  const store = new MemoryStore();
+  const report = {
+    ...validationReport(),
+    gate: { step: "review", status: "awaiting_approval" },
+  };
+  const workflow = new LocalValidationWorkflow({
+    store,
+    gate: { pinEvidence, async run() { return report; } },
+  });
+
+  const result = await workflow.run({
+    taskId: "validation-001",
+    intent: "Validate locally",
+  });
+
+  assert.equal(result.snapshot.state, "awaiting_human");
+  assert.equal(store.transitions[0].from, "validating");
+  assert.equal(store.transitions[0].to, "awaiting_human");
+});
+
 class MemoryStore {
   constructor() {
     this.records = [];
+    this.transitions = [];
     this.snapshot = {
       state: "validating",
       validationRequests: [],
@@ -143,6 +165,12 @@ class MemoryStore {
       requestEventId: record.eventId,
     };
     this.snapshot = { ...this.snapshot, validationRequests: [request] };
+    return this.snapshot;
+  }
+
+  async transition(input) {
+    this.transitions.push(input);
+    this.snapshot = { ...this.snapshot, state: input.to };
     return this.snapshot;
   }
 }

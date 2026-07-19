@@ -1,5 +1,138 @@
 # ShipMates Codex handoff
 
+## Current handoff — 2026-07-17
+
+Firstmate orchestration hardening is implemented in the dirty worktree. Preserve
+all existing changes and operational task artifacts. Exact task references and
+model-selected control operations now handle approval, status, recovery, and
+accepted demo warnings without dispatching workers. Explicit planned-task
+attachment is atomic, refuses duplicates and unbound work, and occurs before a
+child process starts. Planned tasks retain blocking reasons. Local-only demo
+completion accepts independently verified no-change work without an empty
+commit, and an accepted browser-only warning can advance the existing blocked
+demo task without a retry. Dashboard progress counts only completed plan work
+and renders blocking reasons. Terminal multiline input uses `/paste`, `/send`,
+and `/cancel`. `npm test` is scoped to `test/` so ignored `.shipmates`
+worktrees cannot contaminate ShipMates validation.
+
+Focused and full product validation passed on 2026-07-17: `npm test` reported
+293 passing tests and `node --check scripts/firstmate.js` passed. A raw
+`node --test` is intentionally no longer the supported command because Node's
+recursive discovery includes preserved historical tests beneath ignored
+operational worktrees.
+
+The next platform layer is also complete in the dirty worktree. Plan tasks now
+own first-class `attempts[]` histories, with the old task ID fields retained as
+compatibility projections. Registry invariants prevent duplicate plan IDs,
+multiple active attempts, cross-task attempt reuse, missing dependencies,
+missing current attempts, and blocked work without a reason. Plan revisions
+cannot discard executed task history. `ProjectOrchestrator` owns control
+routing, attempt attachment, deterministic recovery classification, and startup
+reconciliation for non-persistent projects. Startup reconciliation records
+exact blockers and safely completes only already-proven demo work; it never
+dispatches a retry. The dashboard nests attempt history under its stable plan
+task. The live registry was inspected read-only: ShipMates, DemoTest, and TestA
+all satisfy the new invariants. A strict-output schema omission initially made
+the TestB planning turn fall back to direct dispatch; `controlType` and `taskId`
+are now included in the schema's required-key list. The unstarted fallback task
+was cancelled with no worker, worktree, or file changes, its synthetic row was
+detached through the new evidence-checked dismissal operation, and the intended
+six-stage TestB plan was saved in `planning` state for dashboard review. Full
+validation now reports 304 passing tests.
+
+Firstmate is now proactive while it remains open: successful child exit advances
+the next dependency-ready task immediately, and a deterministic monitor runs
+safe reconciliation every 15 seconds by default before the watchdog audit. It
+can consume durable completion evidence and advance ready demo work without a
+restart. Unchanged blockers are not rewritten on every pass, and failed tests,
+permissions, or uncertain external operations remain stopped.
+
+## Current handoff — 2026-07-16
+
+This section supersedes the older 2026-07-13 handoff below. Preserve the entire
+dirty worktree. Do not reset, clean, stage, commit, or push it unless the human
+explicitly requests that operation.
+
+### Immediate resume instruction
+
+Start in `/Users/johnwilliams/MIT/Courses/ShipMates`, read this file, run
+`git status --short --branch`, and inspect current project state before editing.
+The next priority is to diagnose and finish BallsA verification without
+duplicating work. BallsB is complete in the project registry.
+
+### Current product architecture
+
+- Firstmate is a persistent conversational Codex coordinator with a Bootstrap
+  dashboard and durable project registry in `.shipmates/projects.json`.
+- Persistent projects use one branch/worktree, one Project Agent, one
+  Implementer, no scouts by default, focused tests after edits, and full
+  no-mistakes validation only at the terminal milestone.
+- BallsA uses `shipmates/ballsa` at
+  `.shipmates/project-worktrees/BallsA`; BallsB uses `shipmates/ballsb` at
+  `.shipmates/project-worktrees/BallsB`.
+- Project Agent work is launched visibly in assigned Herdr panes through
+  `src/adapters/herdr-project-task.js` and
+  `scripts/project-agent-pane-worker.js`. Durable job/terminal markers live in
+  `.shipmates/project-agent-jobs/`.
+- `src/agents/project-agent.js` does not trust model prose as completion. It
+  reconciles durable evidence and deterministically launches the sole
+  Implementer if the model omitted the tool call.
+- Persistent projects auto-advance after approval, resume, Firstmate startup,
+  and successful task completion. They stop for completion, pause, a genuine
+  blocker, or a required human decision.
+- Genuine human inputs/decisions print as bold red
+  `HUMAN INPUT REQUIRED:` messages through `src/cli/terminal-style.js`.
+- The dashboard supports selecting projects, approving, pausing/resuming,
+  dispatching the next task, and task priority controls.
+
+### Current project state
+
+- BallsB: approved; setup, interface, physics, interaction, polish, and verify
+  are all recorded completed.
+- BallsA: setup, interface, physics, interaction, and polish are completed.
+  Verify is currently recorded blocked under `task-31be5fd80f3d4824be5f`.
+- A prior BallsA verify attempt (`task-60d2df70687b43038663`) changed
+  `script.js` and `tests/verify.mjs`; syntax, focused verification, diff checks,
+  and production asset checks passed. Browser visual regression was unavailable
+  because Playwright had no browser binary.
+- That prior attempt incorrectly reported blocked because it tried to commit
+  through a sandbox whose Git worktree metadata is outside its writable area.
+  The Implementer must not commit; `PersistentProjectExecutor` owns the
+  controlled commit.
+- `src/workflows/persistent-project-executor.js` now tells the Implementer to
+  ignore conflicting commit language and includes `commitBoundaryOnly()` to
+  recover a report blocked solely at the executor-owned commit boundary when
+  all reported tests passed.
+- Despite that change, BallsA verify is blocked again. Inspect the newest
+  persistent run record, Project Agent terminal marker, no-mistakes output, and
+  BallsA worktree status before deciding whether to reconcile or repair. Do not
+  blindly dispatch another worker.
+
+### Validation and safety
+
+- The full ShipMates suite last passed with 446 tests after Project Agent pane
+  execution, deterministic Implementer enforcement, continuous project
+  advancement, dashboard selection, and terminal highlighting changes.
+- Focused tests for the later commit-boundary recovery passed (5/5), and
+  `git diff --check` passed.
+- The worktree contains extensive intentional tracked and untracked changes
+  accumulated during this collaboration. Preserve all of them.
+- `.shipmates/` is ignored operational state but is essential for diagnosing
+  the live BallsA/B projects.
+
+### Suggested first checks
+
+```bash
+git status --short --branch
+node -e 'const p=require("./.shipmates/projects.json"); console.log(JSON.stringify(p.projects.filter(x=>/^Balls[AB]$/.test(x.name)),null,2))'
+find .shipmates/persistent-project-runs/project-4e4c3b19b21d4c028cf6 -maxdepth 3 -type f -print | sort
+git -C .shipmates/project-worktrees/BallsA status --short --branch
+node --test test/persistent-project-executor.test.js test/project-agent.test.js test/herdr-project-task.test.js
+```
+
+When reporting to the human, use project/task names rather than task IDs except
+where an ID is necessary as supporting evidence.
+
 Updated: 2026-07-13, America/New_York
 
 ## Resume instruction

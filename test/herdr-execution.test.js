@@ -4,7 +4,102 @@ import test from "node:test";
 import {
   describeCodexActivity,
   HerdrExecutionObserver,
+  HerdrFirstmateSession,
 } from "../src/adapters/herdr-execution.js";
+
+test("names the interactive FirstMate pane while it is listening", async () => {
+  const reports = [];
+  const releases = [];
+  const metadata = [];
+  const renames = [];
+  const session = new HerdrFirstmateSession({
+    paneId: "w1:p1",
+    sessionId: "firstmate-session-1",
+    client: {
+      async processInfo() {
+        return {
+          foregroundProcesses: [{ argv: ["node", "scripts/firstmate.js"] }],
+        };
+      },
+      async reportAgent(value) { reports.push(value); },
+      async reportMetadata(value) { metadata.push(value); },
+      async rename(value) { renames.push(value); },
+      async releaseAgent(value) { releases.push(value); },
+    },
+  });
+
+  await session.start({ repoPath: "/repo" });
+  await session.stop();
+  await session.stop();
+
+  assert.deepEqual(reports, [{
+    paneId: "w1:p1",
+    source: "shipmates:firstmate:interactive:w1:p1",
+    agent: "ShipMates FirstMate",
+    state: "working",
+    message: "FirstMate is listening",
+    customStatus: "listening",
+    seq: 1,
+    agentSessionId: "firstmate-session-1",
+    agentSessionPath: "/repo",
+  }]);
+  assert.deepEqual(releases, [{
+    paneId: "w1:p1",
+    source: "herdr:codex",
+    agent: "codex",
+  }, {
+    paneId: "w1:p1",
+    source: "shipmates:firstmate:interactive:w1:p1",
+    agent: "ShipMates FirstMate",
+    seq: 2,
+  }]);
+  assert.deepEqual(metadata, [{
+    paneId: "w1:p1",
+    source: "shipmates:firstmate:interactive:w1:p1",
+    appliesToSource: "herdr:codex",
+    displayAgent: "ShipMates FirstMate",
+    customStatus: "listening",
+    stateLabels: { idle: "running" },
+    seq: 1,
+  }, {
+    paneId: "w1:p1",
+    source: "shipmates:firstmate:interactive:w1:p1",
+    appliesToSource: "herdr:codex",
+    clearDisplayAgent: true,
+    clearCustomStatus: true,
+    clearStateLabels: true,
+    seq: 2,
+  }]);
+  assert.deepEqual(renames, [{
+    paneId: "w1:p1",
+    label: "ShipMates FirstMate",
+  }, {
+    paneId: "w1:p1",
+    label: null,
+  }]);
+});
+
+test("does not clear a native Codex session from a pane FirstMate does not own", async () => {
+  const reports = [];
+  const warnings = [];
+  const session = new HerdrFirstmateSession({
+    paneId: "w1:p1",
+    sessionId: "firstmate-session-2",
+    onWarning: (message) => warnings.push(message),
+    client: {
+      async processInfo() {
+        return { foregroundProcesses: [{ argv: ["codex"] }] };
+      },
+      async releaseAgent() { throw new Error("must not release"); },
+      async reportAgent(value) { reports.push(value); },
+    },
+  });
+
+  await session.start({ repoPath: "/repo" });
+
+  assert.equal(reports.length, 0);
+  assert.deepEqual(warnings, ["Herdr FirstMate session visibility unavailable: Error"]);
+});
 
 test("reports scout, tool, implementer, and Firstmate lifecycle to distinct panes", async () => {
   const reports = [];
@@ -86,4 +181,41 @@ test("disables visibility without failing execution when Herdr is unavailable", 
   await observer.begin({ taskId: "task-001", repoPath: "/repo" });
   await observer.workerStarted({ workerId: "scout-1", sandbox: "read-only" });
   assert.deepEqual(warnings, ["Herdr visibility disabled: Error"]);
+});
+
+test("finalizes Firstmate after worker-pane selection disables visibility", async () => {
+  const reports = [];
+  const warnings = [];
+  const observer = new HerdrExecutionObserver({
+    currentPaneId: "w1:p1",
+    panePool: { async select() { throw new Error("bad task state"); } },
+    client: {
+      async reportAgent(value) { reports.push(value); },
+      async releaseAgent() {},
+    },
+    onWarning: (message) => warnings.push(message),
+  });
+
+  await observer.firstmateStage({
+    taskId: "task-001",
+    repoPath: "/repo",
+    message: "Classifying request",
+    customStatus: "classifying",
+  });
+  await observer.begin({ taskId: "task-001", repoPath: "/repo" });
+  await observer.end({ status: "inspected" });
+
+  assert.deepEqual(warnings, ["Herdr visibility disabled: Error"]);
+  assert.equal(reports.length, 2);
+  assert.deepEqual(reports.at(-1), {
+    paneId: "w1:p1",
+    source: "shipmates:firstmate:task-001",
+    agent: "ShipMates Firstmate",
+    state: "working",
+    message: "FirstMate is listening",
+    customStatus: "listening",
+    seq: 2,
+    agentSessionId: "task-001",
+    agentSessionPath: "/repo",
+  });
 });

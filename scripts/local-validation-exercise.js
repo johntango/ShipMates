@@ -25,6 +25,7 @@ const result = await new LocalValidationWorkflow({
   gate: new NoMistakesLocalGate({
     binaryPath,
     stateRoot: path.join(rootDir, "no-mistakes"),
+    onProgress: (message) => console.error(`[no-mistakes] ${message}`),
   }),
   actor: process.env.SHIPMATES_ACTOR || "firstmate",
 }).run({

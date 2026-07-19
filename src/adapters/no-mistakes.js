@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   lstat,
   mkdir,
@@ -15,6 +15,15 @@ const execFileAsync = promisify(execFile);
 
 export const LOCAL_ONLY_SKIP_STEPS = Object.freeze([
   "rebase",
+  "push",
+  "pr",
+  "ci",
+]);
+
+export const FAST_LOCAL_SKIP_STEPS = Object.freeze([
+  "rebase",
+  "review",
+  "document",
   "push",
   "pr",
   "ci",
@@ -47,11 +56,16 @@ export class NoMistakesLocalGate {
     pin = PINNED_NO_MISTAKES_DARWIN_ARM64,
     clock = () => new Date(),
     timeoutMs = 30 * 60 * 1_000,
+    skipSteps = LOCAL_ONLY_SKIP_STEPS,
+    onProgress = () => {},
   } = {}) {
     requireNonEmpty(binaryPath, "binaryPath");
     if (typeof runner !== "function") throw new TypeError("runner must be a function");
     if (typeof binaryReader !== "function") {
       throw new TypeError("binaryReader must be a function");
+    }
+    if (typeof onProgress !== "function") {
+      throw new TypeError("onProgress must be a function");
     }
     validatePin(pin);
     this.binaryPath = path.resolve(binaryPath);
@@ -61,6 +75,8 @@ export class NoMistakesLocalGate {
     this.pin = Object.freeze({ ...pin });
     this.clock = clock;
     this.timeoutMs = timeoutMs;
+    this.skipSteps = validateSkipSteps(skipSteps);
+    this.onProgress = onProgress;
   }
 
   async run({ taskId, worktreePath, expectedHeadSha, intent }) {
@@ -69,7 +85,7 @@ export class NoMistakesLocalGate {
     const expected = fullSha(expectedHeadSha, "expectedHeadSha");
     const workingDirectory = path.resolve(worktreePath);
     const pinEvidence = await this.verifyPin();
-    const runtimeHome = await this.#runtimeHome(taskId);
+    const runtimeHome = await this.#runtimeHome(workingDirectory);
     await this.#initialize({ runtimeHome, worktreePath: workingDirectory });
     const before = await this.#inspect(workingDirectory);
     if (before.headSha !== expected || before.dirty) {
@@ -84,8 +100,9 @@ export class NoMistakesLocalGate {
       "--intent",
       intent,
       "--skip",
-      LOCAL_ONLY_SKIP_STEPS.join(","),
+      this.skipSteps.join(","),
     ];
+    this.onProgress("Starting validation pipeline");
     const startedAt = this.clock().toISOString();
     const result = await this.runner(this.binaryPath, args, {
       cwd: workingDirectory,
@@ -94,6 +111,7 @@ export class NoMistakesLocalGate {
       }),
       timeout: this.timeoutMs,
       maxBuffer: 4 * 1024 * 1024,
+      onStderrLine: this.onProgress,
     });
     const completedAt = this.clock().toISOString();
     const parsed = parseAxiOutput(result.stdout);
@@ -134,7 +152,7 @@ export class NoMistakesLocalGate {
       intentSha256: digest(intent),
       command: {
         args,
-        skipSteps: [...LOCAL_ONLY_SKIP_STEPS],
+        skipSteps: [...this.skipSteps],
       },
       startedAt,
       completedAt,
@@ -181,8 +199,44 @@ export class NoMistakesLocalGate {
     }
   }
 
-  async #runtimeHome(taskId) {
-    const taskRoot = path.join(this.stateRoot, taskId);
+  async #runtimeHome(worktreePath) {
+    const existing = await this.runner(
+      "git",
+      ["remote", "get-url", "no-mistakes"],
+      {
+        cwd: worktreePath,
+        env: process.env,
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    let taskRoot = path.join(this.stateRoot, "runtime");
+    if (existing.exitCode === 0) {
+      const remotePath = path.resolve(existing.stdout.trim());
+      const reposPath = path.dirname(remotePath);
+      const existingRoot = path.dirname(reposPath);
+      const relative = path.relative(this.stateRoot, existingRoot);
+      if (path.basename(reposPath) !== "repos" || relative.startsWith("..") ||
+        path.isAbsolute(relative)) {
+        throw new NoMistakesGateError(
+          "Existing no-mistakes remote is outside the managed validation state",
+        );
+      }
+      taskRoot = existingRoot;
+    } else if (!(existing.exitCode === 2 ||
+      (existing.exitCode === 128 && /no such remote/iu.test(existing.stderr)))) {
+      throw new NoMistakesGateError("Could not inspect the no-mistakes Git remote");
+    } else {
+      const origin = await this.runner("git", ["remote", "get-url", "origin"], {
+        cwd: worktreePath,
+        env: process.env,
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+      if (origin.exitCode === 0 && origin.stdout.trim()) {
+        taskRoot = path.join(this.stateRoot, "runtime", digest(origin.stdout.trim()).slice(0, 16));
+      }
+    }
     await mkdir(taskRoot, { recursive: true });
     if (Buffer.byteLength(path.join(taskRoot, "socket"), "utf8") <= 100) {
       return taskRoot;
@@ -261,6 +315,13 @@ export class NoMistakesLocalGate {
   }
 }
 
+function validateSkipSteps(steps) {
+  if (!Array.isArray(steps) || steps.some((step) => !allSteps.includes(step))) {
+    throw new TypeError("skipSteps must contain known no-mistakes steps");
+  }
+  return Object.freeze([...new Set(steps)]);
+}
+
 export function parseAxiOutput(stdout) {
   requireNonEmpty(stdout, "axi stdout");
   const lines = stdout.replaceAll("\r\n", "\n").split("\n");
@@ -328,6 +389,9 @@ export class NoMistakesOutputError extends NoMistakesGateError {
 }
 
 async function runCommand(command, args, options) {
+  if (typeof options.onStderrLine === "function") {
+    return runStreamingCommand(command, args, options);
+  }
   try {
     const { stdout, stderr } = await execFileAsync(command, args, options);
     return { exitCode: 0, stdout, stderr };
@@ -343,6 +407,51 @@ async function runCommand(command, args, options) {
       stderr: cause.stderr || "",
     };
   }
+}
+
+function runStreamingCommand(command, args, options) {
+  const { onStderrLine, maxBuffer, ...spawnOptions } = options;
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, spawnOptions);
+    let stdout = "";
+    let stderr = "";
+    let stderrRemainder = "";
+    let settled = false;
+    const timer = options.timeout > 0
+      ? setTimeout(() => child.kill("SIGTERM"), options.timeout)
+      : null;
+
+    const append = (current, chunk) => {
+      const next = current + chunk;
+      if (maxBuffer && Buffer.byteLength(next) > maxBuffer) {
+        child.kill("SIGTERM");
+        reject(new NoMistakesGateError(`Output exceeded maxBuffer for ${path.basename(command)}`));
+        settled = true;
+      }
+      return next;
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout = append(stdout, chunk); });
+    child.stderr.on("data", (chunk) => {
+      stderr = append(stderr, chunk);
+      stderrRemainder += chunk;
+      const lines = stderrRemainder.split(/\r?\n/u);
+      stderrRemainder = lines.pop() || "";
+      for (const line of lines) if (line.trim()) onStderrLine(line.trim());
+    });
+    child.once("error", (cause) => {
+      if (timer) clearTimeout(timer);
+      if (!settled) reject(new NoMistakesGateError(`Could not run ${path.basename(command)}`, { cause }));
+    });
+    child.once("close", (exitCode) => {
+      if (timer) clearTimeout(timer);
+      if (settled) return;
+      if (stderrRemainder.trim()) onStderrLine(stderrRemainder.trim());
+      resolve({ exitCode: exitCode ?? 1, stdout, stderr });
+    });
+  });
 }
 
 function localOnlyEnvironment({ stateRoot, taskId, taskRoot }) {

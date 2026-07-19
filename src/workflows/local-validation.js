@@ -66,7 +66,10 @@ export class LocalValidationWorkflow {
       eventId: `${taskId}:validation:${report.runId}:v1`,
       at: report.completedAt,
     });
-    return { snapshot: recorded, report, reused: false };
+    const reviewed = await transitionForApprovalGate({
+      store: this.store, snapshot: recorded, report, taskId, actor: this.actor,
+    });
+    return { snapshot: reviewed, report, reused: false };
   }
 
   async reconcile({ taskId, intent }) {
@@ -108,8 +111,23 @@ export class LocalValidationWorkflow {
       eventId: `${taskId}:validation:${report.runId}:v1`,
       at: report.completedAt,
     });
+    snapshot = await transitionForApprovalGate({
+      store: this.store, snapshot, report, taskId, actor: this.actor,
+    });
     return { snapshot, report, reused: false };
   }
+}
+
+async function transitionForApprovalGate({ store, snapshot, report, taskId, actor }) {
+  if (report.gate?.status !== "awaiting_approval") return snapshot;
+  return store.transition({
+    taskId,
+    from: "validating",
+    to: "awaiting_human",
+    actor,
+    reason: `Local validation awaits human approval at ${report.gate.step}`,
+    eventId: `${taskId}:validation:awaiting-approval:${report.runId}:v1`,
+  });
 }
 
 export class LocalValidationWorkflowError extends Error {

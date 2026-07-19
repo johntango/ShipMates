@@ -1,5 +1,101 @@
 const workerOrder = Object.freeze(["scout-1", "scout-2"]);
 
+export class HerdrFirstmateSession {
+  constructor({
+    client,
+    paneId,
+    sessionId = `firstmate-${process.pid}`,
+    onWarning = console.error,
+  } = {}) {
+    if (!client) throw new TypeError("HerdrFirstmateSession requires a client");
+    this.client = client;
+    this.paneId = paneId || null;
+    this.sessionId = sessionId;
+    this.onWarning = onWarning;
+    this.repoPath = null;
+    this.started = false;
+  }
+
+  async start({ repoPath }) {
+    if (!this.paneId) return;
+    this.repoPath = repoPath;
+    try {
+      await this.#releaseStaleNativeCodexSession();
+      await this.client.reportAgent({
+        paneId: this.paneId,
+        source: this.#source(),
+        agent: "ShipMates FirstMate",
+        state: "working",
+        message: "FirstMate is listening",
+        customStatus: "listening",
+        seq: 1,
+        agentSessionId: this.sessionId,
+        agentSessionPath: repoPath,
+      });
+      this.started = true;
+      await this.client.reportMetadata({
+        paneId: this.paneId,
+        source: this.#source(),
+        appliesToSource: "herdr:codex",
+        displayAgent: "ShipMates FirstMate",
+        customStatus: "listening",
+        stateLabels: { idle: "running" },
+        seq: 1,
+      });
+      await this.client.rename({
+        paneId: this.paneId,
+        label: "ShipMates FirstMate",
+      });
+    } catch (error) {
+      this.onWarning(`Herdr FirstMate session visibility unavailable: ${safeErrorName(error)}`);
+    }
+  }
+
+  async stop() {
+    if (!this.paneId || !this.started) return;
+    try {
+      await this.client.rename({ paneId: this.paneId, label: null });
+      await this.client.reportMetadata({
+        paneId: this.paneId,
+        source: this.#source(),
+        appliesToSource: "herdr:codex",
+        clearDisplayAgent: true,
+        clearCustomStatus: true,
+        clearStateLabels: true,
+        seq: 2,
+      });
+      await this.client.releaseAgent({
+        paneId: this.paneId,
+        source: this.#source(),
+        agent: "ShipMates FirstMate",
+        seq: 2,
+      });
+      this.started = false;
+    } catch (error) {
+      this.onWarning(`Herdr FirstMate session release unavailable: ${safeErrorName(error)}`);
+    }
+  }
+
+  async #releaseStaleNativeCodexSession() {
+    if (typeof this.client.processInfo !== "function") return;
+    const info = await this.client.processInfo(this.paneId);
+    const firstmateOwnsPane = info.foregroundProcesses.some(({ argv }) =>
+      argv.join(" ").includes("scripts/firstmate.js"));
+    if (!firstmateOwnsPane) {
+      throw new Error("HERDR_PANE_ID does not contain the FirstMate process");
+    }
+    await this.client.releaseAgent({
+      paneId: this.paneId,
+      source: "herdr:codex",
+      agent: "codex",
+    });
+  }
+
+  #source() {
+    return `shipmates:firstmate:interactive:${this.paneId}`;
+  }
+}
+
 export class HerdrExecutionObserver {
   constructor({ client, panePool, currentPaneId, onWarning = console.error } = {}) {
     if (!client || !panePool) {
@@ -36,13 +132,14 @@ export class HerdrExecutionObserver {
     });
   }
 
-  async begin({ taskId, repoPath }) {
+  async begin({ taskId, repoPath, workerCount = 2 }) {
     if (this.disabled) return;
     await this.#bestEffort(async () => {
       this.taskId = taskId;
       this.repoPath = repoPath;
-      const panes = await this.panePool.select({ count: 2, cwd: repoPath });
-      workerOrder.forEach((workerId, index) => this.panes.set(workerId, panes[index].paneId));
+      const panes = await this.panePool.select({ count: workerCount, cwd: repoPath });
+      workerOrder.slice(0, workerCount)
+        .forEach((workerId, index) => this.panes.set(workerId, panes[index].paneId));
     });
   }
 
@@ -90,17 +187,36 @@ export class HerdrExecutionObserver {
     });
   }
 
+  paneIdFor(workerId) {
+    return this.disabled ? null : this.panes.get(workerId) || null;
+  }
+
   async end({ status = "completed" } = {}) {
-    if (!this.disabled) {
-      await this.firstmateStage({
-        taskId: this.taskId,
-        repoPath: this.repoPath,
-        state: new Set(["failed", "awaiting-human"]).has(status) ? "blocked" : "idle",
-        message: `Execution ${status}`,
-        customStatus: status,
-      });
-    }
+    await this.#finalizeFirstmate(status);
     for (const workerId of [...this.panes.keys()]) await this.#release(workerId);
+  }
+
+  async #finalizeFirstmate(status) {
+    if (!this.currentPaneId || !this.taskId) return;
+    try {
+      await this.client.reportAgent({
+        paneId: this.currentPaneId,
+        source: `shipmates:firstmate:${this.taskId}`,
+        agent: "ShipMates Firstmate",
+        state: new Set(["failed", "awaiting-human"]).has(status) ? "blocked" : "working",
+        message: sanitizeStatus(new Set(["failed", "awaiting-human"]).has(status)
+          ? `Execution ${status}`
+          : "FirstMate is listening"),
+        customStatus: sanitizeStatus(new Set(["failed", "awaiting-human"]).has(status)
+          ? status
+          : "listening"),
+        seq: this.#next("firstmate"),
+        agentSessionId: this.taskId,
+        agentSessionPath: this.repoPath,
+      });
+    } catch (error) {
+      this.#warn(error);
+    }
   }
 
   async #workerReport(workerId, { state, message, customStatus }) {

@@ -43,6 +43,7 @@ export const firstmateOutputSchema = z
     ]),
     recommendedNextStep: z.string().trim().min(1).max(2_000),
     requiresHumanApproval: z.boolean(),
+    workItems: z.array(z.string().trim().min(1).max(2_000)).min(1).max(2),
   })
   .strict()
   .superRefine((value, context) => {
@@ -75,6 +76,17 @@ Choose the minimum authority required for the requested outcome:
 - local_write: edit or build only in the authorized local workspace
 - external_write: publish, push, comment, open a PR, send, deploy, or mutate a remote system
 - destructive: delete, discard, overwrite, merge, or otherwise perform an irreversible action
+Classify the requested outcome, not the internal work needed to produce it. ShipMates
+can launch its own local read-only scouts after classification; launching those scouts,
+running local tools or subprocesses, and returning their findings or generated values
+to the user are read_only operations, not external writes. Tool availability does not
+change the authority classification and must not be mentioned as a reason to escalate.
+Return one or two non-overlapping workItems. Each work item must be independently
+assignable to exactly one Codex scout. Split separable requested outputs into distinct
+items; never send the same work to multiple scouts. Scouts are read-only: never make
+"implement the change" a scout work item, because the separate Implementer owns all
+local writes. Use one scout for an indivisible code change unless two genuinely distinct
+read-only investigations are required before implementation.
 External-write and destructive requests require human approval at the matching boundary.
 Return only the structured classification.`;
 

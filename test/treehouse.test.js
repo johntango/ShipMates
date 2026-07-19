@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -110,6 +111,7 @@ test("prepares origin HEAD for detached-worktree compatibility", async () => {
   });
 
   assert.equal(remoteHead, "refs/remotes/origin/main");
+  assert.equal(calls[0].options.env.PATH.split(path.delimiter)[0], "/opt/homebrew/bin");
   assert.deepEqual(
     calls.map(({ file, args }) => ({ file, args })),
     [
@@ -125,6 +127,69 @@ test("prepares origin HEAD for detached-worktree compatibility", async () => {
       },
     ],
   );
+});
+
+test("allows an explicit compatible Git directory for Treehouse subprocesses", async () => {
+  const calls = [];
+  const manager = new TreehouseWorktreeManager({
+    environment: { PATH: "/usr/local/bin:/usr/bin" },
+    gitDirectory: "/compatible/git/bin",
+    executeFile: async (file, args, options) => {
+      calls.push({ file, args, options });
+      if (args[0] === "rev-parse") return { stdout: "/repo/.git\n", stderr: "" };
+      if (args[0] === "symbolic-ref") {
+        return { stdout: "refs/remotes/origin/main\n", stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    },
+  });
+
+  await manager.prepareRepository({ repoPath: "/repo" });
+
+  assert.equal(
+    calls.every(({ options }) =>
+      options.env.PATH === "/compatible/git/bin:/usr/local/bin:/usr/bin"),
+    true,
+  );
+});
+
+test("prepares a local-only demo repository without contacting origin", async () => {
+  const calls = [];
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async (file, args, options) => {
+      calls.push({ file, args, options });
+      if (args[0] === "rev-parse") return { stdout: "/repo/.git\n", stderr: "" };
+      if (args[0] === "branch") return { stdout: "main\n", stderr: "" };
+      return { stdout: "", stderr: "" };
+    },
+  });
+  const head = await manager.prepareRepository({ repoPath: "/repo", localOnly: true });
+  assert.equal(head, "refs/remotes/origin/main");
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ["branch", "--show-current"],
+    ["update-ref", "refs/remotes/origin/main", "HEAD"],
+    ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+  ]);
+});
+
+test("leases a deterministic local demo worktree without invoking Treehouse", async () => {
+  const calls = [];
+  const manager = new TreehouseWorktreeManager({
+    demoWorktreeRoot: "/tmp/shipmates-test-demo-worktrees",
+    executeFile: async (file, args, options) => {
+      calls.push({ file, args, options });
+      return { stdout: args[0] === "remote" && args[1] === "get-url" ? "git@github.com:owner/demo.git\n" : "", stderr: "" };
+    },
+  });
+  const lease = await manager.lease({ repoPath: "/repo", taskId: "task-demo", localOnly: true });
+  assert.equal(lease.worktreePath, "/tmp/shipmates-test-demo-worktrees/task-demo");
+  assert.deepEqual(calls.map(({ file, args }) => ({ file, args })), [
+    { file: "git", args: ["remote", "get-url", "origin"] },
+    { file: "git", args: ["clone", "--no-hardlinks", "--no-checkout", "/repo", "/tmp/shipmates-test-demo-worktrees/task-demo"] },
+    { file: "git", args: ["remote", "set-url", "origin", "git@github.com:owner/demo.git"] },
+    { file: "git", args: ["switch", "--detach", "HEAD"] },
+  ]);
 });
 
 test("rejects Git versions that misparse the required path-format option", async () => {
@@ -157,6 +222,54 @@ test("creates a no-mutation proof from a clean expected HEAD", async () => {
     worktreePath: "/tmp/worktree",
     headSha: "abc123",
   });
+});
+
+test("aligns a clean new lease to the exact detached task base", async () => {
+  const expectedHeadSha = "a".repeat(40);
+  const defaultHeadSha = "b".repeat(40);
+  const calls = [];
+  let aligned = false;
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async (file, args) => {
+      calls.push([file, args]);
+      if (args[0] === "status") return { stdout: "", stderr: "" };
+      if (args[0] === "rev-parse") {
+        return { stdout: `${aligned ? expectedHeadSha : defaultHeadSha}\n`, stderr: "" };
+      }
+      if (args[0] === "branch") return { stdout: "", stderr: "" };
+      if (args[0] === "switch") aligned = true;
+      return { stdout: "", stderr: "" };
+    },
+  });
+
+  const inspection = await manager.alignLeaseBase({
+    worktreePath: "/tmp/worktree",
+    expectedHeadSha,
+  });
+
+  assert.equal(inspection.headSha, expectedHeadSha);
+  assert.equal(inspection.branch, null);
+  assert.equal(calls.some(([, args]) =>
+    args[0] === "switch" && args[1] === "--detach" && args[2] === expectedHeadSha), true);
+});
+
+test("refuses to align a dirty Treehouse lease", async () => {
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async (_file, args) => {
+      if (args[0] === "status") return { stdout: "?? local.txt\n", stderr: "" };
+      if (args[0] === "rev-parse") return { stdout: `${"b".repeat(40)}\n`, stderr: "" };
+      if (args[0] === "branch") return { stdout: "", stderr: "" };
+      return { stdout: "", stderr: "" };
+    },
+  });
+
+  await assert.rejects(
+    manager.alignLeaseBase({
+      worktreePath: "/tmp/worktree",
+      expectedHeadSha: "a".repeat(40),
+    }),
+    /dirty Treehouse lease/u,
+  );
 });
 
 test("lists staged, unstaged, and untracked paths without duplicates", async () => {

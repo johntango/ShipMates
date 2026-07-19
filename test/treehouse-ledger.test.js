@@ -37,7 +37,7 @@ test("records a complete no-mutation Treehouse lifecycle", async (t) => {
   assert.deepEqual(calls, [
     "prepare",
     "lease",
-    "inspect",
+    "align",
     "prove-no-mutation",
     "return",
   ]);
@@ -221,6 +221,16 @@ function fakeManager(calls) {
     },
     async inspect() {
       calls.push("inspect");
+      return {
+        worktreePath,
+        headSha: baseSha,
+        branch: null,
+        dirty: false,
+        changes: [],
+      };
+    },
+    async alignLeaseBase() {
+      calls.push("align");
       return {
         worktreePath,
         headSha: baseSha,

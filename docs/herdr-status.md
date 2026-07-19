@@ -91,8 +91,20 @@ When `npm run firstmate` runs inside a Herdr pane (`HERDR_PANE_ID` is set), it
 now publishes live execution status in addition to the deterministic ledger
 projection:
 
+- the interactive host pane is named `ShipMates FirstMate` while FirstMate is
+  listening, even before a task is dispatched; this uses Herdr display metadata
+  plus an explicit pane label to preserve the native Codex identity while making
+  the role visible in Herdr; while the native session is semantically idle,
+  Herdr renders that state as `running` because the FirstMate listener is live;
+- normal exit, `Ctrl-C`, and termination signals clear the FirstMate pane label,
+  display metadata, and agent registration before the process exits;
+- each pane uses a stable FirstMate registration source, so stale state can be
+  deterministically released even after an abnormal process exit;
 - the current pane shows Firstmate classification and overall execution state;
-- two vacant panes are selected or created for `scout-1` and `scout-2`;
+- one vacant pane per classified work item is selected or created, up to
+  `scout-1` and `scout-2`;
+- each selected worker pane runs the actual Codex worker process rather than a
+  display-only agent registration;
 - the first scout pane is reused for the workspace-write implementer;
 - each worker reports started, completed, or failed state;
 - sanitized Codex JSONL activity reports shell, file-edit, MCP, and web-search

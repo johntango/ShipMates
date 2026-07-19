@@ -1,0 +1,15 @@
+.command-card { top: 5.5rem; }
+.task-card { border-left-width: .35rem; }
+.task-card[data-state="working"] { border-left-color: var(--bs-primary); }
+.task-card[data-state="attention"] { border-left-color: var(--bs-warning); }
+.task-card[data-state="done"] { border-left-color: var(--bs-success); }
+.file-path { overflow-wrap: anywhere; }
+.worker-badge { font-weight: 500; }
+#theme { width: 7.5rem; }
+.project-card { border-top: .3rem solid var(--bs-primary); }
+.project-plan { border-left: 2px solid var(--bs-border-color); margin-left: .45rem; }
+.plan-item { margin-left: -.48rem; }
+.plan-node { width: .9rem; height: .9rem; margin-top: .3rem; flex: 0 0 auto; border-radius: 50%; background: var(--bs-secondary); border: 2px solid var(--bs-body-bg); }
+.plan-node[data-status="claimed"], .plan-node[data-status="dispatched"], .plan-node[data-status="running"], .plan-node[data-status="preparing"], .plan-node[data-status="validating"] { background: var(--bs-primary); }
+.plan-node[data-status="complete"] { background: var(--bs-success); }
+.plan-node[data-status="failed"], .plan-node[data-status="blocked"], .plan-node[data-status="recovery_required"] { background: var(--bs-danger); }
