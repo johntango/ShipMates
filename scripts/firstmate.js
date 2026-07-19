@@ -444,6 +444,10 @@ async function runInteractiveFirstmate() {
   for (const project of await projectStore.list()) {
     if (project.executionPolicy?.mode !== "persistent_project") {
       try {
+        const recoveredClaims = await projectStore.recoverOrphanedClaims(project.id);
+        for (const task of recoveredClaims) {
+          console.error(`${project.name} — ${task.title}: recovered an orphaned pre-dispatch claim.`);
+        }
         const reconciled = await orchestrator.reconcileProject(project.id);
         for (const result of reconciled) {
           const task = project.tasks.find(({ id }) => id === result.planTaskId);

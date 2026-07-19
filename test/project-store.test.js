@@ -144,6 +144,31 @@ test("atomically claims a dependency-ready task only once", async () => {
   assert.equal((await store.get(project.id)).tasks[0].status, "claimed");
 });
 
+test("recovers only claimed tasks that never received a durable task id", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "recover-claim-project-"));
+  const store = new ProjectStore({ rootDir });
+  const project = await store.create({
+    name: "Recovery", repo: "owner/app", repoPath: "/repos/app", baseSha: "abc123",
+  });
+  await store.savePlan({ projectId: project.id, objective: "Build it", tasks: [
+    { id: "orphan", title: "Orphan", description: "Orphan", dependsOn: [] },
+    { id: "active", title: "Active", description: "Active", dependsOn: [] },
+  ] });
+  await store.approve(project.id);
+  await store.claimNextReady(project.id);
+  await store.updateTaskStatus({ projectId: project.id, planTaskId: "active", status: "claimed" });
+  await store.attachTask({
+    projectId: project.id, planTaskId: "active", taskId: "task-active", title: "Active",
+  });
+
+  const recovered = await store.recoverOrphanedClaims(project.id);
+  const refreshed = await store.get(project.id);
+  assert.deepEqual(recovered, [{ id: "orphan", title: "Orphan" }]);
+  assert.equal(refreshed.tasks[0].status, "planned");
+  assert.equal(refreshed.tasks[1].status, "dispatched");
+  assert.equal(refreshed.tasks[1].taskId, "task-active");
+});
+
 test("binds the next planned task to its completed dependency task", async () => {
   const rootDir = await mkdtemp(path.join(tmpdir(), "project-lineage-"));
   const store = new ProjectStore({ rootDir });

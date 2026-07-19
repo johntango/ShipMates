@@ -292,6 +292,19 @@ export class ProjectStore {
     return claimed ? structuredClone(claimed) : null;
   }
 
+  async recoverOrphanedClaims(projectId) {
+    const recovered = [];
+    await this.#updateProject(projectId, (project) => {
+      for (const task of project.tasks) {
+        if (task.status !== "claimed" || task.taskId !== null) continue;
+        task.status = "planned";
+        task.blockingReason = null;
+        recovered.push({ id: task.id, title: task.title });
+      }
+    });
+    return structuredClone(recovered);
+  }
+
   async dependencyTaskId({ projectId, planTaskId }) {
     const project = await this.get(projectId);
     if (!project) throw new Error(`Unknown project ${projectId}`);
