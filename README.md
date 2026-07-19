@@ -76,9 +76,9 @@ Implemented repository artifacts include:
 - an interactive Agents SDK Firstmate shell with automatic UUID-derived task
   and request IDs, strict typed classification, durable call intent, token
   evidence, and concurrent-call exclusion;
-- a bounded local Firstmate executor that runs two independent read-only Codex
-  scouts before local implementation and stops before external or destructive
-  authority;
+- a bounded local Firstmate executor that assigns each distinct classified work
+  item to exactly one read-only Codex scout before local implementation and
+  stops before external or destructive authority;
 - a durable Treehouse-bound mutating-worker supervisor with crash-recoverable
   artifacts and exact staged, unstaged, and untracked path verification;
 - a durable Firstmate-controlled Git commit stage with fixed identity,
@@ -86,6 +86,14 @@ Implemented repository artifacts include:
   reconciliation;
 - runtime verification of the pinned no-mistakes binary, plus durable
   exact-head validation intent and result evidence before publication;
+- a task-bound Lavish local-delivery choice that fast-forwards a clean primary
+  checkout only to the exact no-mistakes-validated task commit;
+- a localhost-only Express and Bootstrap operator dashboard with live task,
+  worker, file, and validation status, an explicit Firstmate command box, and
+  persistent system, light, and dark themes;
+- a durable conversational Codex Firstmate above the governed workflows, plus
+  a multi-repository project registry and dependency-aware project plans shown
+  directly in the dashboard;
 - a separately human-approved exact-head push gateway for new task branches,
   with durable intent and read-only remote reconciliation;
 - a Firstmate delivery continuation that derives exact targets from the ledger,
@@ -105,7 +113,7 @@ Implemented repository artifacts include:
 - live, sanitized Herdr execution visibility for Firstmate scouts and the local
   implementation worker.
 
-Crash-safe Codex thread continuation, exactly two concurrent read-only scouts,
+Crash-safe Codex thread continuation, up to two independently assigned read-only scouts,
 one durable mutating worker, controlled commit creation, and pinned local
 validation are implemented.
 
@@ -616,7 +624,7 @@ at its expected head.
   receives best-effort live worker, commit, and validation status in addition
   to its deterministic read-only projection, but it remains non-authoritative.
 - Mutating-worker concurrency remains deliberately disabled; the only parallel
-  path is exactly two read-only scouts.
+  path is up to two read-only scouts with non-overlapping assignments.
 - Synthesis is exact and deliberately non-semantic. Similar claims with
   different wording remain peer-uncorroborated until a bounded follow-up check
   or human review resolves them.

@@ -13,7 +13,7 @@ export class TreehouseLedgerWorkflow {
     this.idFactory = idFactory;
   }
 
-  async acquire({ taskId, repoPath }) {
+  async acquire({ taskId, repoPath, localOnly = false }) {
     const resolvedRepoPath = path.resolve(repoPath);
     let snapshot = await this.store.getSnapshot(taskId);
 
@@ -42,7 +42,7 @@ export class TreehouseLedgerWorkflow {
 
     let requestedHere = false;
     if (snapshot.worktree === null) {
-      await this.manager.prepareRepository({ repoPath: resolvedRepoPath });
+      await this.manager.prepareRepository({ repoPath: resolvedRepoPath, localOnly });
       snapshot = await this.store.requestWorktreeLease({
         taskId,
         actor: this.actor,
@@ -72,9 +72,11 @@ export class TreehouseLedgerWorkflow {
     const lease = await this.manager.lease({
       repoPath: resolvedRepoPath,
       taskId,
+      localOnly,
     });
-    const inspection = await this.manager.inspect({
+    const inspection = await this.manager.alignLeaseBase({
       worktreePath: lease.worktreePath,
+      expectedHeadSha: snapshot.baseSha,
     });
     verifyLeasedInspection(snapshot, inspection);
 

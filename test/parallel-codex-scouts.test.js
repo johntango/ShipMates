@@ -152,6 +152,61 @@ test("pane pool reuses only idle unbound shells and creates missing capacity", a
   assert.equal(shellQuote("a'b"), `'a'"'"'b'`);
 });
 
+test("pane pool reclaims a stale ShipMates worker registration from a shell-only pane", async () => {
+  const releases = [];
+  const client = {
+    async list() {
+      return [
+        pane("w1:p1", { agent: "ShipMates Firstmate" }),
+        pane("w1:p2", { agent: "ShipMates scout-1" }),
+      ];
+    },
+    async processInfo(paneId) {
+      return processInfo(paneId, "zsh", 200, 200);
+    },
+    async releaseAgent(input) { releases.push(input); },
+  };
+  const store = {
+    async listTaskIds() { return ["task-old", "task-new"]; },
+    async getSnapshot() { return { workers: [] }; },
+  };
+  const pool = new HerdrPanePool({ client, store, currentPaneId: "w1:p1" });
+
+  const selected = await pool.select({ count: 1, cwd: "/repo" });
+
+  assert.deepEqual(selected.map(({ paneId }) => paneId), ["w1:p2"]);
+  assert.deepEqual(releases.map(({ source }) => source), [
+    "shipmates:worker:task-old:scout-1",
+    "shipmates:worker:task-new:scout-1",
+  ]);
+});
+
+test("pane pool tolerates an invalid legacy task and reserves its recorded panes", async () => {
+  const client = {
+    async list() {
+      return [pane("w1:p1", { agent: "firstmate" }), pane("w1:p2"), pane("w1:p3")];
+    },
+    async processInfo(paneId) {
+      return processInfo(paneId, "zsh", 200, 200);
+    },
+  };
+  const store = {
+    async listTaskIds() { return ["legacy-task", "valid-task"]; },
+    async getSnapshot(taskIdValue) {
+      if (taskIdValue === "legacy-task") throw new Error("invalid legacy event");
+      return { workers: [] };
+    },
+    async readEvents() {
+      return [{ type: "worker.dispatch.requested", data: { paneId: "w1:p2" } }];
+    },
+  };
+  const pool = new HerdrPanePool({ client, store, currentPaneId: "w1:p1" });
+
+  const selected = await pool.select({ count: 1, cwd: "/repo" });
+
+  assert.deepEqual(selected.map(({ paneId }) => paneId), ["w1:p3"]);
+});
+
 test("pane launcher reports identity, waits for a terminal marker, and releases", async (t) => {
   const calls = [];
   const client = {

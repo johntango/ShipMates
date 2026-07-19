@@ -125,6 +125,97 @@ export class CodexWorkerRuntime {
       artifacts: Object.freeze(paths),
     });
   }
+
+  async reply({
+    taskId,
+    replyId,
+    threadId,
+    workingDirectory,
+    prompt,
+    schemaPath,
+    artifactDirectory,
+    sandbox = "read-only",
+    onEvent,
+  }) {
+    for (const [label, value] of Object.entries({
+      taskId, replyId, threadId, workingDirectory, prompt, schemaPath,
+      artifactDirectory, sandbox,
+    })) requireNonEmpty(label, value);
+    if (!/^[a-z0-9][a-z0-9._-]{2,63}$/u.test(replyId)) {
+      throw new TypeError("replyId must be a safe identifier");
+    }
+    const replyDirectory = path.join(path.resolve(artifactDirectory), "replies", replyId);
+    const paths = artifactPaths(replyDirectory);
+    await mkdir(paths.directory, { recursive: true, mode: 0o700 });
+    const githubConfigDirectory = path.join(paths.directory, "gh-config");
+    await mkdir(githubConfigDirectory, { recursive: true, mode: 0o700 });
+    await Promise.all(
+      [paths.events, paths.stderr, paths.report].map((target) =>
+        unlink(target).catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        }),
+      ),
+    );
+    const args = [
+      "exec",
+      "--ignore-user-config",
+      "--sandbox",
+      sandbox,
+      "--color",
+      "never",
+      "--json",
+      "--output-schema",
+      path.resolve(schemaPath),
+      "--output-last-message",
+      paths.report,
+      "--cd",
+      path.resolve(workingDirectory),
+      "resume",
+      threadId,
+      prompt,
+    ];
+    const result = await this.runProcess({
+      file: this.binary,
+      args,
+      cwd: path.resolve(workingDirectory),
+      env: workerEnvironment(this.environment, githubConfigDirectory),
+      stdoutPath: paths.events,
+      stderrPath: paths.stderr,
+      onStdoutLine: typeof onEvent === "function"
+        ? async (line) => {
+            try {
+              await onEvent(JSON.parse(line));
+            } catch {
+              // Observability is best-effort; durable validation below remains authoritative.
+            }
+          }
+        : undefined,
+    });
+    if (result.exitCode !== 0) {
+      const stderr = await readFile(paths.stderr, "utf8").catch(() => "");
+      throw new CodexWorkerError(
+        `Codex reply exited with ${result.exitCode}: ${stderr.trim() || "no error output"}`,
+      );
+    }
+    return this.loadCompletedReply({ taskId, replyId, threadId, artifactDirectory });
+  }
+
+  async loadCompletedReply({ taskId, replyId, threadId, artifactDirectory }) {
+    for (const [label, value] of Object.entries({
+      taskId, replyId, threadId, artifactDirectory,
+    })) requireNonEmpty(label, value);
+    if (!/^[a-z0-9][a-z0-9._-]{2,63}$/u.test(replyId)) {
+      throw new TypeError("replyId must be a safe identifier");
+    }
+    const completed = await this.loadCompleted({
+      taskId,
+      artifactDirectory: path.join(path.resolve(artifactDirectory), "replies", replyId),
+    });
+    if (completed.threadId !== threadId) {
+      throw new CodexWorkerError("Codex reply changed the durable thread ID");
+    }
+    return completed;
+  }
 }
 
 export class CodexWorkerError extends Error {

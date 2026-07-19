@@ -75,15 +75,182 @@ From the ShipMates repository root:
 npm run firstmate
 ```
 
+Interactive Firstmate also starts the ShipMates operator dashboard at
+`http://127.0.0.1:4390`. The Express server uses locally installed Bootstrap
+assets and offers System, Light, and Dark display modes; the selected mode is
+remembered by the browser. Live task state is streamed from the durable ledger.
+The command form is explicitly labeled “Send to Firstmate” and uses the same
+dispatcher as terminal input, so it can coordinate Scouts and the Implementer
+without a separate Lavish poller. The server binds only to localhost and stops
+when Firstmate exits.
+
+For a read-only view when Firstmate is not running, use:
+
+```sh
+npm run dashboard
+```
+
+The standalone view can display ledger state but cannot accept instructions;
+start `npm run firstmate` to enable the command form.
+
+Ask Firstmate to “open the dashboard in Lavish” to create a standalone visual
+review fixture from the same Bootstrap markup, CSS, JavaScript renderer, and
+locally installed Bootstrap bundle as the live dashboard. Representative
+active, completed, failed-validation, and stale-worker states replace the live
+ledger, and command submission is disabled. This makes visual comments safe
+and repeatable without launching workers or changing operational state.
+
+The web command box accepts multiline instructions directly. In the terminal,
+enter `/paste`, paste any number of lines, then enter `/send` so Firstmate
+dispatches the entire text as one request. Enter `/cancel` to discard the
+buffer. A single `.` remains accepted for compatibility.
+
 Firstmate discovers `owner/repo` from the Git `origin`, captures `HEAD`, creates
 UUID-derived task and request IDs, displays `You:`, and waits for the prompt.
+After dispatching a request, interactive mode immediately displays `You:` again
+while that task continues in its worker panes. Task completion or failure is
+reported asynchronously, and each new prompt receives a fresh durable task
+identity and re-reads the repository context. Enter `/exit`, `exit`, or `quit`
+to stop accepting instructions; already dispatched tasks are allowed to finish.
+Explicit task arguments, piped input, `--classify-only`, and delivery commands
+remain one-shot automation interfaces.
+
+Interactive requests now pass first through one durable, read-only Codex
+conversation owned by Firstmate. This is distinct from the bounded Scouts and
+Implementer: it retains conversational context, may inspect the selected
+repository, explains decisions in ordinary language, and chooses whether to
+answer, apply a control operation to an exact existing task, dispatch one
+governed task, or save a multi-task project plan. Approvals, recovery,
+reconciliation, accepted demo warnings, and status requests are control-plane
+operations and cannot create a worker or a new plan row. Explicit planned-task
+attachment is atomic and refuses completed or already-dispatched work. It cannot
+write the repository or bypass Treehouse, controlled commits, no-mistakes, or
+the separately approved GitHub gateways. If the conversational runtime is
+unavailable, Firstmate reports the fallback and preserves the existing governed
+dispatcher.
+
+Projects are stored in `.shipmates/projects.json` with an exact local checkout,
+GitHub `owner/repo`, base commit, objective, and dependency-aware task plan.
+Each stable plan task owns an `attempts` history. Retries remain nested beneath
+that task with their task ID, status, timestamps, and blocking reason; they never
+become additional plan rows. The legacy `taskId` and `previousTaskIds` fields are
+maintained as compatibility projections while existing registries migrate on
+read. Plan revisions preserve every executed task and refuse to remove a plan
+item that already has attempts.
+
+On startup, the project orchestrator deterministically inspects non-persistent
+active and blocked attempts. It can reconcile an already-complete ledger,
+complete verified no-change demo work, preserve a capability warning for human
+acceptance, identify validation repair, or require worker/artifact
+reconciliation. It records the precise blocking reason and never launches a
+retry during recovery inspection. Registry writes enforce unique plan IDs, one
+active attempt per plan task, unique attempt ownership, valid dependencies, a
+current-attempt record, and a reason for every blocked task.
+
+While Firstmate is running, the same safe reconciliation executes every 15
+seconds by default (`SHIPMATES_MONITOR_SECONDS` may adjust it, with a five-second
+minimum). A successful child exit immediately advances the next dependency-ready
+task. The periodic monitor also reconciles durable completion evidence and
+advances ready local-only demo work without waiting for a restart. It does not
+waive failed tests, grant permissions, repeat uncertain external operations, or
+dispatch around a recorded blocker.
+Useful conversational commands are:
+
+```text
+add project /absolute/path/to/another/repository
+create project AnotherProjectInTheSelectedRepository
+list projects
+switch project ProjectName
+enable demo mode for ProjectName
+archive project ProjectName
+```
+
+`enable demo mode for ProjectName` is an explicit project-scoped, local-only
+capability-demo policy. Demo tasks still use the controlled local commit and
+the Implementer's focused checks, but skip no-mistakes and every remote
+delivery operation. The task ledger records `demo-validation-skipped`, and the
+project registry retains `demoMode: true`; normal projects are unaffected.
+
+`archive project ProjectName` performs verified bulk cleanup only after every
+planned task is complete, post-merge checks and exact-tree assurance passed,
+the Treehouse worktree was returned, and the separately approved remote task
+branch cleanup completed. It replaces the project with a compact registry
+receipt containing the PR and exact merge identity, then removes project-owned
+task ledgers, dashboards, worker artifacts, persistent-run records, and Project
+Agent job records. Archived projects are hidden from normal project listings.
+The same archival step runs automatically after successful branch cleanup or
+its reconciliation; PR creation alone never archives data.
+
+Repository selection is convenient conversational state only; every dispatched
+task still records its exact repository and base SHA. Broad objectives are saved
+as plans for review rather than launched all at once. Subsequent concrete
+instructions can bind execution to a planned task while independent repository
+projects remain isolated.
+
+The dashboard provides bounded project controls. **Approve plan** moves a saved
+plan into dispatchable state; **Pause project** prevents new planned work from
+being selected without stopping an already running task; **Resume project**
+restores dispatch; arrow controls reorder still-planned tasks; and **Dispatch
+next ready task** selects the first task whose declared dependencies are
+complete. The dashboard action returns immediately while Firstmate continues
+the governed dispatch asynchronously. These controls do not commit, push,
+merge, or grant external authority.
+
+Conversational artifact follow-ups such as “show me the files,” “where are
+they?”, and “open the pages” do not require a task ID. Firstmate keeps a running
+build as the immediate conversational target; otherwise it searches durable
+history for the newest task that actually produced implementation artifacts.
+A newer answer-only or ambiguous request with no files therefore cannot hide
+the most recent useful result. Responses use human-facing descriptions while
+retaining exact internal task identity in the ledger and artifact paths.
+
+Revision language such as “modify the existing implementation,” “change the
+page,” or “make it blue” continues the active project. Firstmate discovers the
+active project's exact worktree HEAD and starts a new task from that commit,
+with the shared authoritative state directory retained. The earlier task is
+never reopened or mutated: Scouts and the Implementer receive a fresh isolated
+Treehouse revision containing the project's existing files. A clearly new
+build request starts a new project and becomes the conversational target after
+it produces artifacts.
+
+When an interactively dispatched task exits, Firstmate writes an HTML dashboard
+to `.shipmates/tasks/TASK_ID/lavish/dashboard.html` and opens it through the
+locally pinned Lavish Editor. It summarizes the durable task state, workers,
+validation result, and exact implementation file locations. Three read-only
+controls can ask Firstmate to show files, task status, or validation. Each sends
+an allowlisted, versioned action bound to the exact task ID; unknown actions and
+task mismatches are rejected. Push, approval, mutation, and arbitrary prompt
+actions are not exposed in this stage. A separate “What next?” panel uses native
+radio controls so tentative changes remain in the browser until the human
+presses “Submit choice.” Review files, review validation, and no action remain
+non-mutating. After the exact task commit passes no-mistakes, the panel also
+offers “Deliver changes to this checkout.” That task-bound decision invokes a
+local fast-forward workflow; it never pushes or opens a pull request.
+
+Local delivery rechecks that the task lease is active, its worktree is clean,
+the controlled commit and no-mistakes result name the same exact SHA, the main
+checkout is clean, and its HEAD still equals the task base. It then runs an
+exact `git merge --ff-only SHA`, verifies the resulting clean HEAD, records
+delivery evidence, and completes the task ledger. A dirty or diverged checkout
+is rejected without attempting the merge. Repeating an already completed
+delivery is idempotent.
+
+Verified `.html` and `.htm` implementation artifacts also receive a “Review
+page” control. Firstmate resolves the selected file index against the exact
+implementer report and Treehouse worktree, rejects non-HTML and escaping paths,
+then opens that page in a separate Lavish visual-review session. The review can
+collect annotations, but this stage deliberately does not apply them to code or
+resume the implementation worker; feedback application is the next durable
+workflow boundary.
 The generated identifiers use 80 random bits and satisfy the ledger's readable
 identifier format; users do not need to invent or increment IDs.
 
 The classified authority controls execution:
 
-- read-only requests run two independent read-only Codex scouts;
-- local-write requests run both scouts, then one workspace-write implementation
+- requests are decomposed into one or two distinct work items, with exactly one
+  read-only Codex scout assigned to each item. Indivisible requests use one
+  scout; separable outputs may use two, and an assignment is never duplicated;
+- local-write requests run the assigned scouts, then one workspace-write implementation
   worker with the scout reports as advisory context. The local-write path first
   acquires a task-bound Treehouse lease and records durable worker intent,
   artifacts, and independently verified changed paths. Firstmate then creates
@@ -101,13 +268,20 @@ records the resulting single-parent commit, and validates its exact SHA with a
 digest-verified no-mistakes binary. Execution evidence is recorded under the
 task ledger and detailed worker artifacts remain under ignored
 `.shipmates/tasks/` state. The committed lease is not copied into the primary
-checkout and is not pushed by the intake run. The separate
+checkout automatically and is not pushed by the intake run. The dashboard's
+explicit local-delivery choice can fast-forward a clean primary checkout after
+validation. The separate
 [`firstmate:push` workflow](exact-head-push.md) owns that exact external write.
 
-When invoked from a Herdr pane, Firstmate also creates live worker-pane
-visibility for both scouts and the implementer. Sanitized status updates show
-tool type and lifecycle but never raw commands, arguments, prompt text, or tool
-output. See the [Herdr status guide](herdr-status.md#live-firstmate-execution).
+When invoked from a Herdr pane, Firstmate launches each scout as a real Codex
+process in its assigned worker pane. The pane shows a sanitized lifecycle and
+tool-type stream while the complete Codex JSONL and structured report remain in
+the task artifact directory. The implementer uses the same pane-local runtime
+after its isolated Treehouse worktree is prepared. If pane allocation or Herdr
+reporting is unavailable, execution falls back to the local Codex runtime and
+the authoritative artifacts remain unchanged. Raw commands, arguments, prompt
+text, and tool output are never copied into Herdr status messages. See the
+[Herdr status guide](herdr-status.md#live-firstmate-execution).
 
 For classification without worker execution:
 
@@ -171,6 +345,44 @@ rejection.
 node --test test/firstmate-context.test.js test/firstmate-message.test.js \
   test/firstmate-local-executor.test.js test/firstmate.test.js \
   test/task-state.test.js test/task-store.test.js
-node --test
+npm test
 git diff --check
 ```
+## Response and validation speed
+
+Firstmate answers common project-status, selected-project, repository, and planned-task
+questions directly from the durable project registry. These queries do not start a
+conversational Codex turn. Planned tasks that feed another task use the fast local
+validation profile: tests and lint still run, while repeated review and documentation
+passes are deferred. Terminal project milestones, unplanned work, and delivery continue
+to use the full pinned no-mistakes local gate.
+
+## Persistent project execution
+
+Simple approved projects may opt into `persistent_project` execution. Each project owns
+one long-lived `shipmates/<project>` Git branch and worktree. Planned tasks run one Codex
+Implementer directly in that worktree with no Scouts by default. The Implementer runs
+focused checks, Firstmate commits the exact reported paths, and the next planned task
+continues from that commit. The full pinned no-mistakes gate runs only for a terminal
+project milestone. Unplanned, risky, and delivery work continues to use the governed
+per-task Treehouse workflow.
+
+Firstmate reconciles completed persistent-run records at startup. Its 15-minute watchdog
+reports live or unreconciled execution separately from ledger records older than 24 hours;
+historical records appear only in the dashboard cleanup section and are never presented
+as live processes.
+
+### Project Agent ownership
+
+Every persistent project has one Agents SDK Project Agent registered in Herdr as
+`ShipMates Project: <name>`. The registration remains visible while the project is
+paused or idle, so temporary Implementer and validator processes always have a named
+owner. The Project Agent has no unrestricted shell and no handoffs. Its fixed tools can
+only inspect its project, dispatch or reconcile one Implementer, run terminal-milestone
+validation, or refer an approval/recovery condition to Firstmate and the human.
+
+Herdr projects the owner through `coordinating`, `implementing`, `reconciling`,
+`validating`, `awaiting-human`, `paused`, and `completed` states. The dashboard shows
+the same owner, persistent branch, and worktree. The 15-minute watchdog reads both the
+legacy task ledger and persistent Project Agent run records; a completed artifact is
+reconciled rather than dispatched again.

@@ -46,6 +46,14 @@ test("records a tool-free typed Firstmate classification and clarifies the task"
   assert.equal(calls.length, 1);
   assert.equal(calls[0].agent.tools.length, 0);
   assert.equal(calls[0].agent.handoffs.length, 0);
+  assert.match(
+    calls[0].agent.instructions,
+    /launch its own local read-only scouts[\s\S]*not external writes/u,
+  );
+  assert.match(
+    calls[0].agent.instructions,
+    /Tool availability does not[\s\S]*change the authority classification/u,
+  );
   assert.match(calls[0].input, /Please add a status command/u);
   assert.deepEqual(calls[0].options, {
     maxTurns: 1,
@@ -206,6 +214,7 @@ function successfulResult() {
       approvalBoundary: "none",
       recommendedNextStep: "Plan and implement the bounded local change.",
       requiresHumanApproval: false,
+      workItems: ["Inspect the status command contract", "Inspect tests and documentation"],
     },
     state: { usage: usage() },
   };

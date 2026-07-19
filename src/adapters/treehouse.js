@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const bundledTreehouseCandidate = "/private/tmp/treehouse-v2.0.0/treehouse";
 
 export class TreehouseAdapterError extends Error {
   constructor(message, options = {}) {
@@ -14,20 +17,37 @@ export class TreehouseAdapterError extends Error {
 
 export class TreehouseWorktreeManager {
   constructor({
-    binary = process.env.TREEHOUSE_BIN || "treehouse",
+    binary = defaultTreehouseBinary(),
     executeFile = execFileAsync,
     timeoutMs = 60_000,
     homeDirectory = homedir(),
+    environment = process.env,
+    gitDirectory = process.env.TREEHOUSE_GIT_DIRECTORY || "/opt/homebrew/bin",
+    demoWorktreeRoot = process.env.SHIPMATES_STATE_DIR
+      ? path.join(process.env.SHIPMATES_STATE_DIR, "demo-worktrees")
+      : path.resolve(".shipmates/demo-worktrees"),
   } = {}) {
     this.binary = binary;
     this.executeFile = executeFile;
     this.timeoutMs = timeoutMs;
     this.homeDirectory = homeDirectory;
+    this.environment = withPreferredPath(environment, gitDirectory);
+    this.demoWorktreeRoot = path.resolve(demoWorktreeRoot);
   }
 
-  async lease({ repoPath, taskId }) {
+  async lease({ repoPath, taskId, localOnly = false }) {
     assertAbsolutePath("repoPath", repoPath);
     assertNonEmpty("taskId", taskId);
+
+    if (localOnly) {
+      const worktreePath = path.join(this.demoWorktreeRoot, taskId);
+      await mkdir(path.dirname(worktreePath), { recursive: true, mode: 0o700 });
+      const { stdout: originOutput } = await this.#run("git", ["remote", "get-url", "origin"], { cwd: repoPath });
+      await this.#run("git", ["clone", "--no-hardlinks", "--no-checkout", repoPath, worktreePath], { cwd: repoPath });
+      await this.#run("git", ["remote", "set-url", "origin", originOutput.trim()], { cwd: worktreePath });
+      await this.#run("git", ["switch", "--detach", "HEAD"], { cwd: worktreePath });
+      return Object.freeze({ taskId, repoPath: path.resolve(repoPath), worktreePath });
+    }
 
     const { stdout } = await this.#run(
       this.binary,
@@ -43,7 +63,7 @@ export class TreehouseWorktreeManager {
     });
   }
 
-  async prepareRepository({ repoPath }) {
+  async prepareRepository({ repoPath, localOnly = false }) {
     assertAbsolutePath("repoPath", repoPath);
 
     const { stdout: commonDirOutput } = await this.#run(
@@ -59,6 +79,17 @@ export class TreehouseWorktreeManager {
       throw new TreehouseAdapterError(
         "Treehouse requires a Git version that supports rev-parse --path-format=absolute",
       );
+    }
+
+    if (localOnly) {
+      const { stdout: branchOutput } = await this.#run(
+        "git", ["branch", "--show-current"], { cwd: repoPath },
+      );
+      const branch = branchOutput.trim();
+      if (!branch) throw new TreehouseAdapterError("Local-only demo repository must be on a branch");
+      await this.#run("git", ["update-ref", `refs/remotes/origin/${branch}`, "HEAD"], { cwd: repoPath });
+      await this.#run("git", ["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${branch}`], { cwd: repoPath });
+      return `refs/remotes/origin/${branch}`;
     }
 
     await this.#run("git", ["remote", "get-url", "origin"], {
@@ -155,6 +186,31 @@ export class TreehouseWorktreeManager {
       dirty: changes.length > 0,
       changes,
     });
+  }
+
+  async alignLeaseBase({ worktreePath, expectedHeadSha }) {
+    assertAbsolutePath("worktreePath", worktreePath);
+    assertFullSha("expectedHeadSha", expectedHeadSha);
+    const before = await this.inspect({ worktreePath });
+    if (before.dirty) {
+      throw new TreehouseAdapterError(
+        "Cannot align a dirty Treehouse lease to the task base",
+      );
+    }
+    if (before.headSha === expectedHeadSha) return before;
+    await this.#run("git", ["cat-file", "-e", `${expectedHeadSha}^{commit}`], {
+      cwd: worktreePath,
+    });
+    await this.#run("git", ["switch", "--detach", expectedHeadSha], {
+      cwd: worktreePath,
+    });
+    const after = await this.inspect({ worktreePath });
+    if (after.dirty || after.headSha !== expectedHeadSha || after.branch !== null) {
+      throw new TreehouseAdapterError(
+        "Treehouse lease did not align to the exact detached task base",
+      );
+    }
+    return after;
   }
 
   async listChangedPaths({ worktreePath }) {
@@ -366,6 +422,7 @@ export class TreehouseWorktreeManager {
       return await this.executeFile(file, args, {
         encoding: "utf8",
         timeout: this.timeoutMs,
+        env: this.environment,
         ...options,
       });
     } catch (cause) {
@@ -376,6 +433,19 @@ export class TreehouseWorktreeManager {
       );
     }
   }
+}
+
+function defaultTreehouseBinary() {
+  if (process.env.TREEHOUSE_BIN) return process.env.TREEHOUSE_BIN;
+  return existsSync(bundledTreehouseCandidate) ? bundledTreehouseCandidate : "treehouse";
+}
+
+function withPreferredPath(environment, directory) {
+  const result = { ...environment };
+  const entries = String(result.PATH || "").split(path.delimiter).filter(Boolean);
+  result.PATH = [directory, ...entries.filter((entry) => entry !== directory)]
+    .join(path.delimiter);
+  return result;
 }
 
 function parseLeasePath(stdout) {

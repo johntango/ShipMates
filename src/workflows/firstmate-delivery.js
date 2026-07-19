@@ -6,6 +6,7 @@ export class FirstmateDeliveryWorkflow {
     mergeWorkflow = null,
     postMergeWorkflow = null,
     cleanupWorkflow = null,
+    archiveWorkflow = null,
   } = {}) {
     if (!store || !pushWorkflow || !draftWorkflow) {
       throw new TypeError(
@@ -18,6 +19,7 @@ export class FirstmateDeliveryWorkflow {
     this.mergeWorkflow = mergeWorkflow;
     this.postMergeWorkflow = postMergeWorkflow;
     this.cleanupWorkflow = cleanupWorkflow;
+    this.archiveWorkflow = archiveWorkflow;
   }
 
   async status({ taskId }) {
@@ -156,13 +158,17 @@ export class FirstmateDeliveryWorkflow {
   async cleanupBranch({ taskId, operationId, approvalId }) {
     this.#requireCleanupWorkflow();
     await this.cleanupWorkflow.delete({ taskId, operationId, approvalId });
-    return this.status({ taskId });
+    const result = await this.status({ taskId });
+    const archived = await this.archiveWorkflow?.archiveForTask({ taskId, trigger: "verified-merge-cleanup" });
+    return archived ? { ...result, archive: archived.receipt } : result;
   }
 
   async reconcileBranchCleanup({ taskId, operationId }) {
     this.#requireCleanupWorkflow();
     await this.cleanupWorkflow.reconcile({ taskId, operationId });
-    return this.status({ taskId });
+    const result = await this.status({ taskId });
+    const archived = await this.archiveWorkflow?.archiveForTask({ taskId, trigger: "reconciled-merge-cleanup" });
+    return archived ? { ...result, archive: archived.receipt } : result;
   }
 
   #requireMergeWorkflow() {

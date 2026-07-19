@@ -107,6 +107,36 @@ export class HerdrPaneClient {
     await this.#plain(args, `Herdr agent release failed for ${paneId}`);
   }
 
+  async reportMetadata({
+    paneId, source, appliesToSource, displayAgent = null,
+    clearDisplayAgent = false, customStatus = null,
+    clearCustomStatus = false, stateLabels = null,
+    clearStateLabels = false, seq,
+  }) {
+    requirePaneId(paneId);
+    requiredString(source, "metadata source");
+    const args = ["pane", "report-metadata", paneId, "--source", source];
+    if (appliesToSource) args.push("--applies-to-source", appliesToSource);
+    if (displayAgent) args.push("--display-agent", displayAgent);
+    else if (clearDisplayAgent) args.push("--clear-display-agent");
+    if (customStatus) args.push("--custom-status", customStatus);
+    else if (clearCustomStatus) args.push("--clear-custom-status");
+    for (const [state, label] of Object.entries(stateLabels || {})) {
+      args.push("--state-label", `${state}=${label}`);
+    }
+    if (clearStateLabels) args.push("--clear-state-labels");
+    if (seq !== undefined) args.push("--seq", String(seq));
+    await this.#plain(args, `Herdr metadata report failed for ${paneId}`);
+  }
+
+  async rename({ paneId, label = null }) {
+    requirePaneId(paneId);
+    const args = ["pane", "rename", paneId];
+    if (label === null) args.push("--clear");
+    else args.push(requiredString(label, "pane label"));
+    await this.#plain(args, `Herdr pane rename failed for ${paneId}`);
+  }
+
   async #json(args) {
     let stdout;
     try {
@@ -153,7 +183,8 @@ export class HerdrPanePool {
       throw new TypeError("Herdr worker pane count must be one or two");
     }
     requiredString(cwd, "worker cwd");
-    const reserved = await this.#reservedPaneIds();
+    const taskIds = await this.store.listTaskIds();
+    const reserved = await this.#reservedPaneIds(taskIds);
     let panes = await this.client.list();
     const current = panes.find(({ paneId }) => paneId === this.currentPaneId) || null;
     const ordered = panes
@@ -166,8 +197,13 @@ export class HerdrPanePool {
     const selected = [];
     for (const pane of ordered) {
       if (selected.length === count) break;
-      if (reserved.has(pane.paneId) || pane.agent !== null) continue;
-      if (await this.#isVacant(pane)) selected.push(pane);
+      if (reserved.has(pane.paneId)) continue;
+      const vacant = await this.#isVacant(pane);
+      if (!vacant) continue;
+      if (pane.agent !== null && !(await this.#reclaimStaleWorker(pane, taskIds))) {
+        continue;
+      }
+      selected.push({ ...pane, agent: null, agentStatus: "unknown" });
     }
     while (selected.length < count) {
       const anchor = this.currentPaneId || selected.at(-1)?.paneId;
@@ -202,18 +238,54 @@ export class HerdrPanePool {
     return process.pid === info.shellPid && shellNames.has(process.name.replace(/^-/, ""));
   }
 
-  async #reservedPaneIds() {
+  async #reclaimStaleWorker(pane, taskIds) {
+    const match = /^ShipMates (scout-1|scout-2|implementer)$/u.exec(pane.agent || "");
+    if (!match || typeof this.client.releaseAgent !== "function") return false;
+    const workerId = match[1];
+    for (const taskId of taskIds) {
+      await this.client.releaseAgent({
+        paneId: pane.paneId,
+        source: `shipmates:worker:${taskId}:${workerId}`,
+        agent: pane.agent,
+        seq: 2_147_483_647,
+      }).catch(() => {});
+    }
+    return true;
+  }
+
+  async #reservedPaneIds(taskIds) {
     const result = new Set();
-    for (const taskId of await this.store.listTaskIds()) {
-      const snapshot = await this.store.getSnapshot(taskId);
-      for (const worker of snapshot.workers) {
-        if (
-          worker.paneId &&
-          new Set(["dispatch_requested", "started"]).has(worker.status)
-        ) result.add(worker.paneId);
+    for (const taskId of taskIds) {
+      try {
+        const snapshot = await this.store.getSnapshot(taskId);
+        for (const worker of snapshot.workers) {
+          if (
+            worker.paneId &&
+            new Set(["dispatch_requested", "started"]).has(worker.status)
+          ) result.add(worker.paneId);
+        }
+      } catch (error) {
+        if (typeof this.store.readEvents !== "function") throw error;
+        const events = await this.store.readEvents(taskId);
+        collectPaneIds(events, result);
       }
     }
     return result;
+  }
+}
+
+function collectPaneIds(value, result) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectPaneIds(item, result);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "paneId" && typeof item === "string" && item.trim() !== "") {
+      result.add(item);
+    } else {
+      collectPaneIds(item, result);
+    }
   }
 }
 

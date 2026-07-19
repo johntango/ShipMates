@@ -8,6 +8,7 @@ import { ExactRemoteBranchDeleteAdapter } from "../adapters/git-branch-delete.js
 import { ExactHeadGitPushAdapter } from "../adapters/git-push.js";
 import { TreehouseWorktreeManager } from "../adapters/treehouse.js";
 import { TaskStore } from "../storage/task-store.js";
+import { ProjectStore } from "../projects/project-store.js";
 import { FirstmateDeliveryWorkflow } from "../workflows/firstmate-delivery.js";
 import { BranchCleanupWorkflow } from "../workflows/branch-cleanup.js";
 import { GitHubDraftPullRequestWorkflow } from "../workflows/github-draft-pr.js";
@@ -15,6 +16,7 @@ import { GitHubMergeWorkflow } from "../workflows/github-merge.js";
 import { GitHubStatusWorkflow } from "../workflows/github-status.js";
 import { ExactHeadPushWorkflow } from "../workflows/git-push.js";
 import { PostMergeAssuranceWorkflow } from "../workflows/post-merge-assurance.js";
+import { ProjectArchiveWorkflow } from "../workflows/project-archive.js";
 import { TreehouseLedgerWorkflow } from "../workflows/treehouse-ledger.js";
 
 export async function runFirstmateDeliveryCli({
@@ -157,9 +159,9 @@ export async function runFirstmateDeliveryCli({
 }
 
 function createWorkflow({ env, cwd }) {
-  const store = new TaskStore({
-    rootDir: path.resolve(cwd, env.SHIPMATES_STATE_DIR || ".shipmates"),
-  });
+  const stateRoot = path.resolve(cwd, env.SHIPMATES_STATE_DIR || ".shipmates");
+  const store = new TaskStore({ rootDir: stateRoot });
+  const projectStore = new ProjectStore({ rootDir: stateRoot });
   const readGateway = new GitHubReadGateway();
   const actor = env.SHIPMATES_ACTOR || "firstmate";
   const statusWorkflow = new GitHubStatusWorkflow({ store, gateway: readGateway, actor });
@@ -202,6 +204,9 @@ function createWorkflow({ env, cwd }) {
       deleteAdapter: new ExactRemoteBranchDeleteAdapter(),
       readGateway,
       actor,
+    }),
+    archiveWorkflow: new ProjectArchiveWorkflow({
+      projectStore, taskStore: store, stateRoot,
     }),
   });
 }

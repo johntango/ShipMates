@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShipMates</title>
+  <link href="/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+  <link href="/assets/dashboard.css" rel="stylesheet">
+</head>
+<body>
+  <nav class="navbar border-bottom sticky-top bg-body-tertiary">
+    <div class="container-fluid px-4">
+      <span class="navbar-brand fw-semibold">ShipMates</span>
+      <div class="d-flex align-items-center gap-2">
+        <span id="connection" class="badge text-bg-secondary">Connecting</span>
+        <label for="theme" class="visually-hidden">Theme</label>
+        <select id="theme" class="form-select form-select-sm" aria-label="Color theme">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+    </div>
+  </nav>
+  <main class="container-fluid p-4">
+    <div class="row g-4">
+      <section class="col-12 col-xl-8">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+          <div><h1 class="h3 mb-1">Projects</h1><p class="text-body-secondary mb-0">Plans, dependencies, execution, and durable results</p></div>
+          <time id="updated" class="small text-body-secondary"></time>
+        </div>
+        <div id="watchdog" aria-live="assertive"></div>
+        <div id="projects" class="vstack gap-4" aria-live="polite"></div>
+        <div id="project-action-status" class="visually-hidden" aria-live="polite"></div>
+        <details class="mt-4"><summary class="h5">Recent task ledger</summary><div id="tasks" class="vstack gap-3 mt-3"></div></details>
+      </section>
+      <aside class="col-12 col-xl-4">
+        <div class="card shadow-sm sticky-xl-top command-card">
+          <div class="card-body">
+            <h2 class="h5">Send to Firstmate</h2>
+            <p class="text-body-secondary small">Firstmate receives this message and coordinates any Scouts or Implementer.</p>
+            <form id="command-form">
+              <label for="command" class="form-label">Instruction</label>
+              <textarea id="command" class="form-control" rows="5" maxlength="4000" required placeholder="For example: show me the files"></textarea>
+              <button class="btn btn-primary w-100 mt-3" type="submit">Send to Firstmate</button>
+              <div id="command-status" class="form-text mt-2" aria-live="polite"></div>
+            </form>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+  <script src="/vendor/bootstrap-js/bootstrap.bundle.min.js"></script>
+  <script src="/assets/dashboard.js"></script>
+</body>
+</html>

@@ -162,6 +162,29 @@ test("records a blocked workspace-write attempt that made no changes", async (t)
   assert.deepEqual(result.worker.verification.changedPaths, []);
 });
 
+test("records a tested completed no-op when the requested behavior already exists", async (t) => {
+  const store = await runningTask(t);
+  const manager = new FakeWorktreeManager();
+  const workflow = new CodexShipWorkflow({
+    store,
+    worktreeManager: manager,
+    schemaPath: "schemas/codex-worker-report.schema.json",
+    runtime: {
+      async run() {
+        const result = completedResult();
+        result.report.files = [];
+        return result;
+      },
+      async loadCompleted() { throw new Error("not used"); },
+    },
+  });
+
+  const result = await workflow.run({ taskId, brief });
+  assert.equal(result.worker.report.status, "completed");
+  assert.equal(result.worker.verification.noMutation, true);
+  assert.deepEqual(result.worker.verification.changedPaths, []);
+});
+
 test("rejects a worker that staged repository changes", async (t) => {
   const store = await runningTask(t);
   const manager = new FakeWorktreeManager();

@@ -1,14 +1,9 @@
 import path from "node:path";
 
-const scoutPerspectives = Object.freeze([
-  "Inspect the requested change from the perspective of existing architecture, public APIs, and compatibility. Identify the smallest coherent implementation and relevant files.",
-  "Independently inspect the requested change from the perspective of tests, edge cases, documentation, and regression risk. Identify validation commands and likely pitfalls.",
-]);
-
 export class FirstmateLocalExecutor {
   constructor({
     runtime, schemaPath, store = null, actor = "firstmate", observer = null,
-    implementationWorkflow = null,
+    implementationWorkflow = null, scoutLimit = 2,
   } = {}) {
     if (!runtime || typeof runtime.run !== "function" || !schemaPath) {
       throw new TypeError("FirstmateLocalExecutor requires runtime and schemaPath");
@@ -19,6 +14,10 @@ export class FirstmateLocalExecutor {
     this.actor = actor;
     this.observer = observer;
     this.implementationWorkflow = implementationWorkflow;
+    if (!Number.isInteger(scoutLimit) || scoutLimit < 1 || scoutLimit > 2) {
+      throw new TypeError("scoutLimit must be 1 or 2");
+    }
+    this.scoutLimit = scoutLimit;
   }
 
   async execute({ taskId, requestId, repoPath, message, classification }) {
@@ -35,18 +34,19 @@ export class FirstmateLocalExecutor {
       };
     }
 
-    await this.observer?.begin?.({ taskId, repoPath });
+    const workItems = normalizedWorkItems(classification, message, this.scoutLimit);
+    await this.observer?.begin?.({ taskId, repoPath, workerCount: workItems.length });
     let scouts;
     let implementation = null;
     let status = "inspected";
     try {
-      scouts = await Promise.all(scoutPerspectives.map((perspective, index) =>
+      scouts = await Promise.all(workItems.map((workItem, index) =>
         this.#runWorker({
           taskId,
           repoPath,
           workerId: `scout-${index + 1}`,
           sandbox: "read-only",
-          prompt: buildScoutPrompt({ taskId, message, perspective }),
+          prompt: buildScoutPrompt({ taskId, message, workItem }),
         })));
 
       if (classification.requiredAuthority === "local_write") {
@@ -92,6 +92,7 @@ export class FirstmateLocalExecutor {
     try {
       const result = await this.runtime.run({
         taskId,
+        workerId,
         workingDirectory: repoPath,
         prompt,
         schemaPath: this.schemaPath,
@@ -148,14 +149,25 @@ export class FirstmateLocalExecutor {
   }
 }
 
-function buildScoutPrompt({ taskId, message, perspective }) {
+function buildScoutPrompt({ taskId, message, workItem }) {
   return [
     `You are an independent read-only ShipMates scout for task ${taskId}.`,
     "Do not edit files, commit, push, use GitHub, or address the human.",
-    perspective,
+    "Do not inspect .shipmates, prior task artifacts, worker logs, or other orchestration state.",
+    "Stay focused on repository evidence directly relevant to the user request.",
+    "Use no more than six tool calls. Stop as soon as you have enough evidence for the structured report.",
+    "This work item is assigned only to you. Do not investigate another scout's work item.",
+    `Assigned work item: ${workItem}`,
     `User request: ${message}`,
     "Inspect the repository directly and return the required structured worker report.",
   ].join("\n");
+}
+
+function normalizedWorkItems(classification, message, scoutLimit) {
+  const values = Array.isArray(classification.workItems)
+    ? classification.workItems.map((value) => String(value).trim()).filter(Boolean)
+    : [message];
+  return [...new Set(values)].slice(0, scoutLimit);
 }
 
 function buildImplementationPrompt({ taskId, message, scouts }) {
@@ -163,6 +175,7 @@ function buildImplementationPrompt({ taskId, message, scouts }) {
     `You are the bounded local implementation worker for ShipMates task ${taskId}.`,
     "Implement the user's request in the current workspace and run relevant tests.",
     "Do not commit, push, open a pull request, access GitHub, or perform destructive cleanup.",
+    "Do not inspect or modify .shipmates or prior task artifacts.",
     "Preserve unrelated existing changes. Make the smallest compatible production-quality change.",
     `User request: ${message}`,
     "Independent scout reports:",

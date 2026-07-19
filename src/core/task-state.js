@@ -41,10 +41,10 @@ const normalTransitions = {
   landed: ["cleaning"],
   cleaning: ["complete"],
   complete: [],
-  blocked: [],
+  blocked: ["running"],
   failed: [],
   cancelled: [],
-  recovery_required: [],
+  recovery_required: ["running"],
 };
 
 export const VALID_TRANSITIONS = Object.freeze(
@@ -179,13 +179,15 @@ function applyEvent(snapshot, event, index) {
       }
       if (from === "validating" && to === "awaiting_human") {
         const validation = snapshot.validationRuns.at(-1);
+        const awaitingValidationApproval =
+          validation?.gate?.status === "awaiting_approval";
         if (
-          validation?.passed !== true ||
+          (validation?.passed !== true && !awaitingValidationApproval) ||
           snapshot.worktree?.status !== "leased" ||
           validation.finalHeadSha !== snapshot.worktree.headSha
         ) {
           throw new TaskStateError(
-            "A passing local validation for the active lease is required before human review",
+            "Passing validation or a validation approval gate for the active lease is required before human review",
           );
         }
       }
@@ -1322,7 +1324,8 @@ function validateShipWorkerVerification(snapshot, worker, report, verification) 
     !sameArray(verification.changedPaths, [...report.files].sort()) ||
     verification.dirty !== (verification.changedPaths.length > 0) ||
     verification.noMutation !== !verification.dirty ||
-    (report.status === "completed" && verification.changedPaths.length === 0) ||
+    (report.status === "completed" && verification.changedPaths.length === 0 &&
+      report.tests.length === 0) ||
     worker.sandbox !== "workspace-write") {
     throw new TaskStateError(
       "Mutating worker report lacks exact independently verified workspace changes",
@@ -2247,9 +2250,11 @@ function validateFirstmateClassification(snapshot, classification) {
     "recommendedNextStep",
     "requiresHumanApproval",
   ];
+  const actualFields = Object.keys(classification).sort().join(",");
+  const currentFields = [...expectedFields, "workItems"].sort().join(",");
   if (
-    Object.keys(classification).sort().join(",") !==
-    [...expectedFields].sort().join(",")
+    actualFields !== [...expectedFields].sort().join(",") &&
+    actualFields !== currentFields
   ) {
     throw new TaskStateError("Firstmate classification fields are not exact");
   }
@@ -2258,6 +2263,13 @@ function validateFirstmateClassification(snapshot, classification) {
   }
   requireNonEmpty("Firstmate summary", classification.summary);
   requireNonEmpty("Firstmate recommended next step", classification.recommendedNextStep);
+  if (classification.workItems !== undefined && (
+    !Array.isArray(classification.workItems) ||
+    classification.workItems.length < 1 || classification.workItems.length > 2 ||
+    classification.workItems.some((item) => typeof item !== "string" || item.trim() === "") ||
+    new Set(classification.workItems.map((item) => item.trim())).size !==
+      classification.workItems.length
+  )) throw new TaskStateError("Firstmate work items must be one or two distinct strings");
   const taskTypes = new Set([
     "answer",
     "review",
@@ -2513,14 +2525,19 @@ function validateLocalValidationReport(snapshot, report) {
       throw new TaskStateError(`Local validation remote step ${step.step} was not skipped`);
     }
   }
+  const skipSteps = report.command?.skipSteps?.join(",");
+  const allowedSkipSteps = new Set([
+    "rebase,push,pr,ci",
+    "rebase,review,document,push,pr,ci",
+  ]);
   if (
-    report.command?.skipSteps?.join(",") !== "rebase,push,pr,ci" ||
+    !allowedSkipSteps.has(skipSteps) ||
     !Array.isArray(report.command?.args) || report.command.args.length !== 6 ||
     report.command.args[0] !== "axi" || report.command.args[1] !== "run" ||
     report.command.args[2] !== "--intent" ||
     digestText(report.command.args[3]) !== report.intentSha256 ||
     report.command.args[4] !== "--skip" ||
-    report.command.args[5] !== "rebase,push,pr,ci" ||
+    report.command.args[5] !== skipSteps ||
     report.command.args.includes("--yes")
   ) {
     throw new TaskStateError("Local validation command is not capability-limited");

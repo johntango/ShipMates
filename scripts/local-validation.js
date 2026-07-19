@@ -1,6 +1,9 @@
 import path from "node:path";
 
-import { NoMistakesLocalGate } from "../src/adapters/no-mistakes.js";
+import {
+  FAST_LOCAL_SKIP_STEPS,
+  NoMistakesLocalGate,
+} from "../src/adapters/no-mistakes.js";
 import { TaskStore } from "../src/storage/task-store.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
 
@@ -18,6 +21,10 @@ const workflow = new LocalValidationWorkflow({
   gate: new NoMistakesLocalGate({
     binaryPath,
     stateRoot: path.join(rootDir, "no-mistakes"),
+    onProgress: (message) => console.error(`[no-mistakes] ${message}`),
+    ...(process.env.SHIPMATES_VALIDATION_PROFILE === "fast"
+      ? { skipSteps: FAST_LOCAL_SKIP_STEPS }
+      : {}),
   }),
   actor: process.env.SHIPMATES_ACTOR || "firstmate",
 });

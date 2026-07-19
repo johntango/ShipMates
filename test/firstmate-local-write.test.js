@@ -50,6 +50,16 @@ test("advances a clarified local-write task into an exact Treehouse lease", asyn
         changes: [],
       };
     },
+    async alignLeaseBase(input) {
+      calls.push(["align", input]);
+      return {
+        worktreePath: "/tmp/treehouse/shipmates/repo",
+        headSha,
+        branch: null,
+        dirty: false,
+        changes: [],
+      };
+    },
     async prepareTaskBranch(input) {
       calls.push(["prepare-branch", input]);
       return {
@@ -83,7 +93,7 @@ test("advances a clarified local-write task into an exact Treehouse lease", asyn
   assert.equal(first.worktree.branch, `agent/${taskId}`);
   assert.equal(first.worktree.worktreePath, "/tmp/treehouse/shipmates/repo");
   assert.deepEqual(calls.map(([name]) => name), [
-    "prepare", "lease", "inspect", "prepare-branch",
+    "prepare", "lease", "align", "prepare-branch",
   ]);
 
   const events = first.eventsCount;
@@ -96,4 +106,22 @@ test("advances a clarified local-write task into an exact Treehouse lease", asyn
   });
   assert.equal(second.eventsCount, events);
   assert.equal(calls.length, 4);
+});
+
+test("passes local-only demo preparation to Treehouse", async (t) => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-local-demo-"));
+  t.after(() => rm(rootDir, { recursive: true, force: true }));
+  const store = new TaskStore({ rootDir });
+  await store.createTask({ taskId, kind: "firstmate-intake", repo: "owner/demo", baseSha: headSha, actor: "firstmate" });
+  await store.transition({ taskId, from: "proposed", to: "clarified", actor: "firstmate" });
+  let localOnly = null;
+  const manager = {
+    async prepareRepository(input) { localOnly = input.localOnly; },
+    async lease(input) { assert.equal(input.localOnly, true); return { taskId, repoPath: "/repos/demo", worktreePath: "/tmp/demo" }; },
+    async alignLeaseBase() { return { worktreePath: "/tmp/demo", headSha, branch: null, dirty: false, changes: [] }; },
+    async prepareTaskBranch() { return { branch: `agent/${taskId}`, headSha, dirty: false, changedPaths: [] }; },
+    async inspectPreparedTaskBranch() { return { branch: `agent/${taskId}`, headSha, dirty: false, changedPaths: [] }; },
+  };
+  await prepareFirstmateLocalWrite({ store, manager, taskId, requestId: "demo-request", repoPath: "/repos/demo", localOnly: true });
+  assert.equal(localOnly, true);
 });

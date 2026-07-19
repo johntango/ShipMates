@@ -2,7 +2,7 @@ import { TreehouseLedgerWorkflow } from "./treehouse-ledger.js";
 import { TaskBranchWorkflow } from "./task-branch.js";
 
 export async function prepareFirstmateLocalWrite({
-  store, manager, taskId, requestId, repoPath, actor = "firstmate",
+  store, manager, taskId, requestId, repoPath, actor = "firstmate", localOnly = false,
 }) {
   if (!store || !manager) {
     throw new TypeError("Durable local-write preparation requires store and manager");
@@ -26,6 +26,7 @@ export async function prepareFirstmateLocalWrite({
   snapshot = await new TreehouseLedgerWorkflow({ store, manager, actor }).acquire({
     taskId,
     repoPath,
+    localOnly,
   });
   const prepared = await new TaskBranchWorkflow({ store, manager, actor }).prepare({
     taskId,

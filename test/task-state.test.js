@@ -139,6 +139,19 @@ test("records capability-limited local validation and rejects a remote step", ()
   );
 });
 
+test("accepts fast local validation while keeping every remote step disabled", () => {
+  const events = validationLifecycleEvents(localValidationReport());
+  const result = events.find(({ type }) => type === "validation.local.recorded");
+  result.data.report.command.skipSteps = [
+    "rebase", "review", "document", "push", "pr", "ci",
+  ];
+  result.data.report.command.args[5] = result.data.report.command.skipSteps.join(",");
+  for (const step of result.data.report.steps) {
+    if (new Set(["review", "document"]).has(step.step)) step.status = "skipped";
+  }
+  assert.equal(replayTaskEvents(events).validationRuns[0].passed, true);
+});
+
 test("blocks human review until local validation passes for the active lease", () => {
   const passedEvents = validationLifecycleEvents(localValidationReport());
   assert.equal(replayTaskEvents(passedEvents).state, "awaiting_human");
@@ -150,8 +163,26 @@ test("blocks human review until local validation passes for the active lease", (
   failed.process.exitCode = 1;
   assert.throws(
     () => replayTaskEvents(validationLifecycleEvents(failed)),
-    /passing local validation.*required/u,
+    /validation.*required/iu,
   );
+});
+
+test("allows human review when local validation pauses at an approval gate", () => {
+  const approval = localValidationReport();
+  approval.passed = false;
+  approval.outcome = null;
+  approval.runStatus = "running";
+  approval.gate = { step: "review", status: "awaiting_approval" };
+  let pending = false;
+  for (const step of approval.steps) {
+    if (step.step === "review") {
+      step.status = "awaiting_approval";
+      pending = true;
+    } else if (pending && !new Set(["rebase", "push", "pr", "ci"]).has(step.step)) {
+      step.status = "pending";
+    }
+  }
+  assert.equal(replayTaskEvents(validationLifecycleEvents(approval)).state, "awaiting_human");
 });
 
 test("records a self-consistent recovery audit at the exact ledger watermark", () => {

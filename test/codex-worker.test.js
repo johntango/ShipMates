@@ -120,6 +120,63 @@ writeFileSync(reportPath, JSON.stringify(${JSON.stringify(report())}));
   assert.equal(result.eventCount, 3);
 });
 
+test("continues only the specified durable Codex thread", async (t) => {
+  const directory = await temporaryDirectory(t);
+  let invocation;
+  const runtime = new CodexWorkerRuntime({
+    runProcess: async ({ stdoutPath, stderrPath, args }) => {
+      invocation = args;
+      const reportPath = args[args.indexOf("--output-last-message") + 1];
+      await writeFile(stdoutPath, [
+        JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
+        JSON.stringify({ type: "turn.completed" }),
+        "",
+      ].join("\n"));
+      await writeFile(stderrPath, "");
+      await writeFile(reportPath, JSON.stringify(report()));
+      return { exitCode: 0 };
+    },
+  });
+
+  const result = await runtime.reply({
+    taskId: "codex-scout-001",
+    replyId: "reply-001",
+    threadId: "thread-123",
+    workingDirectory: directory,
+    prompt: "Check the remaining risk",
+    schemaPath: path.resolve("schemas/codex-worker-report.schema.json"),
+    artifactDirectory: path.join(directory, "artifacts"),
+  });
+
+  assert.equal(result.threadId, "thread-123");
+  assert.deepEqual(invocation.slice(-3), [
+    "resume", "thread-123", "Check the remaining risk",
+  ]);
+  assert.match(result.artifacts.directory, /replies\/reply-001$/u);
+});
+
+test("rejects a resumed Codex thread with a different identity", async (t) => {
+  const directory = await temporaryDirectory(t);
+  const replyDirectory = path.join(directory, "artifacts", "replies", "reply-001");
+  await mkdir(replyDirectory, { recursive: true });
+  await writeFile(path.join(replyDirectory, "codex-events.jsonl"), [
+    JSON.stringify({ type: "thread.started", thread_id: "different-thread" }),
+    JSON.stringify({ type: "turn.completed" }),
+    "",
+  ].join("\n"));
+  await writeFile(path.join(replyDirectory, "report.json"), JSON.stringify(report()));
+
+  await assert.rejects(
+    new CodexWorkerRuntime().loadCompletedReply({
+      taskId: "codex-scout-001",
+      replyId: "reply-001",
+      threadId: "thread-123",
+      artifactDirectory: path.join(directory, "artifacts"),
+    }),
+    /changed the durable thread ID/u,
+  );
+});
+
 function report() {
   return {
     taskId: "codex-scout-001",

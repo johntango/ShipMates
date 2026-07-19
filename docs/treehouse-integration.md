@@ -29,6 +29,9 @@ sha256:  66022f36eb0c79d6f242025f266b782ac947b3a2817005f13425cbd18874f1f9
 
 The binary was downloaded to `/private/tmp` and was not added to this repository.
 Production installation and upgrade policy remain a later decision.
+When `TREEHOUSE_BIN` is unset, the adapter uses that pinned development binary
+if it still exists and otherwise falls back to resolving `treehouse` from
+`PATH`. An explicit `TREEHOUSE_BIN` always takes precedence.
 
 ## Git compatibility preflight
 
@@ -42,9 +45,17 @@ The `/usr/local/bin/git` version on the development Mac is `2.23.0` and
 misparses that form inside linked worktrees. A compatible Git `2.55.0` is already
 installed at `/opt/homebrew/bin/git`.
 
-The adapter tests the required behavior directly before leasing. ShipMates must
-launch Treehouse with `/opt/homebrew/bin` before `/usr/local/bin` in `PATH`; an
-incompatible Git causes a refusal before a worktree is acquired.
+The adapter prepends `/opt/homebrew/bin` to `PATH` for both its Git preflight and
+the Treehouse subprocess, then tests the required behavior directly before
+leasing. Set `TREEHOUSE_GIT_DIRECTORY` to select a different compatible Git
+installation. An incompatible Git still causes a refusal before a worktree is
+acquired.
+
+Treehouse may create a new lease at the repository default branch even when the
+task was started from another commit. After durable lease intent is recorded,
+ShipMates accepts only a clean lease and detaches it to the task's exact base
+SHA before recording the lease result. Dirty leases or missing commits fail
+closed; reconciliation never repeats this mutation automatically.
 
 ## Verified exercise
 

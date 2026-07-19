@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  FAST_LOCAL_SKIP_STEPS,
   NoMistakesLocalGate,
   NoMistakesOutputError,
   parseAxiOutput,
@@ -23,13 +24,27 @@ const PIN_OPTIONS = Object.freeze({
   pin: PIN,
 });
 
+test("keeps the validation profile separate from immutable binary pin evidence", () => {
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes",
+    skipSteps: FAST_LOCAL_SKIP_STEPS,
+    ...PIN_OPTIONS,
+  });
+  assert.equal("skipSteps" in gate.pinEvidence(), false);
+  assert.equal(FAST_LOCAL_SKIP_STEPS.includes("test"), false);
+  assert.equal(FAST_LOCAL_SKIP_STEPS.includes("lint"), false);
+  assert.equal(FAST_LOCAL_SKIP_STEPS.includes("review"), true);
+});
+
 test("runs a passing validator with remote-capable steps disabled", async () => {
   const calls = [];
+  const progress = [];
   const runner = fakeRunner({ calls, output: passingOutput() });
   const gate = new NoMistakesLocalGate({
     binaryPath: "/private/tmp/no-mistakes",
     stateRoot: path.join(tmpdir(), "shipmates-no-mistakes-test"),
     runner,
+    onProgress: (message) => progress.push(message),
     clock: () => NOW,
     ...PIN_OPTIONS,
   });
@@ -64,6 +79,71 @@ test("runs a passing validator with remote-capable steps disabled", async () => 
   assert.equal(invocation.options.env.GITHUB_TOKEN, undefined);
   assert.equal(invocation.options.env.NO_MISTAKES_TELEMETRY, "0");
   assert.match(invocation.options.env.GH_CONFIG_DIR, /empty-gh$/u);
+  assert.deepEqual(progress, ["Starting validation pipeline", "Running tests"]);
+});
+
+test("reuses the managed runtime already bound to the repository remote", async () => {
+  const calls = [];
+  const stateRoot = path.join(tmpdir(), "shipmates-no-mistakes-existing");
+  const existingRoot = path.join(stateRoot, "earlier-task");
+  const baseRunner = fakeRunner({ calls, output: passingOutput() });
+  const runner = async (command, args, options) => {
+    if (command === "git" && args[0] === "remote") {
+      calls.push({ command, args, options });
+      return {
+        exitCode: 0,
+        stdout: `${path.join(existingRoot, "repos", "gate.git")}\n`,
+        stderr: "",
+      };
+    }
+    return baseRunner(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes",
+    stateRoot,
+    runner,
+    clock: () => NOW,
+    ...PIN_OPTIONS,
+  });
+
+  await gate.run({
+    taskId: "validation-002",
+    worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD,
+    intent: "Reuse the existing local gate",
+  });
+
+  const init = calls.find(({ args }) => args[0] === "init");
+  assert.equal(init.options.env.NM_HOME, existingRoot);
+});
+
+test("uses an origin-specific runtime when Git reports an absent no-mistakes remote as 128", async () => {
+  const calls = [];
+  const stateRoot = path.join(tmpdir(), "shipmates-no-mistakes-multi-repo");
+  const baseRunner = fakeRunner({ calls, output: passingOutput() });
+  const runner = async (command, args, options) => {
+    if (command === "git" && args.join(" ") === "remote get-url no-mistakes") {
+      calls.push({ command, args, options });
+      return { exitCode: 128, stdout: "", stderr: "fatal: No such remote 'no-mistakes'\n" };
+    }
+    if (command === "git" && args.join(" ") === "remote get-url origin") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: "git@github.com:owner/second-repo.git\n", stderr: "" };
+    }
+    return baseRunner(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes", stateRoot, runner,
+    clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  await gate.run({
+    taskId: "validation-multi", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate the second repository",
+  });
+
+  const init = calls.find(({ args }) => args[0] === "init");
+  assert.match(init.options.env.NM_HOME, /runtime\/[a-f0-9]{16}$/u);
 });
 
 test("records an approval gate as not passed without advancing remote steps", async () => {
@@ -186,7 +266,11 @@ function fakeRunner({ calls = [], output, afterHead = HEAD }) {
       };
     }
     if (command.endsWith("no-mistakes")) {
+      if (args[0] === "axi") options.onStderrLine?.("Running tests");
       return { exitCode: 0, stdout: output, stderr: "" };
+    }
+    if (args[0] === "remote") {
+      return { exitCode: 2, stdout: "", stderr: "remote not found" };
     }
     if (args[0] === "rev-parse") {
       inspections += 1;

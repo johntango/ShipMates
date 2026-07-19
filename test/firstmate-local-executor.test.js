@@ -43,6 +43,11 @@ test("runs two independent scouts before a local implementation", async () => {
     "read-only",
     "workspace-write",
   ]);
+  assert.match(calls[0].prompt, /Do not inspect \.shipmates/u);
+  assert.match(calls[0].prompt, /no more than six tool calls/u);
+  assert.match(calls[0].prompt, /Inspect architecture and APIs/u);
+  assert.doesNotMatch(calls[0].prompt, /Inspect tests and regression risks/u);
+  assert.match(calls[1].prompt, /Inspect tests and regression risks/u);
   assert.match(calls[2].prompt, /Independent scout reports/u);
   assert.equal(result.status, "completed");
   assert.equal(result.scouts.length, 2);
@@ -71,6 +76,63 @@ test("stops before external or destructive authority", async () => {
   });
   assert.equal(calls, 0);
   assert.equal(result.status, "awaiting_human");
+});
+
+test("assigns an indivisible work item to only one scout", async () => {
+  const calls = [];
+  let workerCount;
+  const executor = new FirstmateLocalExecutor({
+    schemaPath: "schemas/codex-worker-report.schema.json",
+    runtime: {
+      async run(input) {
+        calls.push(input);
+        return { threadId: "thread-scout-1", report: report(input.taskId, "scout-1") };
+      },
+    },
+    observer: {
+      async begin(input) { workerCount = input.workerCount; },
+      async end() {},
+    },
+  });
+
+  const result = await executor.execute({
+    taskId: "task-001",
+    requestId: "request-001",
+    repoPath: "/tmp/repo",
+    message: "Explain package.json",
+    classification: {
+      ...classification("read_only"),
+      workItems: ["Inspect package.json and summarize it"],
+    },
+  });
+
+  assert.equal(workerCount, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(result.scouts.length, 1);
+  assert.match(calls[0].prompt, /Inspect package\.json and summarize it/u);
+});
+
+test("limits demo execution to one scout when classification returns two work items", async () => {
+  const calls = [];
+  const executor = new FirstmateLocalExecutor({
+    schemaPath: "schemas/codex-worker-report.schema.json",
+    scoutLimit: 1,
+    runtime: {
+      async run(input) {
+        calls.push(input);
+        const workerId = input.artifactDirectory.split("/").at(-1);
+        return { threadId: `thread-${workerId}`, report: report(input.taskId, workerId) };
+      },
+    },
+  });
+  const result = await executor.execute({
+    taskId: "task-demo", requestId: "request-demo", repoPath: "/tmp/repo",
+    message: "Build the demo", classification: classification("local_write"),
+  });
+  assert.deepEqual(calls.map(({ workerId }) => workerId), ["scout-1", "implementer"]);
+  assert.equal(result.scouts.length, 1);
+  assert.match(calls[0].prompt, /Inspect architecture and APIs/u);
+  assert.doesNotMatch(calls[0].prompt, /Inspect tests and regression risks/u);
 });
 
 test("delegates local writes to the durable implementation workflow", async () => {
@@ -122,6 +184,10 @@ function classification(requiredAuthority) {
     requiredAuthority,
     requiresHumanApproval: false,
     approvalBoundary: "none",
+    workItems: [
+      "Inspect architecture and APIs",
+      "Inspect tests and regression risks",
+    ],
   };
 }
 

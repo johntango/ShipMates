@@ -345,6 +345,7 @@ function projectValidation(validation) {
     runId: validation.runId,
     passed: validation.passed,
     outcome: validation.outcome,
+    gate: validation.gate || null,
     headSha: validation.finalHeadSha,
     completedAt: validation.completedAt,
   };
@@ -585,7 +586,12 @@ function deriveAttention({
       "Pinned local validation needs manual reconciliation",
     ));
   }
-  if (latestValidation && latestValidation.passed !== true) {
+  if (latestValidation?.gate?.status === "awaiting_approval") {
+    result.push(item(
+      "validation_approval_required",
+      `Local validation awaits human approval at ${latestValidation.gate.step}`,
+    ));
+  } else if (latestValidation && latestValidation.passed !== true) {
     result.push(item("validation_not_passing", "Latest local validation is not passing"));
   }
   if (latestGitHub && latestGitHub.requiredChecks.satisfied !== true) {
@@ -675,7 +681,7 @@ function displayState(state) {
   if (new Set(["blocked", "failed", "cancelled", "recovery_required"]).has(state)) {
     return "blocked";
   }
-  if (state === "awaiting_human") return "blocked";
+  if (state === "awaiting_human") return "idle";
   if (new Set(["proposed", "clarified", "approved_for_dispatch"]).has(state)) {
     return "idle";
   }

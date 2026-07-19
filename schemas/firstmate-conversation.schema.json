@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "response": { "type": "string" },
+    "action": { "type": "string", "enum": ["answer", "control", "dispatch", "plan"] },
+    "controlType": { "type": ["string", "null"], "enum": ["accept_demo_warning", "show_status", "resume_existing", null] },
+    "taskId": { "type": ["string", "null"] },
+    "instruction": { "type": ["string", "null"] },
+    "planTaskId": { "type": ["string", "null"] },
+    "objective": { "type": ["string", "null"] },
+    "tasks": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "dependsOn": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["id", "title", "description", "dependsOn"]
+      }
+    }
+  },
+  "required": ["response", "action", "controlType", "taskId", "instruction", "planTaskId", "objective", "tasks"]
+}
