@@ -145,3 +145,24 @@ test("dismisses only an attempt with no execution evidence", async () => {
   assert.equal(transitioned, true);
   assert.equal(detached, true);
 });
+
+test("reconciles one task id into its project projection", async () => {
+  const project = { id: "project-one", demoMode: false, tasks: [{
+    id: "build", taskId: "task-one", status: "dispatched", attempts: [{ taskId: "task-one" }],
+  }] };
+  const updates = [];
+  const orchestrator = new ProjectOrchestrator({
+    taskStore: { async getSnapshot() { return {
+      id: "task-one", state: "complete", workers: [], validationRuns: [], validationRequests: [],
+    }; } },
+    projectStore: {
+      async describeAttempt() { return { projectId: project.id, planTaskId: "build" }; },
+      async get() { return project; },
+      async updateTaskStatus(input) { updates.push(input); project.tasks[0].status = input.status; },
+    },
+  });
+  const result = await orchestrator.reconcileTask("task-one");
+  assert.equal(result.status, "completed");
+  assert.equal(result.action, "registry_reconciled");
+  assert.equal(updates[0].status, "completed");
+});

@@ -44,6 +44,9 @@ import {
   isExplicitProjectPlanningRequest,
   namedActionProject,
   parseProjectBlockedCommand,
+  parseProjectApproval,
+  parseProjectCreation,
+  parseDemoModeCommand,
   parseProjectSelection,
 } from "../src/cli/firstmate-project-query.js";
 import { runFirstmateDeliveryCli } from "../src/cli/firstmate-delivery.js";
@@ -58,8 +61,10 @@ import { FirstmateLocalExecutor } from "../src/workflows/firstmate-local-executo
 import { prepareFirstmateLocalWrite } from "../src/workflows/firstmate-local-write.js";
 import { CodexShipWorkflow } from "../src/workflows/codex-ship.js";
 import { FirstmateCommitWorkflow } from "../src/workflows/firstmate-commit.js";
-import { completeFirstmateDemoTask, hasDemoEvidence } from "../src/workflows/firstmate-demo-completion.js";
+import { completeFirstmateDemoTask } from "../src/workflows/firstmate-demo-completion.js";
 import { ProjectOrchestrator } from "../src/workflows/project-orchestrator.js";
+import { PlannedTaskDispatcher } from "../src/workflows/planned-task-dispatch.js";
+import { createFirstmateProjectExecutionBackends } from "../src/workflows/project-execution-backends.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
 import { LocalDeliveryWorkflow } from "../src/workflows/local-delivery.js";
 import { PersistentProjectExecutor } from "../src/workflows/persistent-project-executor.js";
@@ -302,6 +307,16 @@ if (!classifyOnly) {
           : "Local validation did not pass",
       customStatus: execution.delivery.status,
     });
+    if (validationApprovalRequired) {
+      console.error(humanInputRequired(
+        `Task ${taskId} local validation awaits human approval at ${validated.report.gate.step}. ` +
+        "Review the validation details in the task dashboard before deciding how to proceed.",
+      ));
+    } else if (validated.report.passed) {
+      console.error(humanInputRequired(
+        `Task ${taskId} passed local validation and awaits explicit push approval.`,
+      ));
+    }
     }
   }
 }
@@ -357,6 +372,16 @@ async function readExistingTaskSnapshot(store, taskId) {
     if (error?.code === "ENOENT") return null;
     throw error;
   }
+}
+
+function launchReceipt(handle) {
+  if (typeof handle?.paneId === "string" && handle.paneId) {
+    return { kind: "pane", paneId: handle.paneId };
+  }
+  if (Number.isSafeInteger(handle?.pid) && handle.pid > 0) {
+    return { kind: "process", pid: handle.pid };
+  }
+  throw new Error("Worker launch returned without an exact process or pane identity");
 }
 
 function createHerdrObserver({ store }) {
@@ -440,6 +465,16 @@ async function runInteractiveFirstmate() {
     observer: projectAgentObserver,
     workerScript: fileURLToPath(new URL("./project-agent-pane-worker.js", import.meta.url)),
     stateRoot: interactiveStore.rootDir,
+  });
+  const executionBackends = createFirstmateProjectExecutionBackends({
+    spawnProcess: spawn,
+    processPath: process.execPath,
+    firstmateScript: fileURLToPath(import.meta.url),
+    persistentScript: fileURLToPath(new URL("./persistent-project-task.js", import.meta.url)),
+    stateRoot: interactiveStore.rootDir,
+    workingDirectory: process.cwd(),
+    projectTaskRuntime,
+    hasProjectPane: (projectId) => Boolean(projectAgentObserver.paneIdFor(projectId)),
   });
   for (const project of await projectStore.list()) {
     if (project.executionPolicy?.mode !== "persistent_project") {
@@ -569,7 +604,10 @@ async function runInteractiveFirstmate() {
       console.error(`Could not reattach the active project dashboard (${error.name}).`);
     }
   }
-  const dispatchRequest = async (message) => {
+  const dispatchRequest = (message) => firstmateHerdrSession.withActivity({
+    message: "FirstMate is handling an instruction",
+    status: "coordinating",
+  }, async () => {
         const selection = parseProjectSelection(message, await projectStore.list());
         if (selection) {
           if (!selection.project) {
@@ -642,9 +680,15 @@ async function runInteractiveFirstmate() {
           console.log(`Paused ${paused.name}; no new planned tasks will be dispatched.`);
           return;
         }
-        const approveProject = message.match(/^approve project (.+)$/iu);
+        const approveProject = parseProjectApproval(
+          message, await projectStore.list(), activeProject,
+        );
         if (approveProject) {
-          const selected = await projectStore.activate(approveProject[1].trim());
+          if (!approveProject.project) {
+            console.log(`I could not identify one project matching ${approveProject.query}.`);
+            return;
+          }
+          const selected = await projectStore.activate(approveProject.project.id);
           activeProject = await projectStore.approve(selected.id);
           console.log(`Approved the ${activeProject.name} project plan.`);
           if (activeProject.executionPolicy?.autoAdvance !== false || activeProject.demoMode === true) {
@@ -673,9 +717,13 @@ async function runInteractiveFirstmate() {
           console.log(`Marked ${activeProject.name} — ${blockProject.task.title} blocked: ${blockProject.reason} No worker was dispatched.`);
           return;
         }
-        const demoProject = message.match(/^enable demo mode for (.+)$/iu);
+        const demoProject = parseDemoModeCommand(message, await projectStore.list());
         if (demoProject) {
-          const selected = await projectStore.activate(demoProject[1].trim());
+          if (!demoProject.project) {
+            console.log(`I could not identify one project matching ${demoProject.query}.`);
+            return;
+          }
+          const selected = await projectStore.activate(demoProject.project.id);
           activeProject = await projectStore.setDemoMode({ projectId: selected.id, enabled: true });
           console.log(`Enabled local-only demo mode for ${activeProject.name}; no-mistakes and remote operations will be skipped.`);
           return;
@@ -721,11 +769,11 @@ async function runInteractiveFirstmate() {
           console.log(`Deleted ${receipt.projects.map(({ name }) => name).join(", ")} from ShipMates and moved ${receipt.repoPath} to ${receipt.trashPath}. The GitHub repository was not changed.`);
           return;
         }
-        const createProject = message.match(/^create project\s+(.+)$/iu);
+        const createProject = parseProjectCreation(message);
         if (createProject) {
           const context = await discoverFirstmateContext({ cwd: activeProject.repoPath });
           activeProject = await projectStore.create({
-            name: createProject[1].trim(), repo: context.repo,
+            name: createProject, repo: context.repo,
             repoPath: context.repoPath, baseSha: context.baseSha,
           });
           console.log(`Created and selected ${activeProject.name} in ${activeProject.repo}.`);
@@ -741,21 +789,6 @@ async function runInteractiveFirstmate() {
           activeProject = await projectStore.activate(activeProject.id);
           console.log(`Added and selected ${activeProject.name} (${activeProject.repo}) at ${activeProject.repoPath}.`);
           return;
-        }
-        const namedNewProject = message.match(/\b(?:set up|create)\s+(?:a\s+)?new\s+project\s+(?:called|named)\s+([a-z0-9._-]+)/iu);
-        if (namedNewProject) {
-          const existing = (await projectStore.list()).find((project) =>
-            project.name.toLowerCase() === namedNewProject[1].toLowerCase() &&
-            project.repoPath === activeProject.repoPath);
-          if (existing) activeProject = await projectStore.activate(existing.id);
-          else {
-            const context = await discoverFirstmateContext({ cwd: activeProject.repoPath });
-            activeProject = await projectStore.create({
-              name: namedNewProject[1], repo: context.repo,
-              repoPath: context.repoPath, baseSha: context.baseSha,
-            });
-          }
-          console.log(`Planning in newly selected project ${activeProject.name}.`);
         }
         const projectStatusRecords = await enrichProjectBlockers(
           await projectStore.list(),
@@ -868,9 +901,10 @@ async function runInteractiveFirstmate() {
               projects: await projectStore.list(),
             },
           });
-          console.log(appearsToRequireHumanInput(decision.response)
+          const renderedDecision = appearsToRequireHumanInput(decision.response)
             ? humanInputRequired(decision.response)
-            : decision.response);
+            : decision.response;
+          if (decision.action !== "plan") console.log(renderedDecision);
           if (decision.action === "answer") return;
           if (decision.action === "control") {
             const taskContext = await projectStore.describeTask(decision.taskId);
@@ -901,6 +935,7 @@ async function runInteractiveFirstmate() {
               objective: decision.objective,
               tasks: decision.tasks,
             });
+            console.log(renderedDecision);
             console.error("Firstmate saved the project plan; review it on the dashboard before dispatching tasks.");
             return;
           }
@@ -946,6 +981,11 @@ async function runInteractiveFirstmate() {
           ? (await projectStore.get(projectIdForTask))?.tasks.find(({ id }) => id === planTaskId)
           : null;
         const projectForTask = planTaskId ? await projectStore.get(projectIdForTask) : null;
+        activeProject = await projectStore.get(activeProject.id);
+        if (!activeProject) {
+          console.error("Firstmate refused dispatch because the selected project no longer exists.");
+          return;
+        }
         if (!planTaskId && activeProject.tasks.length > 0) {
           console.error("Firstmate refused to create unplanned work beside a saved project plan. Amend the plan or identify the exact planned task; no worker was dispatched.");
           return;
@@ -958,6 +998,10 @@ async function runInteractiveFirstmate() {
           console.error(`“${plannedTask.title}” is already ${plannedTask.status}; Firstmate will not create a duplicate. Resume its existing task instead.`);
           return;
         }
+        if (planTaskId && (activeProject.status !== "approved" || plannedTask.status !== "claimed")) {
+          console.error("Firstmate refused planned-task dispatch without a durable approved plan and governed claim.");
+          return;
+        }
         const isTerminalMilestone = plannedTask
           ? !projectForTask.tasks.some(({ dependsOn }) => dependsOn.includes(plannedTask.id))
           : true;
@@ -967,25 +1011,17 @@ async function runInteractiveFirstmate() {
           await orchestrator.attachAttempt({
             projectId: projectIdForTask, taskId, title: instruction.slice(0, 160), planTaskId,
           });
-          let child;
+          const child = await executionBackends.dispatch({
+            project: projectForTask, planTaskId, taskId, requestId,
+            baseSha: projectParent?.worktree?.headSha || projectForTask.baseSha,
+            instruction,
+          });
+          await projectStore.recordLaunchReceipt({
+            projectId: projectIdForTask, planTaskId, taskId,
+            receipt: launchReceipt(child),
+          });
           if (projectAgentObserver.paneIdFor(projectIdForTask)) {
-            child = await projectTaskRuntime.dispatch({
-              project: projectForTask, planTaskId, taskId,
-              baseSha: projectParent?.worktree?.headSha || projectForTask.baseSha,
-              instruction,
-            });
             console.error(`${projectNameForTask} — ${taskName} is running in its Herdr Project Agent pane ${child.paneId}.`);
-          } else {
-            child = spawn(process.execPath, [
-              fileURLToPath(new URL("./persistent-project-task.js", import.meta.url)),
-              projectIdForTask, planTaskId,
-              projectParent?.worktree?.headSha || projectForTask.baseSha,
-            ], {
-              cwd: process.cwd(),
-              env: { ...process.env, SHIPMATES_STATE_DIR: interactiveStore.rootDir },
-              stdio: ["pipe", "ignore", "inherit"],
-            });
-            child.stdin.end(`${instruction}\n`);
           }
           latestTaskId = taskId;
           activeRequests.set(taskId, child);
@@ -1021,26 +1057,16 @@ async function runInteractiveFirstmate() {
           title: instruction.slice(0, 160),
           planTaskId,
         });
-        const child = spawn(process.execPath, [
-          fileURLToPath(import.meta.url),
-          taskId,
-          requestId,
-          context.repo,
-          context.baseSha,
-        ], {
-          cwd: context.repoPath,
-          env: {
-            ...process.env,
-            SHIPMATES_STATE_DIR: interactiveStore.rootDir,
-            ...(projectParent ? {
-              SHIPMATES_PROJECT_PARENT_TASK_ID: projectParent.id,
-            } : {}),
-            SHIPMATES_VALIDATION_PROFILE: isTerminalMilestone ? "full" : "fast",
-            SHIPMATES_DEMO_MODE: projectForTask?.demoMode === true ? "1" : "0",
-          },
-          stdio: ["pipe", "ignore", "inherit"],
+        const child = executionBackends.dispatch({
+          project: projectForTask,
+          taskId, requestId, context, instruction, projectParent,
+          validationProfile: isTerminalMilestone ? "full" : "fast",
+          demoMode: projectForTask?.demoMode === true,
         });
-        child.stdin.end(`${instruction}\n`);
+        await projectStore.recordLaunchReceipt({
+          projectId: projectIdForTask, planTaskId, taskId,
+          receipt: launchReceipt(child),
+        });
         latestTaskId = taskId;
         activeRequests.set(taskId, child);
         if (projectParent) {
@@ -1059,27 +1085,9 @@ async function runInteractiveFirstmate() {
             const snapshot = await interactiveStore.getSnapshot(taskId);
             let plannedStatus = null;
             if (planTaskId) {
-              const implementer = snapshot.workers?.find(({ id }) => id === "implementer");
-              const validation = snapshot.validationRuns?.at(-1);
-              const validationApprovalRequired =
-                validation?.gate?.status === "awaiting_approval";
-              const readOnlyComplete = snapshot.firstmateRuns?.at(-1)?.classification?.requiredAuthority === "read_only" &&
-                snapshot.workers?.length > 0 && snapshot.workers.every(({ status }) => status === "reported");
-              plannedStatus = validation?.passed === true || hasDemoEvidence(snapshot) || readOnlyComplete
-                ? "completed"
-                : implementer?.report?.status === "blocked" ||
-                    (validation?.passed === false && !validationApprovalRequired) || exitCode !== 0
-                  ? "blocked"
-                  : "dispatched";
-              await projectStore.updateTaskStatus({
-                projectId: projectIdForTask,
-                planTaskId,
-                status: plannedStatus,
-                blockingReason: plannedStatus === "blocked"
-                  ? implementer?.failure?.message || implementer?.failure ||
-                    implementer?.report?.summary || `Task process exited with code ${exitCode}`
-                  : null,
-              });
+              const reconciled = await orchestrator.reconcileTask(taskId);
+              plannedStatus = reconciled.status === "awaiting_human"
+                ? "dispatched" : reconciled.status;
             }
             if (taskArtifactSummary(snapshot).ready) {
               activeProjectTaskId = await projectContext.save(snapshot);
@@ -1098,7 +1106,15 @@ async function runInteractiveFirstmate() {
           }
         });
     console.error(`“${taskName}” in ${projectNameForTask} was dispatched; Firstmate is listening for more instructions.`);
-  };
+  });
+  const plannedTaskDispatcher = new PlannedTaskDispatcher({
+    projectStore,
+    selectProject: async (projectId) => {
+      activeProject = await projectStore.activate(projectId);
+      return activeProject;
+    },
+    dispatchRequest,
+  });
   const advanceProject = async (projectId, { reason = "requested" } = {}) => {
     if (advancingProjects.has(projectId)) return;
     advancingProjects.add(projectId);
@@ -1110,7 +1126,7 @@ async function runInteractiveFirstmate() {
         announcedProjectCompletions.delete(projectId);
       }
       if (project.tasks.some(({ status }) => new Set(["claimed", "dispatched"]).has(status))) return;
-      const next = await projectStore.claimNextReady(projectId);
+      const next = await projectStore.nextReady(projectId);
       if (!next) {
         if (project.tasks.length > 0 && project.tasks.every(({ status }) => status === "completed")) {
           if (announcedProjectCompletions.get(projectId) !== completionKey) {
@@ -1123,27 +1139,22 @@ async function runInteractiveFirstmate() {
         return;
       }
       console.log(`${project.name}: automatically advancing to “${next.title}” (${reason}).`);
-      try {
-        await dispatchRequest(`Implement planned task ${next.id} for ${project.name}: ${next.title}. ${next.description} This request is bound to plan task id ${next.id}.`);
-        const blocked = await projectStore.blockOrphanedClaim({
-          projectId,
-          planTaskId: next.id,
-          reason: "Dispatch returned before a durable task was created",
-        });
-        if (blocked) {
-          console.error(humanInputRequired(
-            `${project.name} — ${next.title} could not be dispatched: no durable task was created. The task is blocked instead of being left claimed.`,
-          ));
-        }
-      } catch (error) {
-        await projectStore.updateTaskStatus({ projectId, planTaskId: next.id, status: "planned" });
-        throw error;
+      const result = await plannedTaskDispatcher.dispatchNext({ projectId });
+      if (result.status === "blocked") {
+        console.error(humanInputRequired(
+          `${project.name} — ${next.title} could not be dispatched: no durable task was created. The task is blocked instead of being left claimed.`,
+        ));
       }
+      return result.task;
     } finally {
       advancingProjects.delete(projectId);
     }
   };
-  const handleProjectAction = async ({ projectId, action, planTaskId }) => {
+  const handleProjectAction = ({ projectId, action, planTaskId }) =>
+    firstmateHerdrSession.withActivity({
+      message: `FirstMate is handling project action ${action}`,
+      status: "coordinating",
+    }, async () => {
     try {
       if (action === "select") {
         activeProject = await projectStore.activate(projectId);
@@ -1173,11 +1184,20 @@ async function runInteractiveFirstmate() {
         console.log(`Updated task priority in ${activeProject.name}.`);
         return;
       }
-      await advanceProject(projectId);
+      if (action === "retry_blocked") {
+        if (!planTaskId) throw new Error("Retry requires a blocked planned task");
+        const result = await plannedTaskDispatcher.retryBlocked({ projectId, planTaskId });
+        if (result.status !== "dispatched") {
+          throw new Error("Retry returned before a durable task was created");
+        }
+        return { planTaskId, taskId: result.task.taskId, status: result.task.status };
+      }
+      return advanceProject(projectId);
     } catch (error) {
       console.error(`Project action refused: ${error.message}`);
+      throw error;
     }
-  };
+    });
   const dashboardServer = new ShipMatesDashboardServer({
     store: interactiveStore,
     projectContext,

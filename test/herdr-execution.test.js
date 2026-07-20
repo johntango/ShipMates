@@ -36,7 +36,7 @@ test("names the interactive FirstMate pane while it is listening", async () => {
     paneId: "w1:p1",
     source: "shipmates:firstmate:interactive:w1:p1",
     agent: "ShipMates FirstMate",
-    state: "working",
+    state: "idle",
     message: "FirstMate is listening",
     customStatus: "listening",
     seq: 1,
@@ -45,13 +45,9 @@ test("names the interactive FirstMate pane while it is listening", async () => {
   }]);
   assert.deepEqual(releases, [{
     paneId: "w1:p1",
-    source: "herdr:codex",
-    agent: "codex",
-  }, {
-    paneId: "w1:p1",
     source: "shipmates:firstmate:interactive:w1:p1",
     agent: "ShipMates FirstMate",
-    seq: 2,
+    seq: 3,
   }]);
   assert.deepEqual(metadata, [{
     paneId: "w1:p1",
@@ -59,7 +55,7 @@ test("names the interactive FirstMate pane while it is listening", async () => {
     appliesToSource: "herdr:codex",
     displayAgent: "ShipMates FirstMate",
     customStatus: "listening",
-    stateLabels: { idle: "running" },
+    stateLabels: { unknown: "listening", idle: "listening", working: "active" },
     seq: 1,
   }, {
     paneId: "w1:p1",
@@ -77,6 +73,55 @@ test("names the interactive FirstMate pane while it is listening", async () => {
     paneId: "w1:p1",
     label: null,
   }]);
+});
+
+test("shows FirstMate activity and returns to listening after an instruction", async () => {
+  const reports = [];
+  const metadata = [];
+  const session = new HerdrFirstmateSession({
+    paneId: "w1:p1",
+    client: {
+      async reportAgent(value) { reports.push(value); },
+      async reportMetadata(value) { metadata.push(value); },
+      async rename() {},
+      async releaseAgent() {},
+    },
+  });
+  await session.start({ repoPath: "/repo" });
+  const result = await session.withActivity({
+    message: "FirstMate is handling an instruction", status: "coordinating",
+  }, async () => "done");
+
+  assert.equal(result, "done");
+  assert.deepEqual(reports.map(({ state, customStatus }) => ({ state, customStatus })), [
+    { state: "idle", customStatus: "listening" },
+    { state: "working", customStatus: "coordinating" },
+    { state: "idle", customStatus: "listening" },
+  ]);
+  assert.deepEqual(metadata.map(({ customStatus }) => customStatus), [
+    "listening", "coordinating", "listening",
+  ]);
+});
+
+test("does not interrupt FirstMate work when an activity update fails", async () => {
+  let reports = 0;
+  const warnings = [];
+  const session = new HerdrFirstmateSession({
+    paneId: "w1:p1",
+    onWarning: (message) => warnings.push(message),
+    client: {
+      async reportAgent() {
+        reports += 1;
+        if (reports > 1) throw new Error("offline");
+      },
+      async rename() {},
+      async releaseAgent() {},
+    },
+  });
+  await session.start({ repoPath: "/repo" });
+
+  assert.equal(await session.withActivity({ message: "Working" }, async () => 42), 42);
+  assert.equal(warnings.length, 2);
 });
 
 test("does not clear a native Codex session from a pane FirstMate does not own", async () => {
@@ -98,7 +143,7 @@ test("does not clear a native Codex session from a pane FirstMate does not own",
   await session.start({ repoPath: "/repo" });
 
   assert.equal(reports.length, 0);
-  assert.deepEqual(warnings, ["Herdr FirstMate session visibility unavailable: Error"]);
+  assert.deepEqual(warnings, ["Herdr FirstMate registration unavailable: Error"]);
 });
 
 test("reports scout, tool, implementer, and Firstmate lifecycle to distinct panes", async () => {

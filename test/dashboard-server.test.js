@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   buildDashboardState,
+  executeProjectAction,
   ShipMatesDashboardServer,
   validateDashboardCommand,
   validateProjectAction,
@@ -26,6 +27,7 @@ test("projects recent tasks and the active project without report prose leakage"
   assert.deepEqual(state.tasks[0].workers, [{
     id: "implementer", status: "reported", mode: "ship",
   }]);
+  assert.deepEqual(state.tasks[0].taskProgress.map(({ sequence }) => sequence), [0, 1]);
 });
 
 test("projects project plans and binds planned items to durable tasks", async () => {
@@ -119,6 +121,46 @@ test("starts through an injectable localhost listener", async (t) => {
   assert.equal(await server.start(), "http://127.0.0.1:4545");
 });
 
+test("closes live dashboard event streams before stopping the server", async () => {
+  let serverCloseCalled = false;
+  let streamEnded = false;
+  const server = new ShipMatesDashboardServer({
+    ...fixture(),
+    projectContext: { load: async () => null },
+    onCommand: async () => {},
+  });
+  server.server = {
+    close(callback) {
+      serverCloseCalled = true;
+      callback();
+    },
+  };
+  server.eventStreams.add({ end() { streamEnded = true; } });
+
+  await server.stop();
+
+  assert.equal(streamEnded, true);
+  assert.equal(serverCloseCalled, true);
+  assert.equal(server.eventStreams.size, 0);
+});
+
+test("project actions acknowledge completed workflow results", async () => {
+  const calls = [];
+  const result = await executeProjectAction({
+    projectId: "project-001",
+    body: { action: "dispatch_next" },
+    onProjectAction: async (action) => {
+      calls.push(action);
+      return { taskId: "task-durable", status: "dispatched" };
+    },
+  });
+  assert.deepEqual(result, {
+    accepted: true, recipient: "Firstmate", action: "dispatch_next",
+    result: { taskId: "task-durable", status: "dispatched" },
+  });
+  assert.equal(calls.length, 1);
+});
+
 test("ships a Bootstrap page with light, dark, and system themes", async () => {
   const page = await readFile(path.resolve("src/dashboard/public/index.html"), "utf8");
   assert.match(page, /bootstrap\.min\.css/u);
@@ -145,8 +187,27 @@ test("accepts only bounded project controls", () => {
   assert.deepEqual(validateProjectAction({
     projectId: "project-001", action: "priority_up", planTaskId: "plan-001",
   }), { projectId: "project-001", action: "priority_up", planTaskId: "plan-001" });
+  assert.deepEqual(validateProjectAction({
+    projectId: "project-001", action: "retry_blocked", planTaskId: "plan-001",
+  }), { projectId: "project-001", action: "retry_blocked", planTaskId: "plan-001" });
   assert.throws(() => validateProjectAction({ projectId: "project-001", action: "delete" }), /Invalid/u);
   assert.throws(() => validateProjectAction({ projectId: "project-001", action: "priority_up" }), /planned task/u);
+  assert.throws(() => validateProjectAction({ projectId: "project-001", action: "retry_blocked" }), /planned task/u);
+});
+
+test("offers an explicit retry control for blocked planned tasks", async () => {
+  const source = await readFile(path.resolve("src/dashboard/public/dashboard.js"), "utf8");
+  assert.match(source, /item\.status === "blocked"/u);
+  assert.match(source, /data-project-action="retry_blocked"/u);
+  assert.match(source, /Retry blocked task/u);
+});
+
+test("governed project advancement selects its target before dispatch", async () => {
+  const source = await readFile(path.resolve("scripts/firstmate.js"), "utf8");
+  assert.match(source, /new PlannedTaskDispatcher/u);
+  assert.match(source, /selectProject: async \(projectId\)/u);
+  assert.match(source, /plannedTaskDispatcher\.retryBlocked/u);
+  assert.match(source, /Retry returned before a durable task was created/u);
 });
 
 function fixture() {
@@ -166,6 +227,21 @@ function fixture() {
       report: { files: ["index.html"] },
     }],
     validationRuns: [{ passed: true, outcome: "passed" }],
+    evidence: [{
+      kind: "task-progress",
+      value: JSON.stringify({
+        phase: "validation", step: "test", status: "running",
+        sequence: 1, message: "Running tests",
+      }),
+      at: "2026-07-15T12:00:01.000Z",
+    }, {
+      kind: "task-progress",
+      value: JSON.stringify({
+        phase: "validation", step: "pipeline", status: "running",
+        sequence: 0, message: "Starting validation",
+      }),
+      at: "2026-07-15T12:00:00.000Z",
+    }],
   };
   return {
     store: {

@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
+
+import { TaskProgressRecorder } from "./task-progress.js";
 
 export class FirstmateLocalExecutor {
   constructor({
     runtime, schemaPath, store = null, actor = "firstmate", observer = null,
-    implementationWorkflow = null, scoutLimit = 2,
+    implementationWorkflow = null, scoutLimit = 2, heartbeatMs = 15_000,
   } = {}) {
     if (!runtime || typeof runtime.run !== "function" || !schemaPath) {
       throw new TypeError("FirstmateLocalExecutor requires runtime and schemaPath");
@@ -18,11 +21,21 @@ export class FirstmateLocalExecutor {
       throw new TypeError("scoutLimit must be 1 or 2");
     }
     this.scoutLimit = scoutLimit;
+    if (!Number.isSafeInteger(heartbeatMs) || heartbeatMs < 1) {
+      throw new TypeError("heartbeatMs must be a positive integer");
+    }
+    this.heartbeatMs = heartbeatMs;
   }
 
   async execute({ taskId, requestId, repoPath, message, classification }) {
     requireInputs({ taskId, requestId, repoPath, message, classification });
+    const progress = this.store ? new TaskProgressRecorder({
+      store: this.store, taskId, actor: this.actor, idFactory: randomUUID,
+    }) : null;
     if (classification.requiresHumanApproval) {
+      await recordProgress(progress, {
+        phase: "intake", step: "approval", message: "Task is awaiting human approval", status: "pending",
+      });
       await this.observer?.end?.({ status: "awaiting-human" });
       return {
         status: "awaiting_human",
@@ -35,11 +48,18 @@ export class FirstmateLocalExecutor {
     }
 
     const workItems = normalizedWorkItems(classification, message, this.scoutLimit);
-    await this.observer?.begin?.({ taskId, repoPath, workerCount: workItems.length });
+    await recordProgress(progress, {
+      phase: "execution", step: "scouting", message: "Starting bounded task execution",
+    });
+    const heartbeat = progress ? setInterval(() => void recordProgress(progress, {
+      phase: "execution", step: "heartbeat", message: "Worker execution is still active",
+    }), this.heartbeatMs) : null;
+    heartbeat?.unref?.();
     let scouts = [];
     let implementation = null;
     let status = "inspected";
     try {
+      await this.observer?.begin?.({ taskId, repoPath, workerCount: workItems.length });
       scouts = await Promise.all(workItems.map((workItem, index) =>
         this.#runWorker({
           taskId,
@@ -48,8 +68,14 @@ export class FirstmateLocalExecutor {
           sandbox: "read-only",
           prompt: buildScoutPrompt({ taskId, message, workItem }),
         })));
+      await recordProgress(progress, {
+        phase: "execution", step: "scouting", message: "Scout work completed", status: "completed",
+      });
 
       if (classification.requiredAuthority === "local_write") {
+        await recordProgress(progress, {
+          phase: "execution", step: "implementation", message: "Implementer started",
+        });
         await this.observer?.prepareImplementer?.();
         implementation = this.implementationWorkflow
           ? await this.#runDurableImplementation({ taskId, message, scouts })
@@ -61,8 +87,16 @@ export class FirstmateLocalExecutor {
               prompt: buildImplementationPrompt({ taskId, message, scouts }),
             });
         status = implementation.report.status;
+        await recordProgress(progress, {
+          phase: "execution", step: "implementation",
+          message: `Implementer ${status}`, status: status === "completed" ? "completed" : "failed",
+        });
       }
     } catch (error) {
+      if (heartbeat) clearInterval(heartbeat);
+      await recordProgress(progress, {
+        phase: "execution", step: "worker", message: "Worker execution failed", status: "failed",
+      });
       await this.observer?.end?.({ status: "failed" });
       const result = {
         status: "failed",
@@ -88,6 +122,10 @@ export class FirstmateLocalExecutor {
       scouts: scouts.map(publicWorkerResult),
       implementation: implementation ? publicWorkerResult(implementation) : null,
     };
+    if (heartbeat) clearInterval(heartbeat);
+    await recordProgress(progress, {
+      phase: "execution", step: "complete", message: "Task execution completed", status: "completed",
+    });
     await this.#recordResult(result);
     await this.observer?.end?.({ status });
     return result;
@@ -161,6 +199,11 @@ export class FirstmateLocalExecutor {
       eventId: `firstmate-${result.requestId}-local-execution`,
     });
   }
+}
+
+async function recordProgress(recorder, progress) {
+  if (!recorder) return;
+  try { await recorder.record(progress); } catch { /* Progress visibility must not interrupt work. */ }
 }
 
 function buildScoutPrompt({ taskId, message, workItem }) {

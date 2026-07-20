@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { TaskProgressRecorder } from "./task-progress.js";
 
 export class LocalValidationWorkflow {
   constructor({ store, gate, actor = "firstmate", idFactory = randomUUID } = {}) {
@@ -56,6 +57,10 @@ export class LocalValidationWorkflow {
       worktreePath: snapshot.worktree.worktreePath,
       expectedHeadSha: snapshot.worktree.headSha,
       intent,
+      onProgress: validationProgressRecorder({
+        store: this.store, taskId, actor: this.actor, attemptId: request.attemptId,
+        idFactory: this.idFactory,
+      }),
     });
     const recorded = await this.store.recordLocalValidation({
       taskId,
@@ -101,6 +106,10 @@ export class LocalValidationWorkflow {
       worktreePath: snapshot.worktree.worktreePath,
       expectedHeadSha: request.headSha,
       intent,
+      onProgress: validationProgressRecorder({
+        store: this.store, taskId, actor: this.actor, attemptId: request.attemptId,
+        idFactory: this.idFactory,
+      }),
     });
     snapshot = await this.store.recordLocalValidation({
       taskId,
@@ -116,6 +125,29 @@ export class LocalValidationWorkflow {
     });
     return { snapshot, report, reused: false };
   }
+}
+
+function normalizeProgressMessage(value) {
+  const message = String(value ?? "").replace(/[\u0000-\u001f\u007f]+/gu, " ").trim();
+  return (message || "Validation step running").slice(0, 240);
+}
+
+function validationProgressRecorder({ store, taskId, actor, attemptId, idFactory }) {
+  const recorder = new TaskProgressRecorder({ store, taskId, actor, idFactory });
+  return (message) => recorder.record({
+    phase: "validation",
+    step: validationStep(message),
+    message: normalizeProgressMessage(message),
+    operationId: attemptId,
+  });
+}
+
+function validationStep(message) {
+  const text = String(message || "").toLowerCase();
+  for (const step of ["test", "lint", "document", "review", "intent", "rebase", "push", "pr", "ci"]) {
+    if (text.includes(step)) return step;
+  }
+  return "pipeline";
 }
 
 async function transitionForApprovalGate({ store, snapshot, report, taskId, actor }) {

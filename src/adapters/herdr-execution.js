@@ -14,40 +14,44 @@ export class HerdrFirstmateSession {
     this.onWarning = onWarning;
     this.repoPath = null;
     this.started = false;
+    this.sequence = 0;
+    this.activeOperations = 0;
   }
 
   async start({ repoPath }) {
     if (!this.paneId) return;
     this.repoPath = repoPath;
     try {
-      await this.#releaseStaleNativeCodexSession();
-      await this.client.reportAgent({
-        paneId: this.paneId,
-        source: this.#source(),
-        agent: "ShipMates FirstMate",
-        state: "working",
-        message: "FirstMate is listening",
-        customStatus: "listening",
-        seq: 1,
-        agentSessionId: this.sessionId,
-        agentSessionPath: repoPath,
-      });
+      await this.#verifyPaneOwnership();
+      await this.#report({ state: "idle", message: "FirstMate is listening", status: "listening" });
       this.started = true;
-      await this.client.reportMetadata({
-        paneId: this.paneId,
-        source: this.#source(),
-        appliesToSource: "herdr:codex",
-        displayAgent: "ShipMates FirstMate",
-        customStatus: "listening",
-        stateLabels: { idle: "running" },
-        seq: 1,
-      });
+    } catch (error) {
+      this.onWarning(`Herdr FirstMate registration unavailable: ${safeErrorName(error)}`);
+      return;
+    }
+    try {
       await this.client.rename({
         paneId: this.paneId,
         label: "ShipMates FirstMate",
       });
     } catch (error) {
-      this.onWarning(`Herdr FirstMate session visibility unavailable: ${safeErrorName(error)}`);
+      this.onWarning(`Herdr FirstMate pane decoration unavailable: ${safeErrorName(error)}`);
+    }
+  }
+
+  async withActivity({ message, status = "active" }, operation) {
+    if (typeof operation !== "function") throw new TypeError("FirstMate activity requires an operation");
+    this.activeOperations += 1;
+    try {
+      await this.#reportActivity({ state: "working", message, status });
+      return await operation();
+    } finally {
+      this.activeOperations -= 1;
+      if (this.started && this.activeOperations === 0) {
+        await this.#reportActivity({
+          state: "idle", message: "FirstMate is listening", status: "listening",
+        });
+      }
     }
   }
 
@@ -62,13 +66,13 @@ export class HerdrFirstmateSession {
         clearDisplayAgent: true,
         clearCustomStatus: true,
         clearStateLabels: true,
-        seq: 2,
+        seq: this.#next(),
       });
       await this.client.releaseAgent({
         paneId: this.paneId,
         source: this.#source(),
         agent: "ShipMates FirstMate",
-        seq: 2,
+        seq: this.#next(),
       });
       this.started = false;
     } catch (error) {
@@ -76,19 +80,55 @@ export class HerdrFirstmateSession {
     }
   }
 
-  async #releaseStaleNativeCodexSession() {
+  async #report({ state, message, status }) {
+    await this.client.reportAgent({
+      paneId: this.paneId,
+      source: this.#source(),
+      agent: "ShipMates FirstMate",
+      state,
+      message,
+      customStatus: status,
+      seq: this.#next(),
+      agentSessionId: this.sessionId,
+      agentSessionPath: this.repoPath,
+    });
+    if (typeof this.client.reportMetadata === "function") {
+      try {
+        await this.client.reportMetadata({
+          paneId: this.paneId,
+          source: this.#source(),
+          appliesToSource: "herdr:codex",
+          displayAgent: "ShipMates FirstMate",
+          customStatus: status,
+          stateLabels: { unknown: status, idle: "listening", working: "active" },
+          seq: this.sequence,
+        });
+      } catch (error) {
+        this.onWarning(`Herdr FirstMate activity decoration unavailable: ${safeErrorName(error)}`);
+      }
+    }
+  }
+
+  async #reportActivity(activity) {
+    if (!this.started) return;
+    try {
+      await this.#report(activity);
+    } catch (error) {
+      this.onWarning(`Herdr FirstMate activity unavailable: ${safeErrorName(error)}`);
+    }
+  }
+
+  async #verifyPaneOwnership() {
     if (typeof this.client.processInfo !== "function") return;
     const info = await this.client.processInfo(this.paneId);
     const firstmateOwnsPane = info.foregroundProcesses.some(({ argv }) =>
       argv.join(" ").includes("scripts/firstmate.js"));
-    if (!firstmateOwnsPane) {
-      throw new Error("HERDR_PANE_ID does not contain the FirstMate process");
-    }
-    await this.client.releaseAgent({
-      paneId: this.paneId,
-      source: "herdr:codex",
-      agent: "codex",
-    });
+    if (!firstmateOwnsPane) throw new Error("HERDR_PANE_ID does not contain FirstMate");
+  }
+
+  #next() {
+    this.sequence += 1;
+    return this.sequence;
   }
 
   #source() {

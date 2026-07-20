@@ -5,8 +5,8 @@ the human talks only to the Firstmate, and the Firstmate delegates bounded work
 to isolated crewmate agents.
 
 We are developing the system incrementally so that isolation, GitHub authority,
-approval gates, landed-work proof, and recovery are understood before
-multi-agent concurrency is enabled. Each stage is exercised in the disposable
+approval gates, landed-work proof, and recovery are understood before broader
+mutating-worker concurrency is enabled. Each stage is exercised in the disposable
 `johntango/Shipmates-Practice` repository before it becomes part of the permanent
 orchestrator.
 
@@ -33,6 +33,104 @@ Durable workspace-write execution is documented in the
 [mutating Codex worker guide](docs/codex-ship.md).
 Controlled commit creation and pinned exact-head validation are documented in
 the [commit and validation guide](docs/controlled-commit-validation.md).
+The current dispatch, reconciliation, progress, and backend boundaries are
+documented in the [Firstmate orchestration guide](docs/firstmate-orchestration.md).
+
+## Using ShipMates
+
+Install dependencies, provide the OpenAI credentials required by Firstmate in
+the ignored `.env` file, and start the interactive coordinator from the
+ShipMates checkout:
+
+```sh
+npm install
+npm run firstmate
+```
+
+Firstmate starts a command-enabled operator dashboard on
+`http://127.0.0.1:4390` (or the next available port) and accepts the same
+instructions from the terminal and dashboard. Use `/paste` followed by `/send`
+for multiline terminal input. Use `/cancel` to discard that input. `/exit`,
+`exit`, and `quit` stop Firstmate from accepting new work. Already dispatched
+workers are allowed to finish, so exiting the prompt is not equivalent to
+terminating active tasks.
+
+Run the dashboard without the command channel when only a read-only view is
+needed:
+
+```sh
+npm run dashboard
+```
+
+ShipMates stores its registry, task ledger, progress evidence, worker artifacts,
+and generated reviews beneath the ignored `.shipmates/` directory. Repository
+changes are made in task-bound Treehouse worktrees rather than directly in the
+selected checkout. Do not delete registry data to recover a task: Firstmate's
+reconciliation paths use that evidence to distinguish a running, completed,
+blocked, or uncertain operation.
+
+## Operating model
+
+The human communicates with **Firstmate**, which owns conversation, project
+selection, planning, dispatch, reconciliation, and approval boundaries. Other
+roles are bounded execution components:
+
+| Role | Behavior |
+| --- | --- |
+| Conversational Firstmate | Interprets requests, answers status questions, selects exact existing projects and tasks, and proposes plans or governed actions. It cannot bypass workflow controls. |
+| Project Agent | A persistent execution context for a persistent project. It supervises that project's planned work and reports to Firstmate. |
+| Scout | A read-only Codex specialist used for bounded inspection. Up to two scouts may run concurrently when that workflow is selected. |
+| Implementer | The single workspace-write Codex worker for a task. It operates only in the leased worktree and authorized path scope. |
+
+Validation is not another autonomous agent. It is a deterministic Firstmate
+workflow that runs the configured focused checks and pinned no-mistakes gate
+against the exact implementation commit. Herdr visualizes agent activity, and
+Lavish provides task-bound review pages; neither is authoritative task state.
+
+Each worker launch records its exact process ID or Herdr pane ID. Active local
+tasks emit phase changes and periodic heartbeats into the durable ledger. The
+dashboard uses those events to show activity during otherwise quiet operations,
+but terminal workflow events—not heartbeats or process exit alone—remain the
+authority for completion and failure.
+
+## Projects and plans
+
+A project binds a human-readable name to one exact local repository, its remote
+identity and base commit, an objective, and an optional dependency-ordered plan.
+Useful commands include:
+
+```text
+add project /absolute/path/to/repository
+create project ProjectName
+list projects
+switch project ProjectName
+enable demo mode for ProjectName
+archive project ProjectName
+```
+
+Firstmate resolves project references against the registry rather than treating
+surrounding conversational wording as a project name. Once a plan is saved,
+unplanned work cannot be attached beside it. The plan must be durably approved,
+and a dependency-ready plan item must be atomically claimed, before an
+Implementer can be dispatched. A successful dispatch also requires a durable
+task attachment and launch receipt. Missing launch identity is recorded as a
+blocker instead of leaving work indefinitely described as dispatched.
+
+Plan tasks move through `planned`, `claimed`, `dispatched`, `blocked`, and
+`completed` states. Retries are retained as attempts under the original plan
+row, so task history is not lost or duplicated. Pausing a project prevents new
+dispatches without killing current work. When all plan tasks complete, the
+project itself automatically becomes `completed`.
+
+Demo mode is an explicit per-project local policy. It exercises implementation,
+focused tests, controlled commits, progress, and project orchestration while
+skipping no-mistakes and all remote delivery operations. It does not alter
+other projects or grant GitHub authority.
+
+External actions remain separate, exact-evidence approvals. Push, draft-PR
+creation, squash merge, and remote branch cleanup each have their own approval
+and recovery boundary. Approval of a plan does not imply approval for any of
+those later operations.
 
 ## Current status
 
@@ -76,9 +174,8 @@ Implemented repository artifacts include:
 - an interactive Agents SDK Firstmate shell with automatic UUID-derived task
   and request IDs, strict typed classification, durable call intent, token
   evidence, and concurrent-call exclusion;
-- a bounded local Firstmate executor that assigns each distinct classified work
-  item to exactly one read-only Codex scout before local implementation and
-  stops before external or destructive authority;
+- a bounded local Firstmate executor with durable phase progress and heartbeats,
+  one scoped Implementer, and optional separately bounded read-only scouts;
 - a durable Treehouse-bound mutating-worker supervisor with crash-recoverable
   artifacts and exact staged, unstaged, and untracked path verification;
 - a durable Firstmate-controlled Git commit stage with fixed identity,
@@ -567,6 +664,18 @@ npm test
 Pull requests run the same test command in GitHub Actions. The workflow also
 checks the complete pull-request diff for whitespace errors.
 
+Start the interactive Firstmate and its command-enabled dashboard with:
+
+```sh
+npm run firstmate
+```
+
+Start only the read-only dashboard with:
+
+```sh
+npm run dashboard
+```
+
 Exercise the ledger from this repository root:
 
 ```sh
@@ -595,13 +704,9 @@ at its expected head.
 
 ## Important current limitations
 
-- Firstmate classifies one request and executes bounded read-only or local-write
-  work, but it does not yet continue a multi-turn human conversation. Local
-  writes now use one durable Treehouse-bound Codex worker; the two preliminary
-  scouts still use the direct local runtime rather than the MCP-backed pane
-  workflow.
-- Agents SDK authentication was verified separately; routine tests do not call
-  the API.
+- ShipMates remains an experimental local orchestrator rather than a production
+  multi-user service. Routine tests inject model and external-system boundaries
+  and do not make live OpenAI or GitHub calls.
 - The legacy direct Codex adapter remains for comparison; the current bounded
   scout also runs through `codex mcp-server`.
 - Treehouse is pinned in `/private/tmp` for exercises, not installed or managed
@@ -620,9 +725,9 @@ at its expected head.
   later commits that contain the same landed tree.
 - The branch-cleanup gateway is implemented and tested with injected Git
   transports but has not deleted a live task branch through Firstmate.
-- lavish-axi review is not yet wired into the full executable path. Herdr
-  receives best-effort live worker, commit, and validation status in addition
-  to its deterministic read-only projection, but it remains non-authoritative.
+- Herdr and Lavish are operator surfaces, not workflow authorities. Their
+  absence or stale display does not authorize a retry; the task ledger and
+  registry must be reconciled first.
 - Mutating-worker concurrency remains deliberately disabled; the only parallel
   path is up to two read-only scouts with non-overlapping assignments.
 - Synthesis is exact and deliberately non-semantic. Similar claims with
@@ -631,27 +736,9 @@ at its expected head.
 
 ## Next development steps
 
-The next sequence is:
-
-1. run an explicitly approved, instrumented end-to-end practice exercise for
-   merge, post-merge assurance, lease return, and branch cleanup, then use its
-   evidence to harden operator recovery and release readiness.
-
-The July 14 exercise is in progress as task `task-live-e2e-20260714` at practice
-head `4adfed664b1c00d6d1fd879f9cd906d7a4840b5c`. Its local phase exposed and
-repaired two fail-closed gaps before any GitHub write:
-
-- Treehouse leases are detached, so Firstmate now records durable intent before
-  creating deterministic `agent/<task-id>` branches. Uncertain creation is
-  reconciled by inspection and is never automatically repeated.
-- the pinned no-mistakes daemon could not bind a Unix socket beneath the long
-  ledger path. It now receives a short temporary symlink whose target remains
-  the durable per-task state directory. Explicit validation reconciliation
-  resumes the original exact request instead of creating another operation.
-
-Recovered pinned validation passed with zero findings while `rebase`, `push`,
-`pr`, and `ci` remained skipped. The task is stopped at its first external-write
-boundary awaiting a separate exact-head push approval.
-
-We will keep using `Shipmates-Practice` for each stage and will not advance a
-sensitive transition without exact evidence and explicit human approval.
+Current development is focused on exercising the complete project-plan path
+repeatedly: natural-language creation, durable approval, dependency-ordered
+dispatch, visible progress, restart reconciliation, retries, and terminal
+project completion. External delivery continues to be exercised separately in
+`Shipmates-Practice` so push, PR, merge, assurance, and cleanup remain bound to
+exact evidence and explicit human approval.

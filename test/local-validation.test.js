@@ -17,6 +17,7 @@ test("records local validation for the exact active lease", async () => {
     },
     async run(input) {
       calls.push(input);
+      await input.onProgress("Running tests");
       return report;
     },
   };
@@ -31,6 +32,8 @@ test("records local validation for the exact active lease", async () => {
   assert.equal(calls[0].worktreePath, "/tmp/leased-worktree");
   assert.equal(result.report.runId, "run-local-1");
   assert.equal(store.records.length, 2);
+  assert.deepEqual(store.evidence.map(({ kind }) => kind), ["task-progress"]);
+  assert.match(store.evidence[0].value, /Running tests/u);
   const reused = await workflow.run({
     taskId: "validation-001",
     intent: "Validate the practice change locally",
@@ -133,6 +136,7 @@ test("moves an approval-gated validation to awaiting human", async () => {
 class MemoryStore {
   constructor() {
     this.records = [];
+    this.evidence = [];
     this.transitions = [];
     this.snapshot = {
       state: "validating",
@@ -154,6 +158,11 @@ class MemoryStore {
     this.records.push(record);
     this.snapshot.validationRequests[0].status = "completed";
     this.snapshot = { ...this.snapshot, validationRuns: [record.report] };
+    return this.snapshot;
+  }
+
+  async recordEvidence(record) {
+    this.evidence.push(record);
     return this.snapshot;
   }
 

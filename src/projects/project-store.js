@@ -292,6 +292,26 @@ export class ProjectStore {
     return claimed ? structuredClone(claimed) : null;
   }
 
+  async claimReadyTask({ projectId, planTaskId }) {
+    let claimed = null;
+    await this.#updateProject(projectId, (project) => {
+      if (project.status !== "approved") {
+        throw new Error("Project plan must be approved and resumed before dispatch");
+      }
+      if (project.tasks.some(({ status }) => new Set(["claimed", "dispatched"]).has(status))) {
+        throw new Error("Another planned task is already active");
+      }
+      const complete = new Set(project.tasks.filter(({ status }) => status === "completed").map(({ id }) => id));
+      claimed = project.tasks.find(({ id }) => id === planTaskId) || null;
+      if (!claimed || !new Set(["planned", "ready"]).has(claimed.status) ||
+        !claimed.dependsOn.every((id) => complete.has(id))) {
+        throw new Error(`Planned task ${planTaskId} is not dependency-ready`);
+      }
+      claimed.status = "claimed";
+    });
+    return structuredClone(claimed);
+  }
+
   async recoverOrphanedClaims(projectId) {
     const recovered = [];
     await this.#updateProject(projectId, (project) => {
@@ -345,6 +365,29 @@ export class ProjectStore {
         attempt.blockingReason = task.blockingReason;
         attempt.completedAt = new Set(["completed", "blocked"]).has(status)
           ? this.clock().toISOString() : null;
+      }
+      if (project.tasks.length > 0 && project.tasks.every(({ status: taskStatus }) => taskStatus === "completed")) {
+        project.status = "completed";
+      }
+    });
+  }
+
+  async recordLaunchReceipt({ projectId, planTaskId, taskId, receipt }) {
+    return this.#updateProject(projectId, (project) => {
+      if (project.status !== "approved") throw new Error("Worker launch requires an approved project");
+      const task = project.tasks.find(({ id }) => id === planTaskId);
+      const attempt = task?.attempts.find((candidate) => candidate.taskId === taskId);
+      if (!task || task.taskId !== taskId || task.status !== "dispatched" || !attempt) {
+        throw new Error("Launch receipt must bind the current dispatched attempt");
+      }
+      attempt.launchReceipt = normalizeLaunchReceipt(receipt, this.clock().toISOString());
+    });
+  }
+
+  async reconcileCompletion(projectId) {
+    return this.#updateProject(projectId, (project) => {
+      if (project.tasks.length > 0 && project.tasks.every(({ status }) => status === "completed")) {
+        project.status = "completed";
       }
     });
   }
@@ -515,6 +558,9 @@ function normalizeAttempts(task) {
     completedAt: typeof attempt?.completedAt === "string" ? attempt.completedAt : null,
     blockingReason: typeof attempt?.blockingReason === "string" && attempt.blockingReason.trim()
       ? attempt.blockingReason.trim() : null,
+    ...(attempt?.launchReceipt ? {
+      launchReceipt: normalizeLaunchReceipt(attempt.launchReceipt, attempt.launchReceipt.launchedAt),
+    } : {}),
   })).filter(({ taskId }) => taskId) : [];
   if (attempts.length === 0) {
     for (const taskId of Array.isArray(task.previousTaskIds) ? task.previousTaskIds : []) {
@@ -529,6 +575,23 @@ function normalizeAttempts(task) {
     });
   }
   return attempts;
+}
+
+function normalizeLaunchReceipt(receipt, launchedAt) {
+  if (receipt?.kind === "process" && Number.isSafeInteger(receipt.pid) && receipt.pid > 0) {
+    return { kind: "process", pid: receipt.pid, launchedAt: requireTimestamp(launchedAt) };
+  }
+  if (receipt?.kind === "pane" && typeof receipt.paneId === "string" && receipt.paneId.trim()) {
+    return { kind: "pane", paneId: receipt.paneId.trim(), launchedAt: requireTimestamp(launchedAt) };
+  }
+  throw new TypeError("Launch receipt requires an exact process or pane identity");
+}
+
+function requireTimestamp(value) {
+  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+    throw new TypeError("Launch receipt requires a timestamp");
+  }
+  return value;
 }
 
 function requireText(label, value) {

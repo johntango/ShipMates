@@ -94,7 +94,8 @@ test("returns a structured failure instead of throwing when a pane worker fails"
   });
   assert.equal(result.status, "failed");
   assert.equal(result.failure.message, "report task mismatch");
-  assert.equal(recorded[0].failure.message, "report task mismatch");
+  assert.equal(recorded.find(({ failure }) => failure)?.failure.message, "report task mismatch");
+  assert.equal(recorded.some(({ step, status }) => step === "worker" && status === "failed"), true);
 });
 
 test("assigns an indivisible work item to only one scout", async () => {
@@ -196,6 +197,32 @@ test("delegates local writes to the durable implementation workflow", async () =
   assert.match(implementationCalls[0].brief, /Independent scout reports/u);
   assert.equal(result.implementation.threadId, "thread-durable-implementer");
   assert.equal(result.workspacePath, "/tmp/treehouse/task/repo");
+});
+
+test("records periodic heartbeat progress while worker execution is active", async () => {
+  const recorded = [];
+  const executor = new FirstmateLocalExecutor({
+    schemaPath: "schemas/codex-worker-report.schema.json",
+    heartbeatMs: 5,
+    store: {
+      rootDir: "/tmp/shipmates",
+      async recordEvidence(input) {
+        if (input.kind === "task-progress") recorded.push(JSON.parse(input.value));
+      },
+    },
+    runtime: {
+      async run(input) {
+        await new Promise((resolve) => setTimeout(resolve, 18));
+        return { threadId: "thread-scout", report: report(input.taskId, input.workerId) };
+      },
+    },
+  });
+  await executor.execute({
+    taskId: "task-heartbeat", requestId: "request-heartbeat", repoPath: "/tmp/repo",
+    message: "Inspect it", classification: classification("read_only"),
+  });
+  assert.equal(recorded.some(({ step, status }) => step === "heartbeat" && status === "running"), true);
+  assert.equal(recorded.at(-1).status, "completed");
 });
 
 function classification(requiredAuthority) {

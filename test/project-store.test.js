@@ -366,6 +366,45 @@ test("marks demo mode explicitly on one project", async () => {
   assert.equal((await store.get(project.id)).demoMode, true);
 });
 
+test("records an exact launch receipt and completes the project with its final task", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "project-launch-"));
+  const store = new ProjectStore({ rootDir, clock: () => new Date("2026-07-20T20:00:00Z") });
+  let project = await store.create({
+    name: "Launch", repo: "owner/launch", repoPath: "/repo/launch", baseSha: "abc123",
+  });
+  project = await store.savePlan({
+    projectId: project.id, objective: "Launch safely",
+    tasks: [{ id: "build", title: "Build", description: "Build", dependsOn: [] }],
+  });
+  await store.approve(project.id);
+  await store.claimReadyTask({ projectId: project.id, planTaskId: "build" });
+  await store.attachTask({
+    projectId: project.id, planTaskId: "build", taskId: "task-build", title: "Build",
+  });
+  await store.recordLaunchReceipt({
+    projectId: project.id, planTaskId: "build", taskId: "task-build",
+    receipt: { kind: "process", pid: 4242 },
+  });
+  project = await store.get(project.id);
+  assert.deepEqual(project.tasks[0].attempts[0].launchReceipt, {
+    kind: "process", pid: 4242, launchedAt: "2026-07-20T20:00:00.000Z",
+  });
+  await store.updateTaskStatus({ projectId: project.id, planTaskId: "build", status: "completed" });
+  assert.equal((await store.get(project.id)).status, "completed");
+});
+
+test("refuses launch receipts before durable approval", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "project-launch-refusal-"));
+  const store = new ProjectStore({ rootDir });
+  const project = await store.create({
+    name: "Launch", repo: "owner/launch", repoPath: "/repo/launch", baseSha: "abc123",
+  });
+  await assert.rejects(() => store.recordLaunchReceipt({
+    projectId: project.id, planTaskId: "build", taskId: "task-build",
+    receipt: { kind: "process", pid: 4242 },
+  }), /approved project/u);
+});
+
 test("resets blocked planned work while preserving its prior attempt", async () => {
   const rootDir = await mkdtemp(path.join(tmpdir(), "reset-blocked-"));
   const store = new ProjectStore({ rootDir });
