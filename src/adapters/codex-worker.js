@@ -117,6 +117,9 @@ export class CodexWorkerRuntime {
         cause,
       });
     }
+    // The job context is authoritative. Model-generated identifiers are display
+    // data and must not be allowed to invalidate an otherwise valid report.
+    report = { ...report, taskId };
     validateWorkerReport(report, taskId);
     return Object.freeze({
       threadId: threadEvents[0].thread_id,

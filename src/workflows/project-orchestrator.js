@@ -124,6 +124,24 @@ export class ProjectOrchestrator {
         status: terminalBlock ? "blocked" : task.status, reason: recovery.reason,
       });
     }
+    await this.projectStore.reconcileCompletion?.(projectId);
     return results;
+  }
+
+  async reconcileTask(taskId) {
+    const context = await this.projectStore.describeAttempt(taskId);
+    if (!context) throw new Error(`Task ${taskId} is not attached to a project plan`);
+    const results = await this.reconcileProject(context.projectId);
+    const reconciled = results.find(({ planTaskId }) => planTaskId === context.planTaskId);
+    if (reconciled) return { ...reconciled, context };
+    const project = await this.projectStore.get(context.projectId);
+    const task = project.tasks.find(({ id }) => id === context.planTaskId);
+    return {
+      context,
+      planTaskId: task.id,
+      status: task.status,
+      action: "registry_current",
+      reason: task.blockingReason || `Project registry already reflects task ${taskId}`,
+    };
   }
 }

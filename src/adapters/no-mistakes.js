@@ -79,7 +79,7 @@ export class NoMistakesLocalGate {
     this.onProgress = onProgress;
   }
 
-  async run({ taskId, worktreePath, expectedHeadSha, intent }) {
+  async run({ taskId, worktreePath, expectedHeadSha, intent, onProgress = null }) {
     requireNonEmpty(taskId, "taskId");
     requireNonEmpty(intent, "intent");
     const expected = fullSha(expectedHeadSha, "expectedHeadSha");
@@ -102,7 +102,14 @@ export class NoMistakesLocalGate {
       "--skip",
       this.skipSteps.join(","),
     ];
-    this.onProgress("Starting validation pipeline");
+    const pendingProgress = [];
+    const reportProgress = (message) => {
+      this.onProgress(message);
+      if (typeof onProgress === "function") {
+        pendingProgress.push(Promise.resolve(onProgress(message)));
+      }
+    };
+    reportProgress("Starting validation pipeline");
     const startedAt = this.clock().toISOString();
     const result = await this.runner(this.binaryPath, args, {
       cwd: workingDirectory,
@@ -111,8 +118,9 @@ export class NoMistakesLocalGate {
       }),
       timeout: this.timeoutMs,
       maxBuffer: 4 * 1024 * 1024,
-      onStderrLine: this.onProgress,
+      onStderrLine: reportProgress,
     });
+    await Promise.all(pendingProgress);
     const completedAt = this.clock().toISOString();
     const parsed = parseAxiOutput(result.stdout);
     const after = await this.#inspect(workingDirectory);

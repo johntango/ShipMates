@@ -30,6 +30,7 @@ export class ShipMatesDashboardServer {
     this.assetsDirectory = assetsDirectory;
     this.listen = listen;
     this.server = null;
+    this.eventStreams = new Set();
   }
 
   async start() {
@@ -68,6 +69,7 @@ export class ShipMatesDashboardServer {
         Connection: "keep-alive",
       });
       response.flushHeaders();
+      this.eventStreams.add(response);
       const send = async () => {
         try {
           const state = await buildDashboardState({
@@ -83,7 +85,10 @@ export class ShipMatesDashboardServer {
       };
       void send();
       const interval = setInterval(send, 1_000);
-      request.once("close", () => clearInterval(interval));
+      request.once("close", () => {
+        clearInterval(interval);
+        this.eventStreams.delete(response);
+      });
     });
     app.post("/api/commands", async (request, response, next) => {
       try {
@@ -98,18 +103,17 @@ export class ShipMatesDashboardServer {
         next(error);
       }
     });
-    app.post("/api/projects/:projectId/actions", (request, response) => {
+    app.post("/api/projects/:projectId/actions", async (request, response) => {
       try {
         if (typeof this.onProjectAction !== "function") {
           response.status(503).json({ accepted: false, error: "Project controls require Firstmate" });
           return;
         }
-        const action = validateProjectAction({
+        response.status(200).json(await executeProjectAction({
+          onProjectAction: this.onProjectAction,
           projectId: request.params.projectId,
-          ...request.body,
-        });
-        setImmediate(() => Promise.resolve(this.onProjectAction(action)).catch(() => {}));
-        response.status(202).json({ accepted: true, recipient: "Firstmate", action: action.action });
+          body: request.body,
+        }));
       } catch (error) {
         if (error instanceof DashboardCommandError) {
           response.status(400).json({ accepted: false, error: error.message });
@@ -140,6 +144,8 @@ export class ShipMatesDashboardServer {
     const server = this.server;
     this.server = null;
     if (!server) return;
+    for (const response of this.eventStreams) response.end();
+    this.eventStreams.clear();
     await new Promise((resolve, reject) => server.close((error) =>
       error ? reject(error) : resolve()));
   }
@@ -225,6 +231,12 @@ function projectTask(snapshot, activeProjectTaskId) {
   const classification = snapshot.firstmateRuns?.at(-1)?.classification || null;
   const implementer = snapshot.workers?.find(({ id }) => id === "implementer") || null;
   const validation = snapshot.validationRuns?.at(-1) || null;
+  const taskProgress = (snapshot.evidence || [])
+    .filter(({ kind }) => kind === "task-progress")
+    .map(({ value, at }) => parseTaskProgress(value, at))
+    .filter(Boolean)
+    .sort((left, right) => left.sequence - right.sequence)
+    .slice(-20);
   return {
     id: snapshot.id,
     activeProject: snapshot.id === activeProjectTaskId,
@@ -247,7 +259,19 @@ function projectTask(snapshot, activeProjectTaskId) {
       passed: validation.passed,
       outcome: validation.outcome,
     } : null,
+    taskProgress,
   };
+}
+
+function parseTaskProgress(value, at) {
+  try {
+    const parsed = JSON.parse(value);
+    if (!Number.isInteger(parsed.sequence) || typeof parsed.message !== "string" ||
+      typeof parsed.phase !== "string" || typeof parsed.step !== "string") return null;
+    return { ...parsed, at };
+  } catch {
+    return null;
+  }
 }
 
 export function validateDashboardCommand(value) {
@@ -261,13 +285,27 @@ export function validateDashboardCommand(value) {
 export function validateProjectAction(value) {
   const safeId = (candidate) => typeof candidate === "string" && /^[a-z0-9][a-z0-9._-]{2,63}$/u.test(candidate);
   if (!value || !safeId(value.projectId) ||
-    !new Set(["select", "approve", "pause", "resume", "dispatch_next", "priority_up", "priority_down"]).has(value.action)) {
+    !new Set(["select", "approve", "pause", "resume", "dispatch_next", "retry_blocked", "priority_up", "priority_down"]).has(value.action)) {
     throw new DashboardCommandError("Invalid project action");
   }
-  if (value.action.startsWith("priority_") && !safeId(value.planTaskId)) {
-    throw new DashboardCommandError("Priority actions require a planned task");
+  if ((value.action.startsWith("priority_") || value.action === "retry_blocked") && !safeId(value.planTaskId)) {
+    throw new DashboardCommandError(`${value.action === "retry_blocked" ? "Retry" : "Priority"} actions require a planned task`);
   }
   return { projectId: value.projectId, action: value.action, planTaskId: value.planTaskId || null };
+}
+
+export async function executeProjectAction({ onProjectAction, projectId, body }) {
+  if (typeof onProjectAction !== "function") {
+    throw new TypeError("Project action execution requires Firstmate");
+  }
+  const action = validateProjectAction({ projectId, ...body });
+  const result = await onProjectAction(action);
+  return {
+    accepted: true,
+    recipient: "Firstmate",
+    action: action.action,
+    result: result || null,
+  };
 }
 
 export class DashboardCommandError extends Error {

@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
+
+import { TaskProgressRecorder } from "./task-progress.js";
 
 export class FirstmateLocalExecutor {
   constructor({
     runtime, schemaPath, store = null, actor = "firstmate", observer = null,
-    implementationWorkflow = null, scoutLimit = 2,
+    implementationWorkflow = null, scoutLimit = 2, heartbeatMs = 15_000,
   } = {}) {
     if (!runtime || typeof runtime.run !== "function" || !schemaPath) {
       throw new TypeError("FirstmateLocalExecutor requires runtime and schemaPath");
@@ -18,11 +21,21 @@ export class FirstmateLocalExecutor {
       throw new TypeError("scoutLimit must be 1 or 2");
     }
     this.scoutLimit = scoutLimit;
+    if (!Number.isSafeInteger(heartbeatMs) || heartbeatMs < 1) {
+      throw new TypeError("heartbeatMs must be a positive integer");
+    }
+    this.heartbeatMs = heartbeatMs;
   }
 
   async execute({ taskId, requestId, repoPath, message, classification }) {
     requireInputs({ taskId, requestId, repoPath, message, classification });
+    const progress = this.store ? new TaskProgressRecorder({
+      store: this.store, taskId, actor: this.actor, idFactory: randomUUID,
+    }) : null;
     if (classification.requiresHumanApproval) {
+      await recordProgress(progress, {
+        phase: "intake", step: "approval", message: "Task is awaiting human approval", status: "pending",
+      });
       await this.observer?.end?.({ status: "awaiting-human" });
       return {
         status: "awaiting_human",
@@ -35,11 +48,18 @@ export class FirstmateLocalExecutor {
     }
 
     const workItems = normalizedWorkItems(classification, message, this.scoutLimit);
-    await this.observer?.begin?.({ taskId, repoPath, workerCount: workItems.length });
-    let scouts;
+    await recordProgress(progress, {
+      phase: "execution", step: "scouting", message: "Starting bounded task execution",
+    });
+    const heartbeat = progress ? setInterval(() => void recordProgress(progress, {
+      phase: "execution", step: "heartbeat", message: "Worker execution is still active",
+    }), this.heartbeatMs) : null;
+    heartbeat?.unref?.();
+    let scouts = [];
     let implementation = null;
     let status = "inspected";
     try {
+      await this.observer?.begin?.({ taskId, repoPath, workerCount: workItems.length });
       scouts = await Promise.all(workItems.map((workItem, index) =>
         this.#runWorker({
           taskId,
@@ -48,8 +68,14 @@ export class FirstmateLocalExecutor {
           sandbox: "read-only",
           prompt: buildScoutPrompt({ taskId, message, workItem }),
         })));
+      await recordProgress(progress, {
+        phase: "execution", step: "scouting", message: "Scout work completed", status: "completed",
+      });
 
       if (classification.requiredAuthority === "local_write") {
+        await recordProgress(progress, {
+          phase: "execution", step: "implementation", message: "Implementer started",
+        });
         await this.observer?.prepareImplementer?.();
         implementation = this.implementationWorkflow
           ? await this.#runDurableImplementation({ taskId, message, scouts })
@@ -61,10 +87,31 @@ export class FirstmateLocalExecutor {
               prompt: buildImplementationPrompt({ taskId, message, scouts }),
             });
         status = implementation.report.status;
+        await recordProgress(progress, {
+          phase: "execution", step: "implementation",
+          message: `Implementer ${status}`, status: status === "completed" ? "completed" : "failed",
+        });
       }
     } catch (error) {
+      if (heartbeat) clearInterval(heartbeat);
+      await recordProgress(progress, {
+        phase: "execution", step: "worker", message: "Worker execution failed", status: "failed",
+      });
       await this.observer?.end?.({ status: "failed" });
-      throw error;
+      const result = {
+        status: "failed",
+        taskId,
+        requestId,
+        workspacePath: repoPath,
+        scouts: scouts.map(publicWorkerResult),
+        implementation: null,
+        failure: {
+          name: safeErrorName(error),
+          message: safeErrorMessage(error),
+        },
+      };
+      await this.#recordResult(result);
+      return result;
     }
 
     const result = {
@@ -75,6 +122,10 @@ export class FirstmateLocalExecutor {
       scouts: scouts.map(publicWorkerResult),
       implementation: implementation ? publicWorkerResult(implementation) : null,
     };
+    if (heartbeat) clearInterval(heartbeat);
+    await recordProgress(progress, {
+      phase: "execution", step: "complete", message: "Task execution completed", status: "completed",
+    });
     await this.#recordResult(result);
     await this.observer?.end?.({ status });
     return result;
@@ -143,10 +194,16 @@ export class FirstmateLocalExecutor {
               report: result.implementation.report,
             }
           : null,
+        failure: result.failure || null,
       }),
       eventId: `firstmate-${result.requestId}-local-execution`,
     });
   }
+}
+
+async function recordProgress(recorder, progress) {
+  if (!recorder) return;
+  try { await recorder.record(progress); } catch { /* Progress visibility must not interrupt work. */ }
 }
 
 function buildScoutPrompt({ taskId, message, workItem }) {
@@ -154,12 +211,13 @@ function buildScoutPrompt({ taskId, message, workItem }) {
     `You are an independent read-only ShipMates scout for task ${taskId}.`,
     "Do not edit files, commit, push, use GitHub, or address the human.",
     "Do not inspect .shipmates, prior task artifacts, worker logs, or other orchestration state.",
+    "An empty repository is valid evidence. Do not claim that named conventions exist when they are absent.",
     "Stay focused on repository evidence directly relevant to the user request.",
     "Use no more than six tool calls. Stop as soon as you have enough evidence for the structured report.",
     "This work item is assigned only to you. Do not investigate another scout's work item.",
     `Assigned work item: ${workItem}`,
     `User request: ${message}`,
-    "Inspect the repository directly and return the required structured worker report.",
+    `Return the required structured worker report with taskId exactly "${taskId}".`,
   ].join("\n");
 }
 
@@ -177,6 +235,8 @@ function buildImplementationPrompt({ taskId, message, scouts }) {
     "Do not commit, push, open a pull request, access GitHub, or perform destructive cleanup.",
     "Do not inspect or modify .shipmates or prior task artifacts.",
     "Preserve unrelated existing changes. Make the smallest compatible production-quality change.",
+    "An empty repository is a valid starting point; create the requested files when the user asked for a new project.",
+    `Return the required structured worker report with taskId exactly "${taskId}".`,
     `User request: ${message}`,
     "Independent scout reports:",
     JSON.stringify(scouts.map(({ workerId, report }) => ({ workerId, report }))),
@@ -198,4 +258,15 @@ function requireInputs(values) {
       throw new TypeError(`${name} must be a non-empty string`);
     }
   }
+}
+
+function safeErrorName(error) {
+  return typeof error?.name === "string" && /^[A-Za-z][A-Za-z0-9]*$/u.test(error.name)
+    ? error.name
+    : "UnknownError";
+}
+
+function safeErrorMessage(error) {
+  const message = typeof error?.message === "string" ? error.message : "Worker failed";
+  return message.replaceAll(/\s+/gu, " ").trim().slice(0, 500) || "Worker failed";
 }

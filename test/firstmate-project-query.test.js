@@ -6,7 +6,10 @@ import {
   enrichProjectBlockers,
   isExplicitProjectPlanningRequest,
   namedActionProject,
+  parseDemoModeCommand,
   parseProjectBlockedCommand,
+  parseProjectApproval,
+  parseProjectCreation,
   parseProjectSelection,
 } from "../src/cli/firstmate-project-query.js";
 
@@ -130,4 +133,27 @@ test("parses a project selection followed by another command", () => {
   assert.deepEqual(parseProjectSelection("select Missing", projects), {
     project: null, remainder: "",
   });
+});
+
+test("parses bounded project creation names without retaining instruction prose", () => {
+  assert.equal(parseProjectCreation("Create project TestU"), "TestU");
+  assert.equal(parseProjectCreation("Create a new empty project under DemoTest3 called TestU"), "TestU");
+  assert.equal(parseProjectCreation("Create a new empty project named TestU under the DemoTest3 repository"), "TestU");
+});
+
+test("binds natural demo-mode commands to one existing project", () => {
+  const demoProjects = [...projects, { id: "project-u", name: "TestU" }];
+  assert.equal(parseDemoModeCommand("make TestU a demo project", demoProjects).project.id, "project-u");
+  assert.equal(parseDemoModeCommand("enable demo mode for TestU", demoProjects).project.id, "project-u");
+  assert.equal(parseDemoModeCommand("make Missing a demo project", demoProjects).project, null);
+});
+
+test("binds natural plan approval to the durable selected project", () => {
+  assert.equal(parseProjectApproval(
+    "Approve the BallsA project plan and begin the first task", projects, projects[1],
+  ).project.id, "project-a");
+  assert.equal(parseProjectApproval(
+    "Approve the plan and begin", projects, projects[0],
+  ).project.id, "project-a");
+  assert.equal(parseProjectApproval("Approve project Missing", projects).project, null);
 });
