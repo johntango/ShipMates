@@ -149,6 +149,7 @@ test("does not clear a native Codex session from a pane FirstMate does not own",
 test("reports scout, tool, implementer, and Firstmate lifecycle to distinct panes", async () => {
   const reports = [];
   const releases = [];
+  const metadata = [];
   const observer = new HerdrExecutionObserver({
     currentPaneId: "w1:p1",
     panePool: {
@@ -158,6 +159,7 @@ test("reports scout, tool, implementer, and Firstmate lifecycle to distinct pane
     },
     client: {
       async reportAgent(value) { reports.push(value); },
+      async reportMetadata(value) { metadata.push(value); },
       async releaseAgent(value) { releases.push(value); },
     },
   });
@@ -180,6 +182,7 @@ test("reports scout, tool, implementer, and Firstmate lifecycle to distinct pane
   await observer.workerFinished({ workerId: "scout-1", report: { status: "completed" } });
   await observer.prepareImplementer();
   await observer.workerStarted({ workerId: "implementer", sandbox: "workspace-write" });
+  await observer.heartbeat({ phase: "implementing" });
   await observer.workerEvent({
     workerId: "implementer",
     event: { type: "item.completed", item: { type: "file_change", status: "completed" } },
@@ -193,7 +196,13 @@ test("reports scout, tool, implementer, and Firstmate lifecycle to distinct pane
     paneId === "w1:p2" && agent === "ShipMates implementer"), true);
   assert.equal(reports.some(({ message }) => message === "tool shell started"), true);
   assert.equal(reports.some(({ message }) => message === "tool file-edit completed"), true);
+  assert.equal(reports.some(({ message, customStatus }) =>
+    message === "implementer is still active" && customStatus === "implementing"), true);
   assert.doesNotMatch(JSON.stringify(reports), /SECRET COMMAND/u);
+  assert.equal(metadata.some(({ paneId, appliesToSource, displayAgent }) =>
+    paneId === "w1:p2" && appliesToSource === "herdr:codex" &&
+    displayAgent === "ShipMates implementer"), true);
+  assert.equal(metadata.some(({ clearDisplayAgent }) => clearDisplayAgent === true), true);
   assert.equal(releases.some(({ agent }) => agent === "ShipMates scout-1"), true);
   assert.equal(releases.some(({ agent }) => agent === "ShipMates implementer"), true);
 });

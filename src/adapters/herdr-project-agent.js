@@ -33,17 +33,32 @@ export class HerdrProjectAgentObserver {
     const paneId = this.panes.get(project.id) || await this.#find(project);
     if (!paneId) return;
     try {
+      const source = `shipmates:project:${project.id}`;
+      const seq = this.#next(project.id);
       await this.client.reportAgent({
         paneId,
-        source: `shipmates:project:${project.id}`,
+        source,
         agent: agentName(project),
         state,
         message: safe(message),
         customStatus: safe(status),
-        seq: this.#next(project.id),
+        seq,
         agentSessionId: project.id,
         agentSessionPath: project.executionPolicy.worktreePath,
       });
+      if (typeof this.client.reportMetadata === "function") {
+        await this.client.reportMetadata({
+          paneId,
+          source,
+          appliesToSource: "herdr:codex",
+          displayAgent: agentName(project),
+          customStatus: safe(status),
+          stateLabels: {
+            unknown: safe(status), idle: "ready", working: "working", blocked: "blocked",
+          },
+          seq,
+        });
+      }
     } catch (error) {
       this.onWarning?.(`Project Agent stage unavailable for ${project.name} (${error.name || "Error"})`);
     }
