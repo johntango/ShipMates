@@ -201,6 +201,7 @@ test("delegates local writes to the durable implementation workflow", async () =
 
 test("records periodic heartbeat progress while worker execution is active", async () => {
   const recorded = [];
+  const heartbeats = [];
   const executor = new FirstmateLocalExecutor({
     schemaPath: "schemas/codex-worker-report.schema.json",
     heartbeatMs: 5,
@@ -209,6 +210,9 @@ test("records periodic heartbeat progress while worker execution is active", asy
       async recordEvidence(input) {
         if (input.kind === "task-progress") recorded.push(JSON.parse(input.value));
       },
+    },
+    observer: {
+      async heartbeat(value) { heartbeats.push(value); },
     },
     runtime: {
       async run(input) {
@@ -222,6 +226,7 @@ test("records periodic heartbeat progress while worker execution is active", asy
     message: "Inspect it", classification: classification("read_only"),
   });
   assert.equal(recorded.some(({ step, status }) => step === "heartbeat" && status === "running"), true);
+  assert.equal(heartbeats.some(({ phase }) => phase === "working"), true);
   assert.equal(recorded.at(-1).status, "completed");
 });
 

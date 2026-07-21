@@ -51,9 +51,12 @@ export class FirstmateLocalExecutor {
     await recordProgress(progress, {
       phase: "execution", step: "scouting", message: "Starting bounded task execution",
     });
-    const heartbeat = progress ? setInterval(() => void recordProgress(progress, {
-      phase: "execution", step: "heartbeat", message: "Worker execution is still active",
-    }), this.heartbeatMs) : null;
+    const heartbeat = (progress || this.observer?.heartbeat) ? setInterval(() => {
+      void recordProgress(progress, {
+        phase: "execution", step: "heartbeat", message: "Worker execution is still active",
+      });
+      void this.observer?.heartbeat?.({ phase: "working" });
+    }, this.heartbeatMs) : null;
     heartbeat?.unref?.();
     let scouts = [];
     let implementation = null;

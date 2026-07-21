@@ -10,6 +10,7 @@ const project = {
 
 test("creates and persistently reports one Herdr-visible project owner", async () => {
   const reports = [];
+  const metadata = [];
   const observer = new HerdrProjectAgentObserver({
     currentPaneId: "w1:p1",
     client: {
@@ -19,6 +20,7 @@ test("creates and persistently reports one Herdr-visible project owner", async (
         return { paneId: "w1:p2" };
       },
       reportAgent: async (report) => reports.push(report),
+      reportMetadata: async (report) => metadata.push(report),
     },
   });
   assert.equal(await observer.ensure(project), "w1:p2");
@@ -28,6 +30,9 @@ test("creates and persistently reports one Herdr-visible project owner", async (
   await observer.stage(project, { state: "working", status: "validating", message: "Running validation" });
   assert.equal(reports[1].customStatus, "validating");
   assert.equal(reports[1].source, "shipmates:project:project-a");
+  assert.equal(metadata[1].displayAgent, "ShipMates Project: BallsA");
+  assert.equal(metadata[1].appliesToSource, "herdr:codex");
+  assert.equal(metadata[1].customStatus, "validating");
 });
 
 test("reports a resumed project as ready but idle until work is dispatched", async () => {

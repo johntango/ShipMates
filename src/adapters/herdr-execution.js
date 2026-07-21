@@ -149,6 +149,7 @@ export class HerdrExecutionObserver {
     this.repoPath = null;
     this.panes = new Map();
     this.sequences = new Map();
+    this.activeWorkers = new Map();
     this.disabled = !this.currentPaneId;
     this.warningEmitted = false;
   }
@@ -169,6 +170,13 @@ export class HerdrExecutionObserver {
         agentSessionId: taskId,
         agentSessionPath: repoPath,
       });
+      await this.#decorate({
+        paneId: this.currentPaneId,
+        source: `shipmates:firstmate:${taskId}`,
+        displayAgent: "ShipMates FirstMate",
+        status: customStatus,
+        seq: this.sequences.get("firstmate"),
+      });
     });
   }
 
@@ -184,6 +192,7 @@ export class HerdrExecutionObserver {
   }
 
   async workerStarted({ workerId, sandbox }) {
+    this.activeWorkers.set(workerId, sandbox);
     await this.#workerReport(workerId, {
       state: "working",
       message: `${workerId} started`,
@@ -202,6 +211,7 @@ export class HerdrExecutionObserver {
   }
 
   async workerFinished({ workerId, report }) {
+    this.activeWorkers.delete(workerId);
     await this.#workerReport(workerId, {
       state: "idle",
       message: `${workerId} ${report?.status || "completed"}`,
@@ -210,11 +220,21 @@ export class HerdrExecutionObserver {
   }
 
   async workerFailed({ workerId, error }) {
+    this.activeWorkers.delete(workerId);
     await this.#workerReport(workerId, {
       state: "blocked",
       message: `${workerId} failed (${safeErrorName(error)})`,
       customStatus: "failed",
     });
+  }
+
+  async heartbeat({ phase = "working" } = {}) {
+    await Promise.all([...this.activeWorkers.keys()].map((workerId) =>
+      this.#workerReport(workerId, {
+        state: "working",
+        message: `${workerId} is still active`,
+        customStatus: phase,
+      })));
   }
 
   async prepareImplementer() {
@@ -254,6 +274,13 @@ export class HerdrExecutionObserver {
         agentSessionId: this.taskId,
         agentSessionPath: this.repoPath,
       });
+      await this.#decorate({
+        paneId: this.currentPaneId,
+        source: `shipmates:firstmate:${this.taskId}`,
+        displayAgent: "ShipMates FirstMate",
+        status: new Set(["failed", "awaiting-human"]).has(status) ? status : "listening",
+        seq: this.sequences.get("firstmate"),
+      });
     } catch (error) {
       this.#warn(error);
     }
@@ -263,26 +290,42 @@ export class HerdrExecutionObserver {
     if (this.disabled) return;
     const paneId = this.panes.get(workerId);
     if (!paneId) return;
-    await this.#bestEffort(() => this.client.reportAgent({
-      paneId,
-      source: `shipmates:worker:${this.taskId}:${workerId}`,
-      agent: `ShipMates ${workerId}`,
-      state,
-      message: sanitizeStatus(message),
-      customStatus: sanitizeStatus(customStatus),
-      seq: this.#next(workerId),
-      agentSessionId: workerId,
-      agentSessionPath: this.repoPath,
-    }));
+    await this.#bestEffort(async () => {
+      const source = `shipmates:worker:${this.taskId}:${workerId}`;
+      const seq = this.#next(workerId);
+      await this.client.reportAgent({
+        paneId,
+        source,
+        agent: `ShipMates ${workerId}`,
+        state,
+        message: sanitizeStatus(message),
+        customStatus: sanitizeStatus(customStatus),
+        seq,
+        agentSessionId: workerId,
+        agentSessionPath: this.repoPath,
+      });
+      await this.#decorate({
+        paneId, source, displayAgent: `ShipMates ${workerId}`,
+        status: customStatus, seq,
+      });
+    });
   }
 
   async #release(workerId) {
     const paneId = this.panes.get(workerId);
     if (!paneId) return;
     try {
+      const source = `shipmates:worker:${this.taskId}:${workerId}`;
+      if (typeof this.client.reportMetadata === "function") {
+        await this.client.reportMetadata({
+          paneId, source, appliesToSource: "herdr:codex",
+          clearDisplayAgent: true, clearCustomStatus: true, clearStateLabels: true,
+          seq: this.#next(workerId),
+        });
+      }
       await this.client.releaseAgent({
         paneId,
-        source: `shipmates:worker:${this.taskId}:${workerId}`,
+        source,
         agent: `ShipMates ${workerId}`,
         seq: this.#next(workerId),
       });
@@ -291,6 +334,21 @@ export class HerdrExecutionObserver {
     } finally {
       this.panes.delete(workerId);
     }
+  }
+
+  async #decorate({ paneId, source, displayAgent, status, seq }) {
+    if (typeof this.client.reportMetadata !== "function") return;
+    await this.client.reportMetadata({
+      paneId,
+      source,
+      appliesToSource: "herdr:codex",
+      displayAgent,
+      customStatus: sanitizeStatus(status),
+      stateLabels: {
+        unknown: sanitizeStatus(status), idle: "idle", working: "working", blocked: "blocked",
+      },
+      seq,
+    });
   }
 
   #next(identity) {
