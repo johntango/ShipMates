@@ -6,12 +6,27 @@ export class HerdrFirstmateSession {
     paneId,
     sessionId = `firstmate-${process.pid}`,
     onWarning = console.error,
+    activityMinimumMs = 1_000,
+    activityHeartbeatMs = 5_000,
+    clock = Date.now,
+    schedule = setTimeout,
+    cancelScheduled = clearTimeout,
   } = {}) {
     if (!client) throw new TypeError("HerdrFirstmateSession requires a client");
     this.client = client;
     this.paneId = paneId || null;
     this.sessionId = sessionId;
     this.onWarning = onWarning;
+    if (!Number.isSafeInteger(activityMinimumMs) || activityMinimumMs < 0 ||
+      !Number.isSafeInteger(activityHeartbeatMs) || activityHeartbeatMs < 1) {
+      throw new TypeError("Herdr FirstMate activity intervals are invalid");
+    }
+    this.activityMinimumMs = activityMinimumMs;
+    this.activityHeartbeatMs = activityHeartbeatMs;
+    this.clock = clock;
+    this.schedule = schedule;
+    this.cancelScheduled = cancelScheduled;
+    this.idleTimer = null;
     this.repoPath = null;
     this.started = false;
     this.sequence = 0;
@@ -41,22 +56,42 @@ export class HerdrFirstmateSession {
 
   async withActivity({ message, status = "active" }, operation) {
     if (typeof operation !== "function") throw new TypeError("FirstMate activity requires an operation");
+    const startedAt = this.clock();
+    if (this.idleTimer !== null) {
+      this.cancelScheduled(this.idleTimer);
+      this.idleTimer = null;
+    }
     this.activeOperations += 1;
+    const heartbeat = this.started ? setInterval(() => void this.#reportActivity({
+      state: "working", message, status,
+    }), this.activityHeartbeatMs) : null;
+    heartbeat?.unref?.();
     try {
       await this.#reportActivity({ state: "working", message, status });
       return await operation();
     } finally {
+      if (heartbeat) clearInterval(heartbeat);
       this.activeOperations -= 1;
       if (this.started && this.activeOperations === 0) {
-        await this.#reportActivity({
-          state: "idle", message: "FirstMate is listening", status: "listening",
-        });
+        const remaining = this.activityMinimumMs - (this.clock() - startedAt);
+        const reportIdle = async () => {
+          this.idleTimer = null;
+          if (this.activeOperations === 0) await this.#reportActivity({
+            state: "idle", message: "FirstMate is listening", status: "listening",
+          });
+        };
+        if (remaining > 0) this.idleTimer = this.schedule(() => void reportIdle(), remaining);
+        else await reportIdle();
       }
     }
   }
 
   async stop() {
     if (!this.paneId || !this.started) return;
+    if (this.idleTimer !== null) {
+      this.cancelScheduled(this.idleTimer);
+      this.idleTimer = null;
+    }
     try {
       await this.client.rename({ paneId: this.paneId, label: null });
       await this.client.reportMetadata({
