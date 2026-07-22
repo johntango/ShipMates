@@ -80,6 +80,7 @@ test("shows FirstMate activity and returns to listening after an instruction", a
   const metadata = [];
   const session = new HerdrFirstmateSession({
     paneId: "w1:p1",
+    activityMinimumMs: 0,
     client: {
       async reportAgent(value) { reports.push(value); },
       async reportMetadata(value) { metadata.push(value); },
@@ -103,11 +104,42 @@ test("shows FirstMate activity and returns to listening after an instruction", a
   ]);
 });
 
+test("keeps fast FirstMate answers visibly active and heartbeats long responses", async () => {
+  const reports = [];
+  const delays = [];
+  let now = 100;
+  const session = new HerdrFirstmateSession({
+    paneId: "w1:p1",
+    activityMinimumMs: 1_000,
+    activityHeartbeatMs: 5,
+    clock: () => now,
+    schedule: (callback, milliseconds) => {
+      delays.push(milliseconds); now += milliseconds; callback(); return 1;
+    },
+    cancelScheduled() {},
+    client: {
+      async reportAgent(value) { reports.push(value); },
+      async reportMetadata() {},
+      async rename() {},
+      async releaseAgent() {},
+    },
+  });
+  await session.start({ repoPath: "/repo" });
+  await session.withActivity({ message: "Answering", status: "responding" }, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 12));
+  });
+
+  assert.deepEqual(delays, [1_000]);
+  assert.equal(reports.filter(({ customStatus }) => customStatus === "responding").length >= 2, true);
+  assert.equal(reports.at(-1).customStatus, "listening");
+});
+
 test("does not interrupt FirstMate work when an activity update fails", async () => {
   let reports = 0;
   const warnings = [];
   const session = new HerdrFirstmateSession({
     paneId: "w1:p1",
+    activityMinimumMs: 0,
     onWarning: (message) => warnings.push(message),
     client: {
       async reportAgent() {
