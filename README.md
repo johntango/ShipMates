@@ -55,6 +55,20 @@ for multiline terminal input. Use `/cancel` to discard that input. `/exit`,
 workers are allowed to finish, so exiting the prompt is not equivalent to
 terminating active tasks.
 
+When Firstmate is started inside Herdr, it registers the pane as
+`ShipMates FirstMate` in Herdr's agent/task list as well as naming the pane.
+Its displayed state is `listening` while it waits for input and changes to the
+current activity, such as `coordinating` or `responding`, while it handles a
+request. Status reports use a fresh source for every Firstmate process, so an
+ordinary restart cannot be rejected by Herdr as stale.
+
+Scouts, Implementers, and persistent Project Agents run visibly in their
+assigned Herdr panes. When the pinned no-mistakes gate starts, ShipMates opens a
+dedicated `ShipMates no-mistakes: <task>` pane and attaches no-mistakes' native
+TUI to the exact validation run. The pane shows live pipeline steps, agent log
+output, findings, and approval state. Herdr visibility is best-effort: an
+unavailable Herdr session does not weaken or prevent the authoritative workflow.
+
 Run the dashboard without the command channel when only a read-only view is
 needed:
 
@@ -182,7 +196,8 @@ Implemented repository artifacts include:
   single-parent verification, exact changed-path binding, and read-only crash
   reconciliation;
 - runtime verification of the pinned no-mistakes binary, plus durable
-  exact-head validation intent and result evidence before publication;
+  exact-head validation intent and result evidence before publication, with a
+  dedicated Herdr pane attached to the run's native no-mistakes TUI;
 - a task-bound Lavish local-delivery choice that fast-forwards a clean primary
   checkout only to the exact no-mistakes-validated task commit;
 - a localhost-only Express and Bootstrap operator dashboard with live task,
@@ -207,8 +222,9 @@ Implemented repository artifacts include:
 - a local Codex MCP runtime wrapped as one strict, read-only Firstmate scout
   tool with no conversational handoff;
 - architecture and GitHub governance documentation;
-- live, sanitized Herdr execution visibility for Firstmate scouts and the local
-  implementation worker.
+- live, sanitized Herdr execution visibility for Firstmate, Project Agents,
+  scouts, the local implementation worker, and no-mistakes validation; Firstmate
+  remains visible in Herdr's task list and reports listening and active phases.
 
 Crash-safe Codex thread continuation, up to two independently assigned read-only scouts,
 one durable mutating worker, controlled commit creation, and pinned local

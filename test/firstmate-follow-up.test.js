@@ -16,6 +16,9 @@ test("recognizes artifact follow-ups without treating new build requests as foll
   assert.equal(isFirstmateTaskFollowUp("where are they located?"), true);
   assert.equal(isFirstmateTaskFollowUp("open the pages"), true);
   assert.equal(isFirstmateTaskFollowUp("develop two separate web pages"), false);
+  assert.equal(isFirstmateTaskFollowUp(
+    "Implement planned task page-structure for TestE: Build a display page with five circles. This request is bound to plan task id page-structure.",
+  ), false);
 });
 
 test("recognizes project revisions without capturing fresh projects", () => {

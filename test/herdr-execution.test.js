@@ -12,6 +12,7 @@ test("names the interactive FirstMate pane while it is listening", async () => {
   const releases = [];
   const metadata = [];
   const renames = [];
+  const agentRenames = [];
   const session = new HerdrFirstmateSession({
     paneId: "w1:p1",
     sessionId: "firstmate-session-1",
@@ -23,6 +24,7 @@ test("names the interactive FirstMate pane while it is listening", async () => {
       },
       async reportAgent(value) { reports.push(value); },
       async reportMetadata(value) { metadata.push(value); },
+      async renameAgent(value) { agentRenames.push(value); },
       async rename(value) { renames.push(value); },
       async releaseAgent(value) { releases.push(value); },
     },
@@ -34,7 +36,7 @@ test("names the interactive FirstMate pane while it is listening", async () => {
 
   assert.deepEqual(reports, [{
     paneId: "w1:p1",
-    source: "shipmates:firstmate:interactive:w1:p1",
+    source: "shipmates:firstmate:interactive:w1:p1:firstmate-session-1",
     agent: "ShipMates FirstMate",
     state: "idle",
     message: "FirstMate is listening",
@@ -45,26 +47,22 @@ test("names the interactive FirstMate pane while it is listening", async () => {
   }]);
   assert.deepEqual(releases, [{
     paneId: "w1:p1",
-    source: "shipmates:firstmate:interactive:w1:p1",
+    source: "shipmates:firstmate:interactive:w1:p1:firstmate-session-1",
     agent: "ShipMates FirstMate",
-    seq: 3,
+    seq: 2,
   }]);
   assert.deepEqual(metadata, [{
     paneId: "w1:p1",
-    source: "shipmates:firstmate:interactive:w1:p1",
-    appliesToSource: "herdr:codex",
+    source: "herdr:codex",
     displayAgent: "ShipMates FirstMate",
     customStatus: "listening",
-    stateLabels: { unknown: "listening", idle: "listening", working: "active" },
-    seq: 1,
+    stateLabels: { unknown: "listening", idle: "listening", working: "listening" },
   }, {
     paneId: "w1:p1",
-    source: "shipmates:firstmate:interactive:w1:p1",
-    appliesToSource: "herdr:codex",
+    source: "herdr:codex",
     clearDisplayAgent: true,
     clearCustomStatus: true,
     clearStateLabels: true,
-    seq: 2,
   }]);
   assert.deepEqual(renames, [{
     paneId: "w1:p1",
@@ -73,6 +71,34 @@ test("names the interactive FirstMate pane while it is listening", async () => {
     paneId: "w1:p1",
     label: null,
   }]);
+  assert.deepEqual(agentRenames, [{
+    paneId: "w1:p1",
+    label: "ShipMates FirstMate",
+  }, {
+    paneId: "w1:p1",
+    label: null,
+  }]);
+});
+
+test("uses a fresh Herdr report source after a FirstMate process restart", async () => {
+  const sources = [];
+  const client = {
+    async reportAgent({ source }) { sources.push(source); },
+    async reportMetadata() {},
+    async rename() {},
+    async releaseAgent() {},
+  };
+  await new HerdrFirstmateSession({
+    paneId: "w1:p1", sessionId: "firstmate-101", client,
+  }).start({ repoPath: "/repo" });
+  await new HerdrFirstmateSession({
+    paneId: "w1:p1", sessionId: "firstmate-202", client,
+  }).start({ repoPath: "/repo" });
+
+  assert.deepEqual(sources, [
+    "shipmates:firstmate:interactive:w1:p1:firstmate-101",
+    "shipmates:firstmate:interactive:w1:p1:firstmate-202",
+  ]);
 });
 
 test("shows FirstMate activity and returns to listening after an instruction", async () => {
@@ -100,6 +126,9 @@ test("shows FirstMate activity and returns to listening after an instruction", a
     { state: "idle", customStatus: "listening" },
   ]);
   assert.deepEqual(metadata.map(({ customStatus }) => customStatus), [
+    "listening", "coordinating", "listening",
+  ]);
+  assert.deepEqual(metadata.map(({ stateLabels }) => stateLabels.idle), [
     "listening", "coordinating", "listening",
   ]);
 });

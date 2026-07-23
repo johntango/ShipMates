@@ -155,5 +155,8 @@ test("binds natural plan approval to the durable selected project", () => {
   assert.equal(parseProjectApproval(
     "Approve the plan and begin", projects, projects[0],
   ).project.id, "project-a");
+  assert.equal(parseProjectApproval(
+    "Approve the BallsA plan", projects, projects[0],
+  ).project.id, "project-a");
   assert.equal(parseProjectApproval("Approve project Missing", projects).project, null);
 });

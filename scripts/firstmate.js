@@ -12,6 +12,7 @@ import {
 import { HerdrPaneClient, HerdrPanePool } from "../src/adapters/herdr-pane.js";
 import { HerdrProjectAgentObserver } from "../src/adapters/herdr-project-agent.js";
 import { HerdrProjectTaskRuntime } from "../src/adapters/herdr-project-task.js";
+import { HerdrNoMistakesObserver } from "../src/adapters/herdr-no-mistakes.js";
 import { LavishTaskDashboard } from "../src/adapters/lavish-dashboard.js";
 import { LavishSessionManager } from "../src/adapters/lavish-session.js";
 import { ControlledGitCommitAdapter } from "../src/adapters/git-commit.js";
@@ -188,6 +189,11 @@ if (!classifyOnly) {
         binaryPath,
         stateRoot: path.join(rootDir, "no-mistakes"),
         onProgress: (message) => console.error(`[no-mistakes] ${message}`),
+        observer: herdrObserver ? new HerdrNoMistakesObserver({
+          client: herdrObserver.client,
+          currentPaneId: process.env.HERDR_PANE_ID,
+          watcherScript: fileURLToPath(new URL("./no-mistakes-pane.js", import.meta.url)),
+        }) : null,
         ...(process.env.SHIPMATES_VALIDATION_PROFILE === "fast"
           ? { skipSteps: FAST_LOCAL_SKIP_STEPS }
           : {}),
@@ -608,6 +614,9 @@ async function runInteractiveFirstmate() {
     message: "FirstMate is handling an instruction",
     status: "coordinating",
   }, async () => {
+        const governedPlanDispatch = message.match(
+          /^Implement planned task ([a-z0-9][a-z0-9._-]{2,63})\b/u,
+        );
         const selection = parseProjectSelection(message, await projectStore.list());
         if (selection) {
           if (!selection.project) {
@@ -869,7 +878,7 @@ async function runInteractiveFirstmate() {
           console.log(`Opened the real Bootstrap dashboard fixture in Lavish: ${reviewPath}`);
           return;
         }
-        if (isFirstmateTaskFollowUp(message)) {
+        if (!governedPlanDispatch && isFirstmateTaskFollowUp(message)) {
           const target = await resolveArtifactFollowUpSnapshot({
             store: interactiveStore,
             preferredTaskId: activeProjectTaskId || latestTaskId,
@@ -885,7 +894,6 @@ async function runInteractiveFirstmate() {
           return;
         }
         let instruction = message;
-        const governedPlanDispatch = message.match(/^Implement planned task ([a-z0-9][a-z0-9._-]{2,63})\b/u);
         let planTaskId = governedPlanDispatch?.[1] || null;
         try {
           if (governedPlanDispatch) {

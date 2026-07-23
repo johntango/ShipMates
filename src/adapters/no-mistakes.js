@@ -58,6 +58,7 @@ export class NoMistakesLocalGate {
     timeoutMs = 30 * 60 * 1_000,
     skipSteps = LOCAL_ONLY_SKIP_STEPS,
     onProgress = () => {},
+    observer = null,
   } = {}) {
     requireNonEmpty(binaryPath, "binaryPath");
     if (typeof runner !== "function") throw new TypeError("runner must be a function");
@@ -77,6 +78,7 @@ export class NoMistakesLocalGate {
     this.timeoutMs = timeoutMs;
     this.skipSteps = validateSkipSteps(skipSteps);
     this.onProgress = onProgress;
+    this.observer = observer;
   }
 
   async run({ taskId, worktreePath, expectedHeadSha, intent, onProgress = null }) {
@@ -111,6 +113,12 @@ export class NoMistakesLocalGate {
     };
     reportProgress("Starting validation pipeline");
     const startedAt = this.clock().toISOString();
+    await this.observer?.started?.({
+      taskId,
+      binaryPath: this.binaryPath,
+      runtimeHome,
+      worktreePath: workingDirectory,
+    });
     const result = await this.runner(this.binaryPath, args, {
       cwd: workingDirectory,
       env: localOnlyEnvironment({

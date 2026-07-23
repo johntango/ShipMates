@@ -6,6 +6,7 @@ import { CodexWorkerRuntime } from "../src/adapters/codex-worker.js";
 import { NoMistakesLocalGate } from "../src/adapters/no-mistakes.js";
 import { HerdrPaneClient } from "../src/adapters/herdr-pane.js";
 import { HerdrProjectAgentObserver } from "../src/adapters/herdr-project-agent.js";
+import { HerdrNoMistakesObserver } from "../src/adapters/herdr-no-mistakes.js";
 import { ProjectAgentController } from "../src/agents/project-agent.js";
 import { ProjectStore } from "../src/projects/project-store.js";
 import { PersistentProjectExecutor } from "../src/workflows/persistent-project-executor.js";
@@ -54,6 +55,10 @@ const operations = {
   validation = await new NoMistakesLocalGate({
     binaryPath, stateRoot: path.join(stateRoot, "no-mistakes"),
     onProgress: (message) => console.error(`[no-mistakes] ${message}`),
+    observer: new HerdrNoMistakesObserver({
+      client: observer.client,
+      watcherScript: fileURLToPath(new URL("./no-mistakes-pane.js", import.meta.url)),
+    }),
   }).run({
     taskId: project.tasks.find(({ id }) => id === planTaskId).taskId,
     worktreePath: project.executionPolicy.worktreePath,

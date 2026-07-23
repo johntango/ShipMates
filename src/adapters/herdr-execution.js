@@ -38,6 +38,12 @@ export class HerdrFirstmateSession {
     this.repoPath = repoPath;
     try {
       await this.#verifyPaneOwnership();
+      if (typeof this.client.renameAgent === "function") {
+        await this.client.renameAgent({
+          paneId: this.paneId,
+          label: "ShipMates FirstMate",
+        });
+      }
       await this.#report({ state: "idle", message: "FirstMate is listening", status: "listening" });
       this.started = true;
     } catch (error) {
@@ -93,15 +99,14 @@ export class HerdrFirstmateSession {
       this.idleTimer = null;
     }
     try {
+      await this.client.renameAgent?.({ paneId: this.paneId, label: null });
       await this.client.rename({ paneId: this.paneId, label: null });
       await this.client.reportMetadata({
         paneId: this.paneId,
-        source: this.#source(),
-        appliesToSource: "herdr:codex",
+        source: "herdr:codex",
         clearDisplayAgent: true,
         clearCustomStatus: true,
         clearStateLabels: true,
-        seq: this.#next(),
       });
       await this.client.releaseAgent({
         paneId: this.paneId,
@@ -131,12 +136,10 @@ export class HerdrFirstmateSession {
       try {
         await this.client.reportMetadata({
           paneId: this.paneId,
-          source: this.#source(),
-          appliesToSource: "herdr:codex",
+          source: "herdr:codex",
           displayAgent: "ShipMates FirstMate",
           customStatus: status,
-          stateLabels: { unknown: status, idle: "listening", working: "active" },
-          seq: this.sequence,
+          stateLabels: { unknown: status, idle: status, working: status },
         });
       } catch (error) {
         this.onWarning(`Herdr FirstMate activity decoration unavailable: ${safeErrorName(error)}`);
@@ -167,7 +170,7 @@ export class HerdrFirstmateSession {
   }
 
   #source() {
-    return `shipmates:firstmate:interactive:${this.paneId}`;
+    return `shipmates:firstmate:interactive:${this.paneId}:${this.sessionId}`;
   }
 }
 
