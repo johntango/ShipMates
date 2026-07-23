@@ -184,7 +184,7 @@ if (!classifyOnly) {
     let gate = null;
     if (!demoMode) {
       const binaryPath = process.env.NO_MISTAKES_BIN ||
-        "/private/tmp/shipmates-no-mistakes-v1.37.0/no-mistakes";
+        "/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes";
       gate = new NoMistakesLocalGate({
         binaryPath,
         stateRoot: path.join(rootDir, "no-mistakes"),

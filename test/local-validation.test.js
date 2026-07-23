@@ -195,7 +195,7 @@ function pinEvidence() {
   return {
     name: "no-mistakes",
     pinned: true,
-    version: "v1.37.0",
+    version: "v1.41.1",
     sourceCommit: "a".repeat(40),
     binarySha256: "b".repeat(64),
   };

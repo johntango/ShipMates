@@ -51,7 +51,7 @@ const operations = {
     if (!terminalMilestone) throw new Error("Full validation is reserved for a terminal project milestone");
     implementation ||= await executor.reconcile({ projectId, planTaskId });
     if (implementation?.status !== "completed") throw new Error("Milestone validation requires completed implementation");
-  const binaryPath = process.env.NO_MISTAKES_BIN || "/private/tmp/shipmates-no-mistakes-v1.37.0/no-mistakes";
+  const binaryPath = process.env.NO_MISTAKES_BIN || "/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes";
   validation = await new NoMistakesLocalGate({
     binaryPath, stateRoot: path.join(stateRoot, "no-mistakes"),
     onProgress: (message) => console.error(`[no-mistakes] ${message}`),

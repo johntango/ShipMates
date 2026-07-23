@@ -30,9 +30,9 @@ export const FAST_LOCAL_SKIP_STEPS = Object.freeze([
 ]);
 
 export const PINNED_NO_MISTAKES_DARWIN_ARM64 = Object.freeze({
-  version: "v1.37.0",
-  sourceCommit: "78e4dcb234274199717acafa90abca5cf7013993",
-  binarySha256: "d4558d241100cb48196a00864157fb70bb5aa241ac376bcbf48dda88fb033e34",
+  version: "v1.41.1",
+  sourceCommit: "4a692bd336c37e9ac36761ee82e558865402abba",
+  binarySha256: "12a72f3aee65f74961c85c43071a731cb224e2684f997aa47cdc76b76fb2022b",
 });
 
 const allSteps = Object.freeze([

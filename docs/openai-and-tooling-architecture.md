@@ -107,7 +107,7 @@ The repositories inspected for this plan were:
 | `johntango/firstmate` | `b708731dc7840c088bcd8c79991b7f052f9a0096` | `kunchenguid/firstmate` |
 | `johntango/lavish-axi` | `ab31405882f950696a2ddc79deb90d4caada7543` | `kunchenguid/lavish-axi` |
 | `johntango/treehouse` | `81cc00172b3615cde67ff6fb0f99679a1274210e` | `kunchenguid/treehouse` |
-| `johntango/no-mistakes` | `78e4dcb234274199717acafa90abca5cf7013993` | `kunchenguid/no-mistakes` |
+| `johntango/no-mistakes` | `4a692bd336c37e9ac36761ee82e558865402abba` | `kunchenguid/no-mistakes` |
 
 All four presented MIT licenses at inspection time. Before vendoring, copying
 code, or installing a release, recheck the license and pin the exact release or

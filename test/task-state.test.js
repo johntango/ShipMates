@@ -381,7 +381,7 @@ function localValidationReport() {
       name: "no-mistakes",
       binary: "/private/tmp/no-mistakes",
       pinned: true,
-      version: "v1.37.0",
+      version: "v1.41.1",
       sourceCommit: "d".repeat(40),
       binarySha256: "e".repeat(64),
     },
