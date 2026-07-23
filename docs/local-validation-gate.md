@@ -1,22 +1,22 @@
 # Local no-mistakes validation gate
 
-ShipMates invokes pinned `no-mistakes v1.37.0` through a typed local-only
+ShipMates invokes pinned `no-mistakes v1.41.1` through a typed local-only
 adapter. The upstream Darwin ARM64 release archive used for the exercise has
 SHA-256:
 
 ```text
-8f2ac871c0ca35dae957bf3e20eb7cafcfd5fc7de622c46e5e519081924749a1
+5ad446564458134db795876671fc50dbab379ae2284c9bc9fe4f4d7160b2f025
 ```
 
-The binary reports source commit `78e4dcb`, matching the inspected
+The binary reports source commit `4a692bd`, matching the inspected
 `johntango/no-mistakes` commit
-`78e4dcb234274199717acafa90abca5cf7013993`.
+`4a692bd336c37e9ac36761ee82e558865402abba`.
 
 The extracted Darwin ARM64 executable is independently pinned at runtime with
 SHA-256:
 
 ```text
-d4558d241100cb48196a00864157fb70bb5aa241ac376bcbf48dda88fb033e34
+12a72f3aee65f74961c85c43071a731cb224e2684f997aa47cdc76b76fb2022b
 ```
 
 Firstmate verifies the binary digest, reported version, and source commit
@@ -60,7 +60,7 @@ request without a result is not automatically rerun after restart.
 Run an already-initialized, actively leased task in `validating` state with:
 
 ```sh
-NO_MISTAKES_BIN=/private/tmp/shipmates-no-mistakes-v1.37.0/no-mistakes \
+NO_MISTAKES_BIN=/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes \
 node scripts/local-validation.js run TASK_ID "the original user intent"
 ```
 

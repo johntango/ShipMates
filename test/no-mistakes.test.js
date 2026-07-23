@@ -15,8 +15,8 @@ const HEAD = "a".repeat(40);
 const NOW = new Date("2026-07-13T19:00:00.000Z");
 const BINARY = Buffer.from("pinned-no-mistakes-test-binary");
 const PIN = Object.freeze({
-  version: "v1.37.0",
-  sourceCommit: "78e4dcb234274199717acafa90abca5cf7013993",
+  version: "v1.41.1",
+  sourceCommit: "4a692bd336c37e9ac36761ee82e558865402abba",
   binarySha256: createHash("sha256").update(BINARY).digest("hex"),
 });
 const PIN_OPTIONS = Object.freeze({
@@ -269,7 +269,7 @@ function fakeRunner({ calls = [], output, afterHead = HEAD }) {
     if (args[0] === "--version") {
       return {
         exitCode: 0,
-        stdout: "no-mistakes version v1.37.0 (78e4dcb) test\n",
+        stdout: "no-mistakes version v1.41.1 (4a692bd) test\n",
         stderr: "",
       };
     }

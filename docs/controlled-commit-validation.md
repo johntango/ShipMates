@@ -36,10 +36,10 @@ task from `running` to `validating`.
 Before leasing a workspace, the executable verifies the configured
 no-mistakes binary against all three pins:
 
-- version `v1.37.0`;
-- source commit `78e4dcb234274199717acafa90abca5cf7013993`;
+- version `v1.41.1`;
+- source commit `4a692bd336c37e9ac36761ee82e558865402abba`;
 - Darwin ARM64 binary SHA-256
-  `d4558d241100cb48196a00864157fb70bb5aa241ac376bcbf48dda88fb033e34`.
+  `12a72f3aee65f74961c85c43071a731cb224e2684f997aa47cdc76b76fb2022b`.
 
 Validation records `validation.local.requested` before execution. The request
 binds the exact committed lease head, branch, user-intent digest, and binary
@@ -63,7 +63,7 @@ Publication is a separate human-approved capability described in the
 [exact-head push guide](exact-head-push.md).
 
 Set `NO_MISTAKES_BIN` to the pinned executable when it is not at the development
-default `/private/tmp/shipmates-no-mistakes-v1.37.0/no-mistakes`.
+default `/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes`.
 
 ## Crash recovery
 
