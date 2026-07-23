@@ -4,11 +4,52 @@ import test from "node:test";
 import {
   HerdrNoMistakesObserver,
   parseAxiRunId,
+  projectNoMistakesHerdrStatus,
 } from "../src/adapters/herdr-no-mistakes.js";
 
 test("parses quoted and unquoted AXI run identifiers without retaining quotes", () => {
   assert.equal(parseAxiRunId('run:\n  id: "01KY806YY3XQSHGHMBZKCZXM62"\n'), "01KY806YY3XQSHGHMBZKCZXM62");
   assert.equal(parseAxiRunId("run:\n  id: run-local-1\n"), "run-local-1");
+});
+
+test("projects live no-mistakes stages and elapsed time into Herdr states", () => {
+  const testing = projectNoMistakesHerdrStatus(`run:
+  id: run-1
+  status: running
+  steps[3]{step,status,findings,duration_ms}:
+    review,completed,0,1200
+    test,running,0,0
+    lint,pending,0,0
+`, { elapsedMs: 72_400 });
+  assert.deepEqual(testing, {
+    state: "working",
+    stage: "testing",
+    customStatus: "testing · 1m 12s",
+    message: "Validation testing",
+    terminal: false,
+  });
+
+  const approval = projectNoMistakesHerdrStatus(`run:
+  status: running
+  awaiting_agent: parked 4s
+  steps[1]{step,status,findings,duration_ms}:
+    review,awaiting_approval,1,2000
+`, { elapsedMs: 4_000 });
+  assert.equal(approval.state, "blocked");
+  assert.equal(approval.customStatus, "awaiting approval · 4s");
+});
+
+test("projects terminal no-mistakes outcomes into dashboard pass and failure states", () => {
+  assert.deepEqual(projectNoMistakesHerdrStatus("outcome: passed\n", { elapsedMs: 8_000 }), {
+    state: "idle",
+    stage: "passed",
+    customStatus: "passed · 8s",
+    message: "Validation passed",
+    terminal: true,
+  });
+  const failed = projectNoMistakesHerdrStatus("outcome: failed\n", { elapsedMs: 9_000 });
+  assert.equal(failed.state, "blocked");
+  assert.equal(failed.customStatus, "failed · 9s");
 });
 
 test("opens a dedicated Herdr pane for the live no-mistakes TUI", async () => {
@@ -39,7 +80,7 @@ test("opens a dedicated Herdr pane for the live no-mistakes TUI", async () => {
   assert.match(calls.find(([kind]) => kind === "agent")[1].agent, /no-mistakes: task-1/u);
   assert.deepEqual(calls.at(-1), ["run", {
     paneId: "w1:p3",
-    command: "'/usr/bin/node' '/repo/scripts/no-mistakes-pane.js' '/opt/no-mistakes' '/state/runtime' '/repo/worktree'",
+    command: "'/usr/bin/node' '/repo/scripts/no-mistakes-pane.js' '/opt/no-mistakes' '/state/runtime' '/repo/worktree' 'w1:p3' 'shipmates:no-mistakes:task-1' 'ShipMates no-mistakes: task-1'",
   }]);
 });
 
