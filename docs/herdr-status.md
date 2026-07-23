@@ -112,7 +112,12 @@ projection:
 - skill activity is shown when Codex emits a `skill` or `skill_invocation`
   item. Codex CLI versions that do not emit those items cannot provide reliable
   semantic skill visibility, so ShipMates does not infer it from filenames or
-  shell commands.
+  shell commands;
+- pinned no-mistakes validation keeps its native TUI in a dedicated pane while
+  its Herdr task entry reports the current pipeline stage, elapsed time,
+  attention-needed state, and terminal pass or failure. Status polling is
+  best-effort and cannot change the validation result or prevent the gate from
+  running.
 
 Worker pane identities are released after the overall run so later tasks can
 reuse the capacity. If Herdr is unavailable, visibility fails open with one

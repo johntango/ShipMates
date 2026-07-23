@@ -66,7 +66,10 @@ Scouts, Implementers, and persistent Project Agents run visibly in their
 assigned Herdr panes. When the pinned no-mistakes gate starts, ShipMates opens a
 dedicated `ShipMates no-mistakes: <task>` pane and attaches no-mistakes' native
 TUI to the exact validation run. The pane shows live pipeline steps, agent log
-output, findings, and approval state. Herdr visibility is best-effort: an
+output, findings, and approval state. Herdr's task dashboard summarizes the
+same run with its current stage (`reviewing`, `testing`, `linting`, and so on),
+elapsed time, attention-needed state, and terminal `passed` or `failed` result;
+select the task to open the detailed pane. Herdr visibility is best-effort: an
 unavailable Herdr session does not weaken or prevent the authoritative workflow.
 
 Run the dashboard without the command channel when only a read-only view is
