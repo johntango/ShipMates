@@ -302,9 +302,8 @@ task branch or Treehouse lease is outstanding.
 
 ### Local no-mistakes validation gate
 
-- Pinned upstream `v1.41.1` at source commit `4a692bd`.
-- Darwin ARM64 archive SHA-256:
-  `5ad446564458134db795876671fc50dbab379ae2284c9bc9fe4f4d7160b2f025`.
+- Pinned release and checksum details are owned by the
+  [local validation gate guide](docs/local-validation-gate.md).
 - Adapter always skips `rebase,push,pr,ci`, removes remote credentials, disables
   telemetry, and independently verifies Git before and after.
 - Live run `01KXEEDJKSY306KE9RWK47XMWB` passed with no findings or SHA change.

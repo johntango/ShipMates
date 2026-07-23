@@ -34,12 +34,9 @@ task from `running` to `validating`.
 ## Pinned local validation
 
 Before leasing a workspace, the executable verifies the configured
-no-mistakes binary against all three pins:
-
-- version `v1.41.1`;
-- source commit `4a692bd336c37e9ac36761ee82e558865402abba`;
-- Darwin ARM64 binary SHA-256
-  `12a72f3aee65f74961c85c43071a731cb224e2684f997aa47cdc76b76fb2022b`.
+no-mistakes binary against the version, source commit, and Darwin ARM64 binary
+checksum documented in the
+[local validation gate guide](local-validation-gate.md).
 
 Validation records `validation.local.requested` before execution. The request
 binds the exact committed lease head, branch, user-intent digest, and binary
@@ -62,8 +59,8 @@ npm run firstmate
 Publication is a separate human-approved capability described in the
 [exact-head push guide](exact-head-push.md).
 
-Set `NO_MISTAKES_BIN` to the pinned executable when it is not at the development
-default `/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes`.
+The [local validation gate guide](local-validation-gate.md) documents the
+development default and how to override it with `NO_MISTAKES_BIN`.
 
 ## Crash recovery
 
