@@ -39,12 +39,14 @@ test("keeps the validation profile separate from immutable binary pin evidence",
 test("runs a passing validator with remote-capable steps disabled", async () => {
   const calls = [];
   const progress = [];
+  const visibility = [];
   const runner = fakeRunner({ calls, output: passingOutput() });
   const gate = new NoMistakesLocalGate({
     binaryPath: "/private/tmp/no-mistakes",
     stateRoot: path.join(tmpdir(), "shipmates-no-mistakes-test"),
     runner,
     onProgress: (message) => progress.push(message),
+    observer: { started: async (context) => visibility.push(context) },
     clock: () => NOW,
     ...PIN_OPTIONS,
   });
@@ -80,6 +82,12 @@ test("runs a passing validator with remote-capable steps disabled", async () => 
   assert.equal(invocation.options.env.NO_MISTAKES_TELEMETRY, "0");
   assert.match(invocation.options.env.GH_CONFIG_DIR, /empty-gh$/u);
   assert.deepEqual(progress, ["Starting validation pipeline", "Running tests"]);
+  assert.deepEqual(visibility, [{
+    taskId: "validation-001",
+    binaryPath: "/private/tmp/no-mistakes",
+    runtimeHome: path.join(tmpdir(), "shipmates-no-mistakes-test", "runtime"),
+    worktreePath: "/private/tmp/worktree",
+  }]);
 });
 
 test("reuses the managed runtime already bound to the repository remote", async () => {

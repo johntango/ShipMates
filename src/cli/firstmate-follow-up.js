@@ -6,7 +6,10 @@ const projectContinuation =
   /^(?:(?:please|can you|could you|would you|i(?:'d| would) like (?:you )?to|i want (?:you )?to)\s+)*(?:modify|change|update|revise|adjust|fix|improve|extend|add|remove|replace|rename|make)\b[\s\S]*\b(?:existing|current|previous|last|it|its|this|that|page|pages|site|website|app|program|implementation|design|layout|letters?|text|colour|color|background|button|buttons)\b/iu;
 
 export function isFirstmateTaskFollowUp(message) {
-  return typeof message === "string" && artifactFollowUp.test(message.trim());
+  if (typeof message !== "string") return false;
+  const input = message.trim();
+  if (/^Implement planned task [a-z0-9][a-z0-9._-]{2,63}\b/u.test(input)) return false;
+  return artifactFollowUp.test(input);
 }
 
 export function isFirstmateProjectContinuation(message) {

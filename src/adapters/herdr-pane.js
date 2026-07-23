@@ -137,6 +137,14 @@ export class HerdrPaneClient {
     await this.#plain(args, `Herdr pane rename failed for ${paneId}`);
   }
 
+  async renameAgent({ paneId, label = null }) {
+    requirePaneId(paneId);
+    const args = ["agent", "rename", paneId];
+    if (label === null) args.push("--clear");
+    else args.push(requiredString(label, "agent label"));
+    await this.#plain(args, `Herdr agent rename failed for ${paneId}`);
+  }
+
   async #json(args) {
     let stdout;
     try {
