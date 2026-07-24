@@ -780,9 +780,14 @@ async function runInteractiveFirstmate() {
         }
         const createProject = parseProjectCreation(message);
         if (createProject) {
-          const context = await discoverFirstmateContext({ cwd: activeProject.repoPath });
+          let targetProject = activeProject;
+          if (createProject.repositoryQuery) {
+            const repository = await projectStore.repository(createProject.repositoryQuery);
+            targetProject = repository.projects[0];
+          }
+          const context = await discoverFirstmateContext({ cwd: targetProject.repoPath });
           activeProject = await projectStore.create({
-            name: createProject, repo: context.repo,
+            name: createProject.name, repo: context.repo,
             repoPath: context.repoPath, baseSha: context.baseSha,
           });
           console.log(`Created and selected ${activeProject.name} in ${activeProject.repo}.`);

@@ -70,11 +70,30 @@ export function parseProjectSelection(message, projects) {
 
 export function parseProjectCreation(message) {
   const input = String(message || "").trim();
-  const named = input.match(
-    /^(?:create|set up)\s+(?:a\s+)?(?:new\s+)?(?:empty\s+)?project(?:\s+(?:under|in)\s+.+?)?\s+(?:called|named)\s+([a-z0-9._-]+)(?:\s+.*)?$/iu,
+  const underThenNamed = input.match(
+    /^(?:create|set up)\s+(?:a\s+)?(?:new\s+)?(?:empty\s+)?project\s+(?:under|in)\s+(?:the\s+)?(.+?)\s+(?:called|named)\s+([a-z0-9._-]+)$/iu,
   );
-  if (named) return named[1];
-  return input.match(/^create project\s+([a-z0-9._-]+)$/iu)?.[1] || null;
+  if (underThenNamed) {
+    return { name: underThenNamed[2], repositoryQuery: repositoryQuery(underThenNamed[1]) };
+  }
+  const namedThenUnder = input.match(
+    /^(?:create|set up)\s+(?:a\s+)?(?:new\s+)?(?:empty\s+)?project\s+(?:called|named)\s+([a-z0-9._-]+)\s+(?:under|in)\s+(?:the\s+)?(.+)$/iu,
+  );
+  if (namedThenUnder) {
+    return { name: namedThenUnder[1], repositoryQuery: repositoryQuery(namedThenUnder[2]) };
+  }
+  const conciseTarget = input.match(
+    /^(?:please\s+)?(?:create|set up)\s+(?:project\s+)?([a-z0-9._-]+)\s+(?:under|in)\s+(?:the\s+)?(.+)$/iu,
+  );
+  if (conciseTarget) {
+    return { name: conciseTarget[1], repositoryQuery: repositoryQuery(conciseTarget[2]) };
+  }
+  const simple = input.match(/^create project\s+([a-z0-9._-]+)$/iu);
+  return simple ? { name: simple[1], repositoryQuery: null } : null;
+}
+
+function repositoryQuery(value) {
+  return value.replace(/\s+(?:project\s+)?repository$/iu, "").trim();
 }
 
 export function parseDemoModeCommand(message, projects) {
