@@ -137,10 +137,8 @@ Implementer can be dispatched. A successful dispatch also requires a durable
 task attachment and launch receipt. Missing launch identity is recorded as a
 blocker instead of leaving work indefinitely described as dispatched.
 
-Targeted creation such as `create TestA under DemoTest0` is a deterministic
-local registry operation. Firstmate resolves DemoTest0 to its registered
-repository and creates TestA there immediately; it does not classify the
-request as external work or dispatch a worker.
+For targeted-creation syntax and repository-selection semantics, see the
+[Firstmate shell guide](docs/firstmate-shell.md#interactive-cli).
 
 Plan tasks move through `planned`, `claimed`, `dispatched`, `blocked`, and
 `completed` states. Retries are retained as attempts under the original plan
