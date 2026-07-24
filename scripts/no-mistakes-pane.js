@@ -46,6 +46,7 @@ async function inspectAndReport() {
   if (!runId && matchesExpectedAxiRun(stdout, expectedHeadSha)) {
     runId = parseAxiRunId(stdout);
   }
+  if (!runId) return null;
   const projection = projectNoMistakesHerdrStatus(stdout, { elapsedMs: Date.now() - startedAt });
   if (!lastProjection || projection.customStatus !== lastProjection.customStatus ||
       projection.state !== lastProjection.state) {
