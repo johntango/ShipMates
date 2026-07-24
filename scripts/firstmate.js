@@ -11,6 +11,7 @@ import {
 } from "../src/adapters/herdr-execution.js";
 import { HerdrPaneClient, HerdrPanePool } from "../src/adapters/herdr-pane.js";
 import { HerdrProjectAgentObserver } from "../src/adapters/herdr-project-agent.js";
+import { HerdrRepositoryPurgeObserver } from "../src/adapters/herdr-repository-purge.js";
 import { HerdrProjectTaskRuntime } from "../src/adapters/herdr-project-task.js";
 import { HerdrNoMistakesObserver } from "../src/adapters/herdr-no-mistakes.js";
 import { LavishTaskDashboard } from "../src/adapters/lavish-dashboard.js";
@@ -71,6 +72,7 @@ import { LocalDeliveryWorkflow } from "../src/workflows/local-delivery.js";
 import { PersistentProjectExecutor } from "../src/workflows/persistent-project-executor.js";
 import { ProjectArchiveWorkflow } from "../src/workflows/project-archive.js";
 import { RepositoryDeleteWorkflow } from "../src/workflows/repository-delete.js";
+import { RepositoryPurgeWorkflow } from "../src/workflows/repository-purge.js";
 
 const rawArgs = process.argv.slice(2);
 if (rawArgs[0] === "--delivery") {
@@ -450,13 +452,19 @@ async function runInteractiveFirstmate() {
   const repositoryDeleter = new RepositoryDeleteWorkflow({
     projectStore, stateRoot: interactiveStore.rootDir,
   });
+  const projectAgentClient = new HerdrPaneClient();
+  const repositoryPurger = new RepositoryPurgeWorkflow({
+    projectStore,
+    taskStore: interactiveStore,
+    stateRoot: interactiveStore.rootDir,
+    visibility: new HerdrRepositoryPurgeObserver({ client: projectAgentClient }),
+  });
   const persistentExecutor = new PersistentProjectExecutor({
     projectStore,
     runtime: new CodexWorkerRuntime(),
     schemaPath: fileURLToPath(new URL("../schemas/codex-worker-report.schema.json", import.meta.url)),
     stateRoot: interactiveStore.rootDir,
   });
-  const projectAgentClient = new HerdrPaneClient();
   const firstmateHerdrSession = new HerdrFirstmateSession({
     client: projectAgentClient,
     paneId: process.env.HERDR_PANE_ID,
@@ -776,6 +784,33 @@ async function runInteractiveFirstmate() {
           });
           activeProject = await projectStore.active();
           console.log(`Deleted ${receipt.projects.map(({ name }) => name).join(", ")} from ShipMates and moved ${receipt.repoPath} to ${receipt.trashPath}. The GitHub repository was not changed.`);
+          return;
+        }
+        const previewRepositoryPurge = message.match(/^preview purge project repository (.+)$/iu);
+        if (previewRepositoryPurge) {
+          const preview = await repositoryPurger.preview(previewRepositoryPurge[1].trim());
+          const lines = [
+            `Permanent purge preview for ${preview.repoPath}:`,
+            `Projects: ${preview.projects.map(({ name, status }) => `${name} (${status})`).join(", ")}.`,
+            `Tasks: ${preview.taskIds.length === 0 ? "none" : preview.taskIds.join(", ")}.`,
+            `Managed worktrees: ${preview.worktreePaths.length === 0 ? "none" : preview.worktreePaths.join(", ")}.`,
+            `Status: ${preview.eligible ? "eligible" : `blocked (${preview.blockers.join("; ")})`}.`,
+            `${preview.warning}.`,
+          ];
+          if (preview.eligible) {
+            lines.push(`To permanently erase ShipMates' records and generated state, enter: confirm purge project repository ${preview.repoPath} ${preview.confirmationId}`);
+          }
+          console.log(lines.join("\n"));
+          return;
+        }
+        const confirmRepositoryPurge = message.match(/^confirm purge project repository (.+) ([a-f0-9]{16})$/iu);
+        if (confirmRepositoryPurge) {
+          const result = await repositoryPurger.purge({
+            query: confirmRepositoryPurge[1].trim(),
+            confirmationId: confirmRepositoryPurge[2].toLowerCase(),
+          });
+          activeProject = await projectStore.active();
+          console.log(`Permanently purged ${result.projectNames.join(", ")} from ShipMates. No purge receipt was retained. The GitHub repository and local checkout were not changed.`);
           return;
         }
         const createProject = parseProjectCreation(message);

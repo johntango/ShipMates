@@ -163,6 +163,8 @@ list projects
 switch project ProjectName
 enable demo mode for ProjectName
 archive project ProjectName
+preview purge project repository ProjectName
+confirm purge project repository /absolute/path/to/repository CONFIRMATION_ID
 ```
 
 `enable demo mode for ProjectName` is an explicit project-scoped, local-only
@@ -180,6 +182,15 @@ task ledgers, dashboards, worker artifacts, persistent-run records, and Project
 Agent job records. Archived projects are hidden from normal project listings.
 The same archival step runs automatically after successful branch cleanup or
 its reconciliation; PR creation alone never archives data.
+
+`preview purge project repository ProjectName` is the irreversible alternative
+for an abandoned project repository. It enumerates every linked Project, task,
+and managed worktree, refuses protected repositories and recorded live
+processes, and returns a state-bound confirmation ID. Enter the exact displayed
+`confirm purge project repository ...` command to remove ShipMates records,
+ledgers, generated artifacts, conversation references, managed worktrees, and
+Herdr visibility. Purge keeps no receipt and leaves both GitHub and the main
+local checkout unchanged, so delete those separately only after purge succeeds.
 
 Repository selection is convenient conversational state only; every dispatched
 task still records its exact repository and base SHA. Broad objectives are saved

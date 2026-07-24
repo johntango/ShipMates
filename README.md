@@ -126,6 +126,8 @@ list projects
 switch project ProjectName
 enable demo mode for ProjectName
 archive project ProjectName
+preview purge project repository ProjectName
+confirm purge project repository /absolute/path/to/repository CONFIRMATION_ID
 ```
 
 Firstmate resolves project references against the registry rather than treating
@@ -146,6 +148,15 @@ Demo mode is an explicit per-project local policy. It exercises implementation,
 focused tests, controlled commits, progress, and project orchestration while
 skipping no-mistakes and all remote delivery operations. It does not alter
 other projects or grant GitHub authority.
+
+Permanent purge is a separate two-step operation for abandoned project
+repositories. The preview names every linked Project, task, and managed
+worktree and refuses protected repositories or recorded live processes. Exact
+confirmation removes those Project records, task ledgers, generated artifacts,
+conversation references, managed worktrees, and Herdr visibility without
+retaining a purge receipt. It deliberately does not delete the GitHub
+repository or the main local checkout; perform those human-owned deletions
+after ShipMates confirms the purge.
 
 External actions remain separate, exact-evidence approvals. Push, draft-PR
 creation, squash merge, and remote branch cleanup each have their own approval
