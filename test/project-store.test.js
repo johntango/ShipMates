@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -88,6 +88,28 @@ test("protects every project sharing a repository and records repository deletio
   const deleted = await store.recordRepositoryDeletion({ repoPath: "/repos/demo", receipt });
   assert.deepEqual(deleted.projects.map(({ name }) => name), ["TestA", "TestB"]);
   assert.equal((await store.list({ includeArchived: true })).length, 0);
+});
+
+test("permanently purges every project in a repository without retaining a receipt", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "repository-purge-"));
+  const store = new ProjectStore({ rootDir });
+  const retained = await store.create({
+    name: "Retained", repo: "owner/other", repoPath: "/repos/other", baseSha: "abc123",
+  });
+  await store.create({
+    name: "DemoOne", repo: "owner/demo", repoPath: "/repos/demo", baseSha: "abc123",
+  });
+  await store.create({
+    name: "DemoTwo", repo: "owner/demo", repoPath: "/repos/demo", baseSha: "abc123",
+  });
+
+  const purged = await store.purgeRepository({ repoPath: "/repos/demo" });
+
+  assert.deepEqual(purged.projects.map(({ name }) => name), ["DemoOne", "DemoTwo"]);
+  assert.deepEqual((await store.list({ includeArchived: true })).map(({ name }) => name), ["Retained"]);
+  assert.equal((await store.active()).id, retained.id);
+  const document = JSON.parse(await readFile(path.join(rootDir, "projects.json"), "utf8"));
+  assert.deepEqual(document.repositoryDeletionReceipts, []);
 });
 
 test("pauses a uniquely matching project objective without changing selection", async () => {
