@@ -93,7 +93,10 @@ export function parseProjectCreation(message) {
 }
 
 function repositoryQuery(value) {
-  return value.replace(/\s+(?:project\s+)?repository$/iu, "").trim();
+  return value
+    .replace(/[.!?]+$/u, "")
+    .replace(/\s+(?:project\s+)?repository$/iu, "")
+    .trim();
 }
 
 export function parseDemoModeCommand(message, projects) {

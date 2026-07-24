@@ -148,6 +148,12 @@ test("parses bounded project creation names without retaining instruction prose"
   assert.deepEqual(parseProjectCreation("Create TestA under DemoTest0"), {
     name: "TestA", repositoryQuery: "DemoTest0",
   });
+  assert.deepEqual(parseProjectCreation("Create TestA under DemoTest0."), {
+    name: "TestA", repositoryQuery: "DemoTest0",
+  });
+  assert.deepEqual(parseProjectCreation("Create project named TestA under the DemoTest0 repository!"), {
+    name: "TestA", repositoryQuery: "DemoTest0",
+  });
 });
 
 test("binds natural demo-mode commands to one existing project", () => {
