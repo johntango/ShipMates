@@ -87,6 +87,7 @@ test("runs a passing validator with remote-capable steps disabled", async () => 
     binaryPath: "/private/tmp/no-mistakes",
     runtimeHome: path.join(tmpdir(), "shipmates-no-mistakes-test", "runtime"),
     worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD,
   }]);
 });
 

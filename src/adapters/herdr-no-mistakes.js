@@ -21,7 +21,7 @@ export class HerdrNoMistakesObserver {
     this.sequence = 0;
   }
 
-  async started({ taskId, binaryPath, runtimeHome, worktreePath }) {
+  async started({ taskId, binaryPath, runtimeHome, worktreePath, expectedHeadSha }) {
     if (!this.currentPaneId) return null;
     try {
       const agent = `ShipMates no-mistakes: ${taskId}`;
@@ -66,6 +66,7 @@ export class HerdrNoMistakesObserver {
           paneId,
           source,
           agent,
+          expectedHeadSha,
         ].map(shellQuote).join(" "),
       });
       return paneId;
@@ -78,6 +79,15 @@ export class HerdrNoMistakesObserver {
 
 export function parseAxiRunId(output) {
   return /^  id:\s*"?([^"\s]+)"?\s*$/mu.exec(String(output || ""))?.[1] || null;
+}
+
+export function matchesExpectedAxiRun(output, expectedHeadSha) {
+  const text = String(output || "");
+  const runId = parseAxiRunId(text);
+  const head = /^  head:\s*"?([a-f0-9]+)"?\s*$/mu.exec(text)?.[1] || null;
+  const outcome = /^outcome:\s*([^\s]+)\s*$/mu.exec(text)?.[1] || null;
+  return Boolean(runId && head && !outcome &&
+    typeof expectedHeadSha === "string" && expectedHeadSha.startsWith(head));
 }
 
 const stageLabels = Object.freeze({

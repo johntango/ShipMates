@@ -118,6 +118,7 @@ export class NoMistakesLocalGate {
       binaryPath: this.binaryPath,
       runtimeHome,
       worktreePath: workingDirectory,
+      expectedHeadSha: expected,
     });
     const result = await this.runner(this.binaryPath, args, {
       cwd: workingDirectory,
