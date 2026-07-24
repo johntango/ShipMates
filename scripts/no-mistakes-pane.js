@@ -3,14 +3,20 @@ import { promisify } from "node:util";
 
 import {
   parseAxiRunId,
+  matchesExpectedAxiRun,
   projectNoMistakesHerdrStatus,
 } from "../src/adapters/herdr-no-mistakes.js";
 import { HerdrPaneClient } from "../src/adapters/herdr-pane.js";
 
 const execFileAsync = promisify(execFile);
-const [binaryPath, runtimeHome, worktreePath, paneId, source, agent] = process.argv.slice(2);
-if (!binaryPath || !runtimeHome || !worktreePath || !paneId || !source || !agent) {
-  throw new Error("Usage: no-mistakes-pane.js BINARY NM_HOME WORKTREE PANE SOURCE AGENT");
+const [
+  binaryPath, runtimeHome, worktreePath, paneId, source, agent, expectedHeadSha,
+] = process.argv.slice(2);
+if (!binaryPath || !runtimeHome || !worktreePath || !paneId || !source || !agent ||
+    !expectedHeadSha) {
+  throw new Error(
+    "Usage: no-mistakes-pane.js BINARY NM_HOME WORKTREE PANE SOURCE AGENT EXPECTED_HEAD",
+  );
 }
 
 const env = {
@@ -30,13 +36,16 @@ let sequence = startedAt;
 let runId = null;
 let lastProjection = null;
 async function inspectAndReport() {
-  const { stdout } = await execFileAsync(binaryPath, ["axi", "status"], {
+  const args = runId ? ["axi", "status", "--run", runId] : ["axi", "status"];
+  const { stdout } = await execFileAsync(binaryPath, args, {
     cwd: worktreePath,
     env,
     timeout: 5_000,
     maxBuffer: 1024 * 1024,
   });
-  runId ||= parseAxiRunId(stdout);
+  if (!runId && matchesExpectedAxiRun(stdout, expectedHeadSha)) {
+    runId = parseAxiRunId(stdout);
+  }
   const projection = projectNoMistakesHerdrStatus(stdout, { elapsedMs: Date.now() - startedAt });
   if (!lastProjection || projection.customStatus !== lastProjection.customStatus ||
       projection.state !== lastProjection.state) {

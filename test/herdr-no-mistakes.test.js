@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   HerdrNoMistakesObserver,
+  matchesExpectedAxiRun,
   parseAxiRunId,
   projectNoMistakesHerdrStatus,
 } from "../src/adapters/herdr-no-mistakes.js";
@@ -10,6 +11,26 @@ import {
 test("parses quoted and unquoted AXI run identifiers without retaining quotes", () => {
   assert.equal(parseAxiRunId('run:\n  id: "01KY806YY3XQSHGHMBZKCZXM62"\n'), "01KY806YY3XQSHGHMBZKCZXM62");
   assert.equal(parseAxiRunId("run:\n  id: run-local-1\n"), "run-local-1");
+});
+
+test("waits for the non-terminal AXI run matching the validated head", () => {
+  const expected = "ba1381c7a18366d203b082d2806d13f32f15887c";
+  assert.equal(matchesExpectedAxiRun(`run:
+  id: old-run
+  status: completed
+  head: ba1381c7
+outcome: passed
+`, expected), false);
+  assert.equal(matchesExpectedAxiRun(`run:
+  id: wrong-run
+  status: running
+  head: 12345678
+`, expected), false);
+  assert.equal(matchesExpectedAxiRun(`run:
+  id: current-run
+  status: running
+  head: ba1381c7
+`, expected), true);
 });
 
 test("projects live no-mistakes stages and elapsed time into Herdr states", () => {
@@ -73,6 +94,7 @@ test("opens a dedicated Herdr pane for the live no-mistakes TUI", async () => {
     binaryPath: "/opt/no-mistakes",
     runtimeHome: "/state/runtime",
     worktreePath: "/repo/worktree",
+    expectedHeadSha: "a".repeat(40),
   });
 
   assert.equal(paneId, "w1:p3");
@@ -80,7 +102,7 @@ test("opens a dedicated Herdr pane for the live no-mistakes TUI", async () => {
   assert.match(calls.find(([kind]) => kind === "agent")[1].agent, /no-mistakes: task-1/u);
   assert.deepEqual(calls.at(-1), ["run", {
     paneId: "w1:p3",
-    command: "'/usr/bin/node' '/repo/scripts/no-mistakes-pane.js' '/opt/no-mistakes' '/state/runtime' '/repo/worktree' 'w1:p3' 'shipmates:no-mistakes:task-1' 'ShipMates no-mistakes: task-1'",
+    command: "'/usr/bin/node' '/repo/scripts/no-mistakes-pane.js' '/opt/no-mistakes' '/state/runtime' '/repo/worktree' 'w1:p3' 'shipmates:no-mistakes:task-1' 'ShipMates no-mistakes: task-1' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
   }]);
 });
 
