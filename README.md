@@ -122,6 +122,7 @@ Useful commands include:
 ```text
 add project /absolute/path/to/repository
 create project ProjectName
+create TestA under DemoTest0
 list projects
 switch project ProjectName
 enable demo mode for ProjectName
@@ -135,6 +136,9 @@ and a dependency-ready plan item must be atomically claimed, before an
 Implementer can be dispatched. A successful dispatch also requires a durable
 task attachment and launch receipt. Missing launch identity is recorded as a
 blocker instead of leaving work indefinitely described as dispatched.
+
+For targeted-creation syntax and repository-selection semantics, see the
+[Firstmate shell guide](docs/firstmate-shell.md#interactive-cli).
 
 Plan tasks move through `planned`, `claimed`, `dispatched`, `blocked`, and
 `completed` states. Retries are retained as attempts under the original plan
