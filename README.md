@@ -150,13 +150,8 @@ skipping no-mistakes and all remote delivery operations. It does not alter
 other projects or grant GitHub authority.
 
 Permanent purge is a separate two-step operation for abandoned project
-repositories. The preview names every linked Project, task, and managed
-worktree and refuses protected repositories or recorded live processes. Exact
-confirmation removes those Project records, task ledgers, generated artifacts,
-conversation references, managed worktrees, and Herdr visibility without
-retaining a purge receipt. It deliberately does not delete the GitHub
-repository or the main local checkout; perform those human-owned deletions
-after ShipMates confirms the purge.
+repositories. See [Firstmate shell](docs/firstmate-shell.md#interactive-cli)
+for its confirmation, safety, and cleanup contract.
 
 External actions remain separate, exact-evidence approvals. Push, draft-PR
 creation, squash merge, and remote branch cleanup each have their own approval
