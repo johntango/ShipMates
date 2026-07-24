@@ -132,8 +132,12 @@ export class RepositoryPurgeWorkflow {
         this.remove(path.join(this.stateRoot, "project-agent-jobs", projectId),
           { recursive: true, force: true }),
       ]),
-      this.remove(path.join(this.stateRoot, "reviews", "dashboard"),
-        { recursive: true, force: true }),
+    ]);
+    await Promise.all([
+      this.remove(path.join(this.stateRoot, "firstmate-conversation", "session.json"),
+        { force: true }),
+      this.remove(path.join(this.stateRoot, "firstmate-conversation", "session.json.tmp"),
+        { force: true }),
     ]);
     await removeMatchingConversationTurns({
       directory: path.join(this.stateRoot, "firstmate-conversation"),
@@ -179,16 +183,27 @@ export async function removeRegisteredWorktree({ repoPath, worktreePath, stateRo
   if (worktree === repository || worktree === state || worktree === path.parse(worktree).root) {
     throw new RepositoryPurgeError(`Unsafe worktree purge target ${worktree}`);
   }
-  try { await access(worktree); } catch { return; }
+  let exists = true;
+  try { await access(worktree); }
+  catch (error) {
+    if (error?.code === "ENOENT") exists = false;
+    else throw error;
+  }
+  if (exists) {
+    try {
+      await execFileAsync("git", ["-C", repository, "worktree", "remove", "--force", worktree]);
+    } catch (cause) {
+      const relative = path.relative(state, worktree);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new RepositoryPurgeError(`Could not remove registered worktree ${worktree}`, { cause });
+      }
+      await rm(worktree, { recursive: true, force: true });
+    }
+  }
   try {
-    await execFileAsync("git", ["-C", repository, "worktree", "remove", "--force", worktree]);
     await execFileAsync("git", ["-C", repository, "worktree", "prune"]);
   } catch (cause) {
-    const relative = path.relative(state, worktree);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
-      throw new RepositoryPurgeError(`Could not remove registered worktree ${worktree}`, { cause });
-    }
-    await rm(worktree, { recursive: true, force: true });
+    throw new RepositoryPurgeError(`Could not prune registered worktrees for ${repository}`, { cause });
   }
 }
 
@@ -197,7 +212,7 @@ async function removeMatchingConversationTurns({ directory, needles, remove }) {
   try { entries = await readdir(directory, { withFileTypes: true }); }
   catch (error) { if (error?.code === "ENOENT") return; else throw error; }
   for (const entry of entries) {
-    if (!entry.isFile() || !/^turn-.+\.jsonl?$/u.test(entry.name)) continue;
+    if (!entry.isFile() || !/^turn-.+\.(?:jsonl?|stderr\.log)$/u.test(entry.name)) continue;
     const target = path.join(directory, entry.name);
     const value = await readFile(target, "utf8");
     if (needles.some((needle) => value.includes(needle))) {

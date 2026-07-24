@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -23,6 +23,10 @@ test("requires a fresh preview token and permanently removes generated state", a
     JSON.stringify({ project: "DemoTest3", taskId: "task-current" }));
   await writeFile(path.join(stateRoot, "firstmate-conversation", "turn-other.json"),
     JSON.stringify({ project: "KeepMe" }));
+  await writeFile(path.join(stateRoot, "firstmate-conversation", "session.json"),
+    JSON.stringify({ schemaVersion: 1, threadId: "shared-thread" }));
+  await mkdir(path.join(stateRoot, "reviews", "dashboard"), { recursive: true });
+  await writeFile(path.join(stateRoot, "reviews", "dashboard", "index.html"), "shared review");
   await writeFile(path.join(stateRoot, "active-project.json"),
     JSON.stringify({ taskId: "task-current" }));
   const removedWorktrees = [];
@@ -60,6 +64,10 @@ test("requires a fresh preview token and permanently removes generated state", a
   await assert.rejects(() => readFile(path.join(stateRoot, "firstmate-conversation", "turn-demo.json")),
     { code: "ENOENT" });
   assert.match(await readFile(path.join(stateRoot, "firstmate-conversation", "turn-other.json"), "utf8"), /KeepMe/u);
+  await assert.rejects(() => access(path.join(stateRoot, "firstmate-conversation", "session.json")),
+    { code: "ENOENT" });
+  assert.equal(await readFile(path.join(stateRoot, "reviews", "dashboard", "index.html"), "utf8"),
+    "shared review");
   await assert.rejects(() => readFile(path.join(stateRoot, "active-project.json")), { code: "ENOENT" });
 });
 

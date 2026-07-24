@@ -1,19 +1,17 @@
 const finalSequence = 2_147_483_647;
 
 export class HerdrRepositoryPurgeObserver {
-  constructor({ client, onWarning = console.error } = {}) {
+  constructor({ client } = {}) {
     if (!client) throw new TypeError("Herdr repository purge observer requires a client");
+    if (typeof client.list !== "function" || typeof client.reportMetadata !== "function" ||
+      typeof client.releaseAgent !== "function") {
+      throw new TypeError("Herdr repository purge observer requires visibility cleanup operations");
+    }
     this.client = client;
-    this.onWarning = onWarning;
   }
 
   async release(preview) {
-    let panes;
-    try { panes = await this.client.list(); }
-    catch (error) {
-      this.onWarning?.(`Herdr purge cleanup unavailable (${error.name || "Error"})`);
-      return;
-    }
+    const panes = await this.client.list();
     const releases = [];
     for (const project of preview.projects) {
       releases.push({
@@ -35,7 +33,7 @@ export class HerdrRepositoryPurgeObserver {
     }
     for (const release of releases) {
       for (const pane of panes.filter(({ agent }) => agent === release.agent)) {
-        await this.client.reportMetadata?.({
+        await this.client.reportMetadata({
           paneId: pane.paneId,
           source: release.source,
           appliesToSource: "herdr:codex",
@@ -43,12 +41,12 @@ export class HerdrRepositoryPurgeObserver {
           clearCustomStatus: true,
           clearStateLabels: true,
           seq: finalSequence,
-        }).catch(() => {});
+        });
         await this.client.releaseAgent({
           paneId: pane.paneId,
           ...release,
           seq: finalSequence,
-        }).catch(() => {});
+        });
       }
     }
   }
