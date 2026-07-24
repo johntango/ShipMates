@@ -71,8 +71,9 @@ same run with its current stage (`reviewing`, `testing`, `linting`, and so on),
 elapsed time, attention-needed state, and terminal `passed` or `failed` result;
 select the task to open the detailed pane. The pane waits for a non-terminal
 run at the exact validation commit and then polls that run by ID, so an older
-run in the same worktree cannot be displayed instead. Herdr visibility is best-effort: an
-unavailable Herdr session does not weaken or prevent the authoritative workflow.
+run in the same worktree cannot be displayed instead. Herdr visibility is
+best-effort: an unavailable Herdr session does not weaken or prevent the
+authoritative workflow.
 
 Run the dashboard without the command channel when only a read-only view is
 needed:
