@@ -14,25 +14,33 @@ export class DurableSupervisor {
     this.clients = new Set();
     this.started = false;
     this.activeRun = null;
+    this.startPromise = null;
+    this.lifecycleRevision = 0;
   }
 
   async start() {
     if (this.started) return this.snapshot();
-    this.started = true;
-    try {
-      await this.runOnce("startup");
+    if (this.startPromise) return this.startPromise;
+    const revision = ++this.lifecycleRevision;
+    const start = (async () => {
+      const result = await this.runOnce("startup");
+      if (revision !== this.lifecycleRevision) return result.snapshot;
       this.scheduler.start();
-      return this.snapshot();
-    } catch (error) {
-      this.started = false;
-      throw error;
-    }
+      this.started = true;
+      return result.snapshot;
+    })();
+    this.startPromise = start;
+    try { return await start; }
+    finally { if (this.startPromise === start) this.startPromise = null; }
   }
 
   async stop() {
+    this.lifecycleRevision += 1;
     this.started = false;
     await this.scheduler.cancel();
-    await this.activeRun;
+    await Promise.allSettled([this.startPromise]);
+    await this.scheduler.cancel();
+    await Promise.allSettled([this.activeRun]);
     this.clients.clear();
   }
 
@@ -49,7 +57,7 @@ export class DurableSupervisor {
       throw new TypeError("Supervisor clients require send(snapshot)");
     }
     this.clients.add(client);
-    await client.send(await this.snapshot());
+    await Promise.allSettled([this.snapshot().then((snapshot) => client.send(snapshot))]);
     return () => this.clients.delete(client);
   }
 
@@ -60,7 +68,8 @@ export class DurableSupervisor {
     const decisions = await this.reconcile({ trigger, observations });
     const advancement = await this.advance({ trigger, observations, decisions });
     const snapshot = await this.project({ trigger, observations, decisions, advancement });
-    await Promise.allSettled([...this.clients].map((client) => client.send(snapshot)));
+    await Promise.allSettled([...this.clients].map((client) =>
+      Promise.resolve().then(() => client.send(snapshot))));
     return { trigger, observations, decisions, advancement, snapshot };
   }
 }

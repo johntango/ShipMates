@@ -61,6 +61,31 @@ test("creates a scheduler callback that never owns conversational state", async 
   assert.deepEqual(triggers, ["scheduled"]);
 });
 
+test("does not restart scheduling when stop races startup", async () => {
+  let release;
+  const calls = [];
+  const supervisor = new DurableSupervisor({
+    observe: () => new Promise((resolve) => { release = resolve; }),
+    reconcile: async () => [], advance: async () => [], project: async () => ({}),
+    scheduler: schedulerFixture(calls),
+  });
+  const starting = supervisor.start();
+  const stopping = supervisor.stop();
+  release([]);
+  await Promise.all([starting, stopping]);
+  assert.equal(calls.includes("scheduler:start"), false);
+  assert.equal(calls.filter((call) => call === "scheduler:cancel").length, 2);
+});
+
+test("contains initial projection client failures", async () => {
+  const supervisor = new DurableSupervisor({
+    observe: async () => [], reconcile: async () => [], advance: async () => [],
+    project: async () => ({}), scheduler: schedulerFixture([]),
+  });
+  const disconnect = await supervisor.connect({ send: async () => { throw new Error("offline"); } });
+  disconnect();
+});
+
 function schedulerFixture(calls) {
   return {
     start() { calls.push("scheduler:start"); },

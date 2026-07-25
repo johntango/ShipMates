@@ -120,6 +120,16 @@ export class HerdrFirstmateSession {
     }
   }
 
+  async send(snapshot) {
+    if (!this.started) return;
+    const alerts = snapshot?.watchdog?.alerts?.length || 0;
+    await this.#report({
+      state: this.activeOperations > 0 ? "working" : "idle",
+      message: alerts > 0 ? `${alerts} lifecycle alert${alerts === 1 ? "" : "s"}` : "FirstMate is listening",
+      status: alerts > 0 ? "attention" : "listening",
+    });
+  }
+
   async #report({ state, message, status }) {
     await this.client.reportAgent({
       paneId: this.paneId,
