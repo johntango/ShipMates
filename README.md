@@ -35,6 +35,8 @@ Controlled commit creation and pinned exact-head validation are documented in
 the [commit and validation guide](docs/controlled-commit-validation.md).
 The current dispatch, reconciliation, progress, and backend boundaries are
 documented in the [Firstmate orchestration guide](docs/firstmate-orchestration.md).
+Read-only cross-system health inspection is documented in the
+[ShipMates doctor guide](docs/system-doctor.md).
 
 ## Using ShipMates
 
@@ -80,6 +82,15 @@ needed:
 
 ```sh
 npm run dashboard
+```
+
+Inspect the Project registry, task ledgers, processes, worktrees, Git heads,
+validation records, and registered destination repositories without changing
+any of them:
+
+```sh
+npm run doctor
+npm run doctor -- --project ProjectName --task TASK_ID --json
 ```
 
 ShipMates stores its registry, task ledger, progress evidence, worker artifacts,
