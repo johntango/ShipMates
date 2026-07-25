@@ -15,6 +15,10 @@ export const TERMINATION_PHASES = Object.freeze([
   "before_intent", "after_intent", "before_action", "after_action",
   "before_receipt", "after_receipt",
 ]);
+export const LIFECYCLE_ACTIONS = Object.freeze([
+  "dispatch.clone", "report.artifact", "commit.git", "validate.artifact",
+  "approve_validation.artifact", "deliver.fetch", "deliver.merge",
+]);
 
 export class InjectedLifecycleTermination extends Error {
   constructor(point) { super(`Injected lifecycle termination at ${point}`); this.point = point; }
@@ -56,13 +60,14 @@ export class LifecycleFailureHarness {
       snapshot,
       destinationHead: destinationHead.trim(),
       sourceHead: sourceHead.trim(),
+      validatedHead: (await this.#artifactObservation("validation.json")).evidence?.headSha || null,
       counts: {
         attempts: project?.tasks[0]?.attempts.length || 0,
-        workerArtifacts: await this.#artifactCount("worker-report.json"),
-        commits: Number((await this.#git(this.sourceRepo, ["rev-list", "--count", "HEAD"])).trim()) - 1,
-        validationRuns: await this.#artifactCount("validation.json"),
-        approvals: await this.#artifactCount("approval.json"),
-        deliveries: destinationHead.trim() === sourceHead.trim() ? 1 : 0,
+        workerArtifacts: this.#attemptCount(journal, "report.artifact"),
+        commits: this.#attemptCount(journal, "commit.git"),
+        validationRuns: this.#attemptCount(journal, "validate.artifact"),
+        approvals: this.#attemptCount(journal, "approve_validation.artifact"),
+        deliveries: this.#attemptCount(journal, "deliver.merge"),
       },
     };
   }
@@ -91,6 +96,39 @@ export class LifecycleFailureHarness {
     this.#terminate(name, "after_receipt");
   }
 
+  async #action(operation, action, observe, act) {
+    const name = `${operation}.${action}`;
+    let journal = await this.#journal();
+    journal.actions ||= {};
+    if (journal.actions[name]?.receipt) return;
+    const existing = await observe();
+    if (existing.completed) {
+      journal.actions[name] ||= { intent: { id: `${name}:v1` }, attempts: [] };
+      journal.actions[name].receipt = { evidence: existing.evidence };
+      await this.#writeJournal(journal);
+      return;
+    }
+    if (!journal.actions[name]?.intent) {
+      this.#terminate(name, "before_intent");
+      journal.actions[name] = { intent: { id: `${name}:v1` }, attempts: [] };
+      await this.#writeJournal(journal);
+      this.#terminate(name, "after_intent");
+    }
+    this.#terminate(name, "before_action");
+    journal = await this.#journal();
+    journal.actions[name].attempts.push({ id: `${name}:${journal.actions[name].attempts.length + 1}` });
+    await this.#writeJournal(journal);
+    await act();
+    this.#terminate(name, "after_action");
+    const observation = await observe();
+    if (!observation.completed) throw new Error(`${name} action is not independently observable`);
+    this.#terminate(name, "before_receipt");
+    journal = await this.#journal();
+    journal.actions[name].receipt = { evidence: observation.evidence };
+    await this.#writeJournal(journal);
+    this.#terminate(name, "after_receipt");
+  }
+
   async #observe(name) {
     const projects = await this.projectStore.list({ includeArchived: true });
     const project = projects.find(({ name }) => name === "Harness Project");
@@ -107,15 +145,15 @@ export class LifecycleFailureHarness {
     if (name === "commit") {
       const head = await this.#git(this.sourceRepo, ["rev-parse", "HEAD"]);
       const count = Number((await this.#git(this.sourceRepo, ["rev-list", "--count", "HEAD"])).trim());
-      return observed(count === 2, { headSha: head.trim() });
+      const snapshot = await this.#snapshot();
+      return observed(count === 2 && snapshot?.state === "validating", { headSha: head.trim() });
     }
     if (name === "validate") return this.#artifactObservation("validation.json");
     if (name === "approve_validation") return this.#artifactObservation("approval.json");
     if (name === "deliver") {
-      const [destination, source] = await Promise.all([
-        this.#git(this.destinationRepo, ["rev-parse", "HEAD"]), this.#git(this.sourceRepo, ["rev-parse", "HEAD"]),
-      ]);
-      return observed(destination.trim() === source.trim(), { headSha: destination.trim() });
+      const destination = (await this.#git(this.destinationRepo, ["rev-parse", "HEAD"])).trim();
+      const validation = await this.#artifactObservation("validation.json");
+      return observed(destination === validation.evidence?.headSha, { headSha: destination });
     }
     if (name === "complete") {
       const snapshot = await this.#snapshot();
@@ -138,7 +176,9 @@ export class LifecycleFailureHarness {
     } else if (name === "approve_plan") {
       await this.projectStore.approve(project.id);
     } else if (name === "dispatch") {
-      await this.run("git", ["clone", "--quiet", this.destinationRepo, this.sourceRepo]);
+      await this.#action(name, "clone",
+        async () => observed(await exists(this.sourceRepo), { sourceRepo: this.sourceRepo }),
+        () => this.run("git", ["clone", "--quiet", this.destinationRepo, this.sourceRepo]));
       await this.#git(this.sourceRepo, ["config", "user.name", "ShipMates Harness"]);
       await this.#git(this.sourceRepo, ["config", "user.email", "harness@shipmates.local"]);
       await this.projectStore.claimReadyTask({ projectId: project.id, planTaskId: this.planTaskId });
@@ -147,26 +187,43 @@ export class LifecycleFailureHarness {
       await this.#transitionPath(["clarified", "approved_for_dispatch", "preparing", "running"]);
     } else if (name === "report") {
       await writeFile(path.join(this.sourceRepo, "work.txt"), "durable lifecycle work\n");
-      await this.#writeArtifact("worker-report.json", { taskId: this.taskId, files: ["work.txt"], status: "completed" });
+      await this.#action(name, "artifact", () => this.#artifactObservation("worker-report.json"),
+        () => this.#writeArtifact("worker-report.json", { taskId: this.taskId, files: ["work.txt"], status: "completed" }));
       await this.taskStore.recordEvidence({ taskId: this.taskId, actor: "harness", kind: "worker-report", value: "worker-report.json", eventId: "harness:report" });
     } else if (name === "commit") {
       await this.#git(this.sourceRepo, ["add", "work.txt"]);
-      await this.#git(this.sourceRepo, ["commit", "--quiet", "-m", "Harness lifecycle commit"]);
+      await this.#action(name, "git", async () => {
+        const count = Number((await this.#git(this.sourceRepo, ["rev-list", "--count", "HEAD"])).trim());
+        return observed(count === 2, { count });
+      }, () => this.#git(this.sourceRepo, ["commit", "--quiet", "-m", "Harness lifecycle commit"]));
       const head = (await this.#git(this.sourceRepo, ["rev-parse", "HEAD"])).trim();
       await this.taskStore.recordEvidence({ taskId: this.taskId, actor: "harness", kind: "git-commit", value: head, eventId: "harness:commit" });
       await this.#transitionPath(["validating"]);
     } else if (name === "validate") {
       const head = (await this.#git(this.sourceRepo, ["rev-parse", "HEAD"])).trim();
-      await this.#writeArtifact("validation.json", { taskId: this.taskId, headSha: head, passed: true });
+      await this.#action(name, "artifact", () => this.#artifactObservation("validation.json"),
+        () => this.#writeArtifact("validation.json", { taskId: this.taskId, headSha: head, passed: true }));
       await this.taskStore.recordEvidence({ taskId: this.taskId, actor: "harness", kind: "validation", value: head, eventId: "harness:validation" });
     } else if (name === "approve_validation") {
-      const head = (await this.#git(this.sourceRepo, ["rev-parse", "HEAD"])).trim();
-      await this.#writeArtifact("approval.json", { taskId: this.taskId, headSha: head, decision: "approved" });
+      const validation = (await this.#artifactObservation("validation.json")).evidence;
+      const head = validation.headSha;
+      await this.#action(name, "artifact", () => this.#artifactObservation("approval.json"),
+        () => this.#writeArtifact("approval.json", { taskId: this.taskId, headSha: head, decision: "approved" }));
       await this.taskStore.recordEvidence({ taskId: this.taskId, actor: "human", kind: "validation-approval", value: head, eventId: "harness:approval" });
     } else if (name === "deliver") {
-      const head = (await this.#git(this.sourceRepo, ["rev-parse", "HEAD"])).trim();
-      await this.#git(this.destinationRepo, ["fetch", "--quiet", this.sourceRepo, head]);
-      await this.#git(this.destinationRepo, ["merge", "--ff-only", head]);
+      const head = (await this.#artifactObservation("validation.json")).evidence.headSha;
+      await this.#action(name, "fetch", async () => {
+        try {
+          const fetched = (await this.#git(this.destinationRepo, ["rev-parse", "FETCH_HEAD"])).trim();
+          return observed(fetched === head, { headSha: fetched });
+        } catch {
+          return observed(false, null);
+        }
+      }, () => this.#git(this.destinationRepo, ["fetch", "--quiet", this.sourceRepo, head]));
+      await this.#action(name, "merge", async () => {
+        const destination = (await this.#git(this.destinationRepo, ["rev-parse", "HEAD"])).trim();
+        return observed(destination === head, { headSha: destination });
+      }, () => this.#git(this.destinationRepo, ["merge", "--ff-only", head]));
       await this.taskStore.recordEvidence({ taskId: this.taskId, actor: "harness", kind: "local-delivery", value: head, eventId: "harness:delivery" });
     } else if (name === "complete") {
       await this.#transitionPath(["cleaning", "complete"]);
@@ -188,6 +245,7 @@ export class LifecycleFailureHarness {
     catch (error) { if (error.code === "ENOENT") return observed(false, null); throw error; }
   }
   async #artifactCount(name) { return (await this.#artifactObservation(name)).completed ? 1 : 0; }
+  #attemptCount(journal, name) { return journal.actions?.[name]?.attempts?.length || 0; }
   async #writeArtifact(name, value) { await mkdir(this.artifactRoot, { recursive: true }); await writeFile(path.join(this.artifactRoot, name), `${JSON.stringify(value)}\n`); }
   async #journal() {
     try { return JSON.parse(await readFile(this.journalPath, "utf8")); }

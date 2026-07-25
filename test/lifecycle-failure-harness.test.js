@@ -8,7 +8,7 @@ import test from "node:test";
 
 import {
   InjectedLifecycleTermination, LifecycleFailureHarness,
-  LIFECYCLE_OPERATIONS, TERMINATION_PHASES,
+  LIFECYCLE_ACTIONS, LIFECYCLE_OPERATIONS, TERMINATION_PHASES,
 } from "../src/testing/lifecycle-failure-harness.js";
 
 const run = promisify(execFile);
@@ -20,7 +20,7 @@ test("completes the disposable lifecycle exactly once", async (t) => {
 });
 
 test("restarts safely at every durable intent and external action boundary", async (t) => {
-  for (const operation of LIFECYCLE_OPERATIONS) {
+  for (const operation of [...LIFECYCLE_OPERATIONS, ...LIFECYCLE_ACTIONS]) {
     for (const phase of TERMINATION_PHASES) {
       await t.test(`${operation}:${phase}`, async (child) => {
         const fixture = await createFixture(child);
@@ -39,7 +39,8 @@ test("restarts safely at every durable intent and external action boundary", asy
 
 function assertCompletion(result) {
   assert.equal(result.completed, true);
-  assert.equal(result.destinationHead, result.sourceHead);
+  assert.equal(result.destinationHead, result.validatedHead);
+  assert.equal(result.sourceHead, result.validatedHead);
   assert.deepEqual(result.counts, {
     attempts: 1, workerArtifacts: 1, commits: 1, validationRuns: 1, approvals: 1, deliveries: 1,
   });
