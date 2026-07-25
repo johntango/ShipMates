@@ -244,7 +244,6 @@ export class LifecycleFailureHarness {
     try { return observed(true, JSON.parse(await readFile(path.join(this.artifactRoot, name), "utf8"))); }
     catch (error) { if (error.code === "ENOENT") return observed(false, null); throw error; }
   }
-  async #artifactCount(name) { return (await this.#artifactObservation(name)).completed ? 1 : 0; }
   #attemptCount(journal, name) { return journal.actions?.[name]?.attempts?.length || 0; }
   async #writeArtifact(name, value) { await mkdir(this.artifactRoot, { recursive: true }); await writeFile(path.join(this.artifactRoot, name), `${JSON.stringify(value)}\n`); }
   async #journal() {
