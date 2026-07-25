@@ -159,15 +159,21 @@ test("replays pre-request local validation without weakening exact-head safety",
   wrongHead.finalHeadSha = "b".repeat(40);
   assert.throws(
     () => replayTaskEvents(validationLifecycleEvents(wrongHead)),
-    /exact active leased head/u,
+    /exact leased head or pre-lease base/u,
   );
 
   const wrongState = validationLifecycleEvents(report);
   wrongState.splice(7, 1);
   assert.throws(
     () => replayTaskEvents(wrongState),
-    /exact active leased head/u,
+    /exact leased head or pre-lease base/u,
   );
+
+  const preLease = localValidationReport();
+  delete preLease.intentSha256;
+  const baseOnly = validationLifecycleEvents(preLease).slice(0, 1);
+  baseOnly.push(event("pre-lease-validation", "validation.local.recorded", { report: preLease }));
+  assert.equal(replayTaskEvents(baseOnly).validationRuns[0].passed, true);
 });
 
 test("accepts fast local validation while keeping every remote step disabled", () => {
