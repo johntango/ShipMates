@@ -5,7 +5,7 @@ export const FIRSTMATE_COMMANDS = Object.freeze([
 ]);
 
 const schemas = Object.freeze({
-  "project.create": required("name", "repoPath"),
+  "project.create": required("name", "repo", "repoPath", "baseSha"),
   "project.approve": required("projectId"),
   "project.advance": required("projectId"),
   "task.inspect": required("taskId"),

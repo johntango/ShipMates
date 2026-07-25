@@ -36,6 +36,16 @@ test("validates stable inputs before invoking a deterministic handler", async ()
     (error) => error instanceof ControlPlaneRefusal && error.invariant === "required_command_input");
 });
 
+test("project creation requires authoritative repository identity", async () => {
+  const plane = new FirstmateControlPlane({ handlers: {
+    "project.create": async (input) => input,
+  } });
+  await assert.rejects(() => plane.execute({
+    type: "project.create", input: { name: "one", repoPath: "/repo" },
+  }), (error) => error.invariant === "required_command_input" &&
+    error.reason.includes("repo") && error.reason.includes("baseSha"));
+});
+
 test("refusals name the invariant and next action", async () => {
   const plane = new FirstmateControlPlane({ handlers: {
     "project.approve": async () => {
