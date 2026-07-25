@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import express from "express";
+import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
 
 export class ShipMatesDashboardServer {
   constructor({
@@ -157,12 +158,15 @@ export class ShipMatesDashboardServer {
 
 export async function buildDashboardState({
   store, projectContext, projectStore = null, watchdog = null,
+  reconciliationEngine = new ReconciliationEngine(),
 }) {
   const activeProjectTaskId = await projectContext.load();
   const tasks = [];
   for (const taskId of await store.listTaskIds()) {
     try {
-      tasks.push(projectTask(await store.getSnapshot(taskId), activeProjectTaskId));
+      tasks.push(projectTask(
+        await store.getSnapshot(taskId), activeProjectTaskId, reconciliationEngine,
+      ));
     } catch {
       // A damaged historical task must not make the operator surface unavailable.
     }
@@ -227,7 +231,7 @@ function projectProjection(project, taskById) {
   };
 }
 
-function projectTask(snapshot, activeProjectTaskId) {
+function projectTask(snapshot, activeProjectTaskId, reconciliationEngine) {
   const classification = snapshot.firstmateRuns?.at(-1)?.classification || null;
   const implementer = snapshot.workers?.find(({ id }) => id === "implementer") || null;
   const validation = snapshot.validationRuns?.at(-1) || null;
@@ -245,6 +249,7 @@ function projectTask(snapshot, activeProjectTaskId) {
     authority: classification?.requiredAuthority || "unknown",
     updatedAt: snapshot.lastEventAt,
     workspacePath: snapshot.worktree?.worktreePath || null,
+    reconciliation: reconciliationEngine.plan({ snapshot, source: "dashboard" }),
     workers: (snapshot.workers || []).map((worker) => ({
       id: worker.id,
       status: worker.status,

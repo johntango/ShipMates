@@ -27,6 +27,7 @@ test("projects recent tasks and the active project without report prose leakage"
   assert.deepEqual(state.tasks[0].workers, [{
     id: "implementer", status: "reported", mode: "ship",
   }]);
+  assert.equal(state.tasks[0].reconciliation.evidence.source, "dashboard");
   assert.deepEqual(state.tasks[0].taskProgress.map(({ sequence }) => sequence), [0, 1]);
 });
 
