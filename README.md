@@ -37,6 +37,8 @@ The current dispatch, reconciliation, progress, and backend boundaries are
 documented in the [Firstmate orchestration guide](docs/firstmate-orchestration.md).
 Read-only cross-system health inspection is documented in the
 [ShipMates doctor guide](docs/system-doctor.md).
+Authoritative state ownership, persisted fields, migrations, and invariants are
+specified in the [state ownership contract](docs/state-ownership.md).
 
 ## Using ShipMates
 
@@ -91,6 +93,7 @@ any of them:
 ```sh
 npm run doctor
 npm run doctor -- --project ProjectName --task TASK_ID --json
+npm run invariants -- --json
 ```
 
 ShipMates stores its registry, task ledger, progress evidence, worker artifacts,
