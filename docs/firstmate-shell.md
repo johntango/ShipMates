@@ -151,7 +151,10 @@ current-attempt record, and a reason for every blocked task.
 
 While Firstmate is running, the same safe reconciliation executes every 15
 seconds by default (`SHIPMATES_MONITOR_SECONDS` may adjust it, with a five-second
-minimum). A successful child exit immediately advances the next dependency-ready
+minimum; invalid, non-finite, zero, and negative values use the 15-second
+default). Audits are serialized: the next interval begins only after the prior
+audit finishes, and the scheduler is stopped whenever Firstmate shuts down.
+A successful child exit immediately advances the next dependency-ready
 task. The periodic monitor also reconciles durable completion evidence and
 advances ready local-only demo work without waiting for a restart. It does not
 waive failed tests, grant permissions, repeat uncertain external operations, or
