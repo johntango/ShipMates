@@ -1,20 +1,52 @@
-import { resolveFirstmateControlIntent } from "../cli/firstmate-control-intent.js";
+import {
+  ControlPlaneRefusal,
+  FirstmateControlPlane,
+  selectFirstmateCommand,
+} from "../control/firstmate-control-plane.js";
 import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
-import { acceptFirstmateDemoWarning } from "./firstmate-demo-recovery.js";
 import { completeFirstmateDemoTask } from "./firstmate-demo-completion.js";
 import { classifyTaskRecovery } from "./task-recovery.js";
 
 export class ProjectOrchestrator {
-  constructor({ taskStore, projectStore, reconciliationEngine = new ReconciliationEngine() } = {}) {
+  constructor({
+    taskStore,
+    projectStore,
+    reconciliationEngine = new ReconciliationEngine(),
+    advanceProject,
+    validationWorkflow,
+    deliveryWorkflow,
+    archiveWorkflow,
+    purgeWorkflow,
+  } = {}) {
     if (!taskStore || !projectStore) throw new TypeError("ProjectOrchestrator requires task and project stores");
     this.taskStore = taskStore;
     this.projectStore = projectStore;
     this.reconciliationEngine = reconciliationEngine;
+    this.controlPlane = new FirstmateControlPlane({ handlers: {
+      "task.inspect": ({ taskId }) => this.inspectTask(taskId),
+      "task.reconcile": ({ taskId }) => this.reconcileTask(taskId),
+      "project.create": (input) => this.projectStore.create(input),
+      "project.approve": ({ projectId }) => this.projectStore.approve(projectId),
+      "project.advance": ({ projectId }) =>
+        invokeWorkflow("project.advance", advanceProject, { projectId }),
+      "validation.approve": (input) =>
+        invokeWorkflow("validation.approve", validationWorkflow?.approve?.bind(validationWorkflow), input),
+      "delivery.retry": (input) =>
+        invokeWorkflow("delivery.retry", deliveryWorkflow?.retry?.bind(deliveryWorkflow), input),
+      "project.archive": ({ projectId }) =>
+        invokeWorkflow("project.archive", archiveWorkflow?.archive?.bind(archiveWorkflow), { projectId }),
+      "repository.purge": ({ projectId, approvalId }) =>
+        invokeWorkflow("repository.purge", purgeWorkflow?.purge?.bind(purgeWorkflow), {
+          query: projectId, confirmationId: approvalId,
+        }),
+    } });
   }
 
-  async resolveControl(message) {
-    return resolveFirstmateControlIntent({ message, projectStore: this.projectStore });
-  }
+  async resolveControl(message) { return this.selectCommand(message); }
+
+  selectCommand(message) { return selectFirstmateCommand(message); }
+
+  async executeCommand(command) { return this.controlPlane.execute(command); }
 
   async inspectTask(taskId) {
     const [context, snapshot] = await Promise.all([
@@ -30,15 +62,7 @@ export class ProjectOrchestrator {
     };
   }
 
-  async applyControl(intent) {
-    if (!intent || typeof intent.taskId !== "string") throw new TypeError("Control intent requires a task id");
-    if (intent.action === "accept_demo_warning") {
-      return acceptFirstmateDemoWarning({
-        store: this.taskStore, projectStore: this.projectStore, taskId: intent.taskId,
-      });
-    }
-    return this.inspectTask(intent.taskId);
-  }
+  async applyControl(command) { return this.executeCommand(command); }
 
   async attachAttempt(input) {
     return this.projectStore.attachTask(input);
@@ -156,4 +180,14 @@ export class ProjectOrchestrator {
       reason: task.blockingReason || `Project registry already reflects task ${taskId}`,
     };
   }
+}
+
+function invokeWorkflow(command, handler, input) {
+  if (typeof handler === "function") return handler(input);
+  throw new ControlPlaneRefusal({
+    command,
+    invariant: "governed_workflow_configured",
+    reason: `No governed workflow is configured for ${command}`,
+    nextAction: "configure the authoritative workflow before retrying the typed command",
+  });
 }

@@ -18,6 +18,89 @@ test("inspects the existing attempt and returns a deterministic recovery action"
   assert.equal(result.context.projectName, "TestA");
 });
 
+test("executes task inspection only through a typed control-plane command", async () => {
+  const orchestrator = new ProjectOrchestrator({
+    taskStore: { async getSnapshot() { return {
+      id: "task-one", state: "complete", workers: [], validationRuns: [], validationRequests: [],
+    }; } },
+    projectStore: {
+      async describeAttempt() { return { attempt: { taskId: "task-one", status: "completed" } }; },
+    },
+  });
+  assert.deepEqual(orchestrator.selectCommand("inspect task-one"), {
+    type: "task.inspect", input: { taskId: "task-one" },
+  });
+  const inspected = await orchestrator.executeCommand({
+    type: "task.inspect", input: { taskId: "task-one" },
+  });
+  assert.equal(inspected.reconciliation.decision, "no_action");
+});
+
+test("routes every lifecycle command through its governed typed handler", async () => {
+  const calls = [];
+  const projectStore = {
+    async create(input) { calls.push(["create", input]); return input; },
+    async approve(projectId) { calls.push(["approve", projectId]); return { id: projectId }; },
+  };
+  const workflow = (name, method) => ({ [method]: async (input) => {
+    calls.push([name, input]);
+    return input;
+  } });
+  const orchestrator = new ProjectOrchestrator({
+    taskStore: {},
+    projectStore,
+    advanceProject: async (input) => { calls.push(["advance", input]); return input; },
+    validationWorkflow: workflow("validation", "approve"),
+    deliveryWorkflow: workflow("delivery", "retry"),
+    archiveWorkflow: workflow("archive", "archive"),
+    purgeWorkflow: workflow("purge", "purge"),
+  });
+  await orchestrator.executeCommand({ type: "project.create", input: {
+    name: "one", repo: "owner/repo", repoPath: "/repo", baseSha: "abc123",
+  } });
+  await orchestrator.executeCommand({
+    type: "project.approve", input: { projectId: "project-one" },
+  });
+  await orchestrator.executeCommand({
+    type: "project.advance", input: { projectId: "project-one" },
+  });
+  await orchestrator.executeCommand({
+    type: "validation.approve", input: { taskId: "task-one", approvalId: "approval-one" },
+  });
+  await orchestrator.executeCommand({
+    type: "delivery.retry", input: { taskId: "task-one", operationId: "operation-one" },
+  });
+  await orchestrator.executeCommand({
+    type: "project.archive", input: { projectId: "project-one" },
+  });
+  await orchestrator.executeCommand({
+    type: "repository.purge", input: {
+      projectId: "project-one", approvalId: "0123456789abcdef",
+    },
+  });
+  assert.deepEqual(calls.map(([name]) => name), [
+    "create", "approve", "advance", "validation", "delivery", "archive", "purge",
+  ]);
+});
+
+test("legacy prose cannot resolve or apply a lifecycle transition", async () => {
+  let transitioned = false;
+  const orchestrator = new ProjectOrchestrator({
+    taskStore: {},
+    projectStore: {
+      async describeTask() { return { projectId: "project-one" }; },
+      async approve() { transitioned = true; },
+    },
+  });
+  assert.equal(await orchestrator.resolveControl(
+    "approve warning and finish task-one",
+  ), null);
+  await assert.rejects(() => orchestrator.applyControl({
+    action: "accept_demo_warning", taskId: "task-one",
+  }), (error) => error.invariant === "known_command");
+  assert.equal(transitioned, false);
+});
+
 test("startup reconciliation records an exact blocker without creating an attempt", async () => {
   const updates = [];
   const project = { id: "project-one", demoMode: true, tasks: [{
