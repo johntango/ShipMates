@@ -1279,15 +1279,17 @@ async function runInteractiveFirstmate() {
     onProjectAction: handleProjectAction,
     port: Number(process.env.SHIPMATES_DASHBOARD_PORT || 4390),
   });
-  let cleanupStarted = false;
+  let cleanupPromise = null;
   let watchdogScheduler = null;
-  const cleanupInteractiveFirstmate = async () => {
-    if (cleanupStarted) return;
-    cleanupStarted = true;
-    watchdogScheduler?.cancel();
-    terminal.close();
-    await dashboardServer.stop();
-    await firstmateHerdrSession.stop();
+  const cleanupInteractiveFirstmate = () => {
+    if (cleanupPromise) return cleanupPromise;
+    cleanupPromise = (async () => {
+      await watchdogScheduler?.cancel();
+      terminal.close();
+      await dashboardServer.stop();
+      await firstmateHerdrSession.stop();
+    })();
+    return cleanupPromise;
   };
   const handleTerminationSignal = (signal) => {
     void cleanupInteractiveFirstmate()

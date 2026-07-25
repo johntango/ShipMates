@@ -87,7 +87,7 @@ test("runs slow audits serially and schedules only after completion", async () =
   scheduler.cancel();
 });
 
-test("cancels pending and in-flight scheduling during shutdown", async () => {
+test("cancels pending scheduling during shutdown", async () => {
   const timers = new Map();
   let timerId = 0;
   let release;
@@ -100,17 +100,34 @@ test("cancels pending and in-flight scheduling during shutdown", async () => {
   });
 
   scheduler.start();
-  scheduler.cancel();
+  await scheduler.cancel();
   assert.equal(timers.size, 0);
+});
+
+test("waits for an in-flight task while cancelling scheduling", async () => {
+  const timers = new Map();
+  let timerId = 0;
+  let release;
+  const scheduler = new SerializedScheduler({
+    intervalMs: 10,
+    setTimer: (callback) => { timers.set(++timerId, callback); return timerId; },
+    clearTimer: (id) => timers.delete(id),
+    task: () => new Promise((resolve) => { release = resolve; }),
+    onError: async () => {},
+  });
 
   scheduler.start();
   const callback = timers.values().next().value;
   timers.clear();
   callback();
   await Promise.resolve();
-  scheduler.cancel();
+  let cancelled = false;
+  const cancellation = scheduler.cancel().then(() => { cancelled = true; });
+  await Promise.resolve();
+  assert.equal(cancelled, false);
   release();
-  await new Promise((resolve) => setImmediate(resolve));
+  await cancellation;
+  assert.equal(cancelled, true);
   assert.equal(timers.size, 0);
 });
 
@@ -137,7 +154,7 @@ test("cancels the scheduler after an abnormal interactive-loop exit", async () =
   const events = [];
   const scheduler = {
     start: () => events.push("started"),
-    cancel: () => events.push("cancelled"),
+    cancel: async () => events.push("cancelled"),
   };
 
   await assert.rejects(runWithScheduler({
@@ -152,7 +169,7 @@ test("cancels the scheduler when startup itself exits abnormally", async () => {
   const events = [];
   const scheduler = {
     start: () => events.push("started"),
-    cancel: () => events.push("cancelled"),
+    cancel: async () => events.push("cancelled"),
   };
 
   await assert.rejects(runWithScheduler({
@@ -161,4 +178,24 @@ test("cancels the scheduler when startup itself exits abnormally", async () => {
     run: async () => {},
   }), /startup failed/u);
   assert.deepEqual(events, ["cancelled"]);
+});
+
+test("awaits cancellation before completing an abnormal exit", async () => {
+  let releaseCancellation;
+  const cancellation = new Promise((resolve) => { releaseCancellation = resolve; });
+  let completed = false;
+  const result = runWithScheduler({
+    startupTask: async () => {},
+    scheduler: {
+      start: () => {},
+      cancel: () => cancellation,
+    },
+    run: async () => { throw new Error("terminal failed"); },
+  }).finally(() => { completed = true; });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(completed, false);
+  releaseCancellation();
+  await assert.rejects(result, /terminal failed/u);
+  assert.equal(completed, true);
 });

@@ -54,6 +54,7 @@ export class SerializedScheduler {
     this.setTimer = setTimer;
     this.clearTimer = clearTimer;
     this.timer = null;
+    this.activeTask = null;
     this.running = false;
   }
 
@@ -63,17 +64,22 @@ export class SerializedScheduler {
     this.#schedule();
   }
 
-  cancel() {
+  async cancel() {
     this.running = false;
     if (this.timer !== null) this.clearTimer(this.timer);
     this.timer = null;
+    await this.activeTask;
   }
 
   #schedule() {
     if (!this.running) return;
     this.timer = this.setTimer(() => {
       this.timer = null;
-      void this.#runScheduledTask();
+      const activeTask = this.#runScheduledTask();
+      this.activeTask = activeTask;
+      void activeTask.finally(() => {
+        if (this.activeTask === activeTask) this.activeTask = null;
+      });
     }, this.intervalMs);
   }
 
@@ -94,6 +100,6 @@ export async function runWithScheduler({ startupTask, scheduler, run }) {
     scheduler.start();
     return await run();
   } finally {
-    scheduler.cancel();
+    await scheduler.cancel();
   }
 }
