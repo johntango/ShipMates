@@ -158,6 +158,43 @@ test("approves and reconciles the exact existing validation gate", async () => {
   assert.equal(store.reconciliations.length, 1);
 });
 
+test("finishes approval after terminal reconciliation was already recorded", async () => {
+  const store = new MemoryStore();
+  const intent = "Validate locally";
+  const gated = {
+    ...validationReport(),
+    intentSha256: "unused",
+    gate: { step: "test", status: "awaiting_approval" },
+  };
+  let responses = 0;
+  const workflow = new LocalValidationWorkflow({
+    store,
+    gate: {
+      pinEvidence,
+      async run() { return gated; },
+      async respond() {
+        responses += 1;
+        return { ...gated, gate: null, passed: true };
+      },
+    },
+  });
+  await workflow.run({ taskId: "validation-001", intent });
+  store.snapshot.validationRuns[0].intentSha256 =
+    store.snapshot.validationRequests[0].intentSha256;
+  const terminal = { ...store.snapshot.validationRuns[0], gate: null, passed: true };
+  await store.reconcileLocalValidation({
+    report: terminal,
+    runId: terminal.runId,
+    eventId: "reconciled",
+  });
+
+  const result = await workflow.approve({ taskId: "validation-001", intent });
+
+  assert.equal(result.reused, true);
+  assert.equal(result.snapshot.state, "ready_to_merge");
+  assert.equal(responses, 0);
+});
+
 class MemoryStore {
   constructor() {
     this.records = [];
@@ -183,6 +220,7 @@ class MemoryStore {
   async recordLocalValidation(record) {
     this.records.push(record);
     this.snapshot.validationRequests[0].status = "completed";
+    this.snapshot.validationRequests[0].runId = record.report.runId;
     this.snapshot = { ...this.snapshot, validationRuns: [record.report] };
     return this.snapshot;
   }
@@ -194,8 +232,12 @@ class MemoryStore {
 
   async reconcileLocalValidation(record) {
     this.reconciliations.push(record);
-    this.snapshot.validationRuns[0] = record.report;
+    this.snapshot.validationRuns[0] = {
+      ...record.report,
+      eventId: record.eventId,
+    };
     this.snapshot.validationRequests[0].passed = true;
+    this.snapshot.validationRequests[0].reconciledEventId = record.eventId;
     return this.snapshot;
   }
 

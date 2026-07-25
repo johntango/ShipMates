@@ -133,9 +133,24 @@ export class LocalValidationWorkflow {
     let snapshot = await this.store.getSnapshot(taskId);
     const prior = snapshot.validationRuns?.at(-1);
     const request = snapshot.validationRequests?.at(-1);
+    const intentSha256 = digest(intent);
+    const reconciled = request?.status === "completed" && request.passed === true &&
+      request.reconciledEventId === prior?.eventId && prior?.gate === null &&
+      prior?.passed === true && request.runId === prior?.runId;
+    if (reconciled &&
+      request.intentSha256 === intentSha256 && prior.intentSha256 === intentSha256) {
+      if (snapshot.state === "awaiting_human") {
+        snapshot = await transitionApprovedValidation(
+          this.store, snapshot, this.actor, taskId, prior.runId,
+        );
+      }
+      if (snapshot.state === "ready_to_merge") {
+        return { snapshot, report: prior, reused: true };
+      }
+    }
     if (snapshot.state !== "awaiting_human" || request?.status !== "completed" ||
       prior?.gate?.status !== "awaiting_approval" ||
-      request.intentSha256 !== digest(intent) || prior.intentSha256 !== digest(intent)) {
+      request.intentSha256 !== intentSha256 || prior.intentSha256 !== intentSha256) {
       throw new LocalValidationRecoveryRequiredError(
         "Validation approval does not match the exact recorded approval gate and intent",
       );
@@ -157,13 +172,19 @@ export class LocalValidationWorkflow {
       eventId: `${taskId}:validation:${prior.runId}:reconciled:v1`,
       at: report.completedAt,
     });
-    snapshot = await this.store.transition({
-      taskId, from: "awaiting_human", to: "ready_to_merge", actor: this.actor,
-      reason: "Human approved the exact local validation gate",
-      eventId: `${taskId}:validation:${prior.runId}:approved:v1`,
-    });
-    return { snapshot, report };
+    snapshot = await transitionApprovedValidation(
+      this.store, snapshot, this.actor, taskId, prior.runId,
+    );
+    return { snapshot, report, reused: false };
   }
+}
+
+function transitionApprovedValidation(store, snapshot, actor, taskId, runId) {
+  return store.transition({
+    taskId, from: "awaiting_human", to: "ready_to_merge", actor,
+    reason: "Human approved the exact local validation gate",
+    eventId: `${taskId}:validation:${runId}:approved:v1`,
+  });
 }
 
 function normalizeProgressMessage(value) {
