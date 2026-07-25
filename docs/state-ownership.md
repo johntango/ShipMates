@@ -78,8 +78,9 @@ Historical pre-request `validation.local.recorded` events contain only
 `report`: they have no operation or request binding, and their schema-1 report
 predates `intentSha256`. Replay accepts that shape only when no validation
 request exists and the report is local-only, did not change `HEAD`, and binds
-both recorded heads to the task's exact active leased head while the task is
-`validating`. New validation evidence uses the request-bound payload above.
+both recorded heads either to the task's exact active leased head while the task
+is `validating`, or—only for a pre-lease task still in `proposed`—to its exact
+base SHA. New validation evidence uses the request-bound payload above.
 
 The derived task snapshot schema is 1 and persists `schemaVersion`, `id`,
 `kind`, `state`, `repo`, `baseSha`, `worktree`, `workers`, `eventsCount`,

@@ -1248,11 +1248,15 @@ function validateLegacyLocalValidationReport(snapshot, report) {
   if (report.headChanged || report.initialHeadSha !== report.finalHeadSha) {
     throw new TaskStateError("Legacy local validation changed HEAD");
   }
-  if (snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
-    report.initialHeadSha !== snapshot.worktree.headSha ||
-    report.finalHeadSha !== snapshot.worktree.headSha) {
+  const boundToLease = snapshot.state === "validating" &&
+    snapshot.worktree?.status === "leased" &&
+    report.initialHeadSha === snapshot.worktree.headSha &&
+    report.finalHeadSha === snapshot.worktree.headSha;
+  const boundToPreLeaseBase = snapshot.state === "proposed" && !snapshot.worktree &&
+    report.initialHeadSha === snapshot.baseSha && report.finalHeadSha === snapshot.baseSha;
+  if (!boundToLease && !boundToPreLeaseBase) {
     throw new TaskStateError(
-      "Legacy local validation is not bound to the exact active leased head",
+      "Legacy local validation is not bound to the exact leased head or pre-lease base",
     );
   }
 }
