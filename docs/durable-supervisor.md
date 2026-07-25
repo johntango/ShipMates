@@ -14,5 +14,6 @@ failures are contained and cannot fail the supervisor run.
 
 `createSupervisorTask` supplies the scheduler callback so the serialized
 watchdog scheduler invokes the same durable service used at startup and by
-commands. The interactive shell can be migrated to construct this service
-without changing the service contract or treating its pane as lifecycle state.
+commands. The interactive runtime constructs this service and connects its
+Firstmate pane, Herdr session, and dashboard as clients rather than treating
+their connection state as lifecycle state.

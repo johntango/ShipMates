@@ -140,8 +140,9 @@ maintained as compatibility projections while existing registries migrate on
 read. Plan revisions preserve every executed task and refuse to remove a plan
 item that already has attempts.
 
-On startup, the project orchestrator deterministically inspects non-persistent
-active and blocked attempts. It can reconcile an already-complete ledger,
+On startup, the durable supervisor observes live state before the project
+orchestrator deterministically inspects non-persistent active and blocked
+attempts. It can reconcile an already-complete ledger,
 complete verified no-change demo work, preserve a capability warning for human
 acceptance, identify validation repair, or require worker/artifact
 reconciliation. It records the precise blocking reason and never launches a
@@ -149,16 +150,19 @@ retry during recovery inspection. Registry writes enforce unique plan IDs, one
 active attempt per plan task, unique attempt ownership, valid dependencies, a
 current-attempt record, and a reason for every blocked task.
 
-While Firstmate is running, the same safe reconciliation executes every 15
-seconds by default (`SHIPMATES_MONITOR_SECONDS` may adjust it, with a five-second
-minimum; invalid, non-finite, zero, and negative values use the 15-second
-default). Audits are serialized: the next interval begins only after the prior
-audit finishes, and the scheduler is stopped whenever Firstmate shuts down.
-A successful child exit immediately advances the next dependency-ready
-task. The periodic monitor also reconciles durable completion evidence and
-advances ready local-only demo work without waiting for a restart. It does not
-waive failed tests, grant permissions, repeat uncertain external operations, or
-dispatch around a recorded blocker.
+While the interactive runtime is running, the durable supervisor executes the
+same safe reconciliation every 15 seconds by default
+(`SHIPMATES_MONITOR_SECONDS` may adjust it, with a five-second minimum; invalid,
+non-finite, zero, and negative values use the 15-second default). It completes
+startup reconciliation before scheduling. Audits are serialized, and
+overlapping triggers share the in-flight run. Shutdown cancels scheduling and
+awaits that work. Firstmate, the dashboard, and Herdr receive derived
+projections as reconnectable clients; a client send failure cannot stop
+lifecycle work. A successful child exit immediately advances the next
+dependency-ready task. The periodic supervisor run also reconciles durable
+completion evidence and advances ready local-only demo work without waiting for
+a restart. It does not waive failed tests, grant permissions, repeat uncertain
+external operations, or dispatch around a recorded blocker.
 Useful conversational commands are:
 
 ```text

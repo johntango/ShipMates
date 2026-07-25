@@ -116,8 +116,10 @@ blocked, or uncertain operation.
 ## Operating model
 
 The human communicates with **Firstmate**, which owns conversation, project
-selection, planning, dispatch, reconciliation, and approval boundaries. Other
-roles are bounded execution components:
+selection, planning, dispatch, and approval boundaries. The durable supervisor
+owns live observation, reconciliation, deterministic advancement, scheduling,
+and projections independently of conversational clients. Other roles are
+bounded execution components:
 
 | Role | Behavior |
 | --- | --- |
