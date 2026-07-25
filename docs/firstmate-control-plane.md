@@ -5,12 +5,12 @@ transition. `FirstmateControlPlane` accepts only the closed typed vocabulary for
 project creation, approval and advancement; task inspection and reconciliation;
 validation approval; delivery retry; archive; and repository purge.
 
-Each command validates stable identifiers before invoking a deterministic
-handler. The handler owns authoritative reads, invariant checks, reconciliation,
-and any durable operation protocol. Unknown commands, missing inputs, and absent
-handlers fail closed. A refusal always identifies the failed invariant, its
-reason, and the next operator action as structured data suitable for the shell,
-dashboard, and Herdr.
+Each command validates its required bounded string inputs before invoking a
+deterministic handler. The handler owns stable-identifier validation,
+authoritative reads, invariant checks, reconciliation, and any durable operation
+protocol. Unknown commands, missing inputs, and absent handlers fail closed. A
+refusal always identifies the failed invariant, its reason, and the next
+operator action as structured data suitable for the shell, dashboard, and Herdr.
 
 `selectFirstmateCommand` is deliberately only a selector. It may map prose to a
 typed command and extract an identifier; it cannot request arbitrary states or
