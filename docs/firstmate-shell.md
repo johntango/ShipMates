@@ -174,8 +174,9 @@ approve validation for task task-123
 
 Firstmate sends the approval to the already-running no-mistakes gate, appends
 the terminal result to the same durable validation operation, fast-forwards the
-exact validated commit locally, and reconciles the Project task before any
-dependent work can start. It never launches a duplicate validation run.
+exact validated commit into the registered Project repository rather than the
+task worktree, and reconciles the Project task before any dependent work can
+start. It never launches a duplicate validation run.
 
 `enable demo mode for ProjectName` is an explicit project-scoped, local-only
 capability-demo policy. Demo tasks still use the controlled local commit and

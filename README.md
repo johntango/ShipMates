@@ -136,9 +136,8 @@ task-bound response such as:
 approve validation for task task-123
 ```
 
-That command approves the existing no-mistakes gate, records its terminal
-result without starting another run, delivers the exact validated commit, and
-repairs the Project projection before advancing dependent work.
+The [Firstmate shell guide](docs/firstmate-shell.md#interactive-cli) owns the
+approval and repository-selection semantics for conversational commands.
 
 Firstmate resolves project references against the registry rather than treating
 surrounding conversational wording as a project name. Once a plan is saved,
@@ -147,9 +146,6 @@ and a dependency-ready plan item must be atomically claimed, before an
 Implementer can be dispatched. A successful dispatch also requires a durable
 task attachment and launch receipt. Missing launch identity is recorded as a
 blocker instead of leaving work indefinitely described as dispatched.
-
-For targeted-creation syntax and repository-selection semantics, see the
-[Firstmate shell guide](docs/firstmate-shell.md#interactive-cli).
 
 Plan tasks move through `planned`, `claimed`, `dispatched`, `blocked`, and
 `completed` states. Retries are retained as attempts under the original plan

@@ -53,8 +53,16 @@ npm run firstmate
   -> verified workspace-write worker
   -> durable controlled commit
   -> durable pinned local-only validation
+  -> exact task-bound approval command if no-mistakes parks at a gate
   -> stop in validating state awaiting exact-head push approval
 ```
+
+Approval responds to the existing no-mistakes run. Firstmate records the
+terminal result against the original validation request, including when the
+validator completed before that ledger update, then advances the task without
+running validation again. The exact command and subsequent local-delivery
+behavior are documented in the
+[Firstmate shell guide](firstmate-shell.md#interactive-cli).
 
 Publication is a separate human-approved capability described in the
 [exact-head push guide](exact-head-push.md).
@@ -80,4 +88,5 @@ manual recovery condition.
 An incomplete validation request is also never rerun automatically. The
 restart auditor reports `reconcile_local_validation_manually`; raw validator
 state must be inspected before deciding whether to record evidence or start a
-new task attempt.
+new task attempt. A recorded approval gate is resumed only by the exact
+task-bound conversational approval command described above.
