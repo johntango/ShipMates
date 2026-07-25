@@ -55,16 +55,18 @@ import {
 import { runFirstmateDeliveryCli } from "../src/cli/firstmate-delivery.js";
 import { TaskStore } from "../src/storage/task-store.js";
 import { DashboardLavishReview } from "../src/dashboard/lavish-review.js";
-import { ShipMatesDashboardServer } from "../src/dashboard/server.js";
+import { buildDashboardState, ShipMatesDashboardServer } from "../src/dashboard/server.js";
 import { startDashboardWithFallback } from "../src/dashboard/start.js";
 import { ProjectStore } from "../src/projects/project-store.js";
 import { FirstmateWatchdog } from "../src/monitoring/firstmate-watchdog.js";
 import {
-  createWatchdogAudit,
   parseMonitorIntervalMs,
-  runWithScheduler,
   SerializedScheduler,
 } from "../src/monitoring/watchdog-scheduler.js";
+import {
+  createSupervisorTask,
+  DurableSupervisor,
+} from "../src/supervisor/durable-supervisor.js";
 import { FirstmateShell } from "../src/workflows/firstmate.js";
 import { FirstmateLocalExecutor } from "../src/workflows/firstmate-local-executor.js";
 import { prepareFirstmateLocalWrite } from "../src/workflows/firstmate-local-write.js";
@@ -1280,11 +1282,11 @@ async function runInteractiveFirstmate() {
     port: Number(process.env.SHIPMATES_DASHBOARD_PORT || 4390),
   });
   let cleanupPromise = null;
-  let watchdogScheduler = null;
+  let supervisor = null;
   const cleanupInteractiveFirstmate = () => {
     if (cleanupPromise) return cleanupPromise;
     cleanupPromise = (async () => {
-      await watchdogScheduler?.cancel();
+      await supervisor?.stop();
       terminal.close();
       await dashboardServer.stop();
       await firstmateHerdrSession.stop();
@@ -1319,63 +1321,69 @@ async function runInteractiveFirstmate() {
   }
   if (selectedBeforeAdvance) activeProject = await projectStore.activate(selectedBeforeAdvance);
   const announcedWatchdogAlerts = new Set();
-  const reconcileAndAdvance = async () => {
+  const reconcileProjects = async () => {
+    const reconciled = [];
     for (const project of await projectStore.list()) {
       if (project.status !== "approved" || project.executionPolicy?.mode === "persistent_project") continue;
       const results = await orchestrator.reconcileProject(project.id);
+      reconciled.push({ projectId: project.id, results });
+    }
+    return reconciled;
+  };
+  const advanceProjects = async ({ decisions }) => {
+    const terminalized = await watchdog.terminalizeStale();
+    for (const { projectId, results } of decisions) {
       const progressed = results.some(({ status }) => status === "completed");
-      const refreshed = await projectStore.get(project.id);
+      const refreshed = await projectStore.get(projectId);
       const hasActive = refreshed.tasks.some(({ status }) =>
         new Set(["claimed", "dispatched"]).has(status));
-      const ready = !hasActive ? await projectStore.nextReady(project.id) : null;
+      const ready = !hasActive ? await projectStore.nextReady(projectId) : null;
       if ((progressed || ready) && refreshed.demoMode === true) {
-        await advanceProject(project.id, {
+        await advanceProject(projectId, {
           reason: progressed ? "monitor reconciled completed work" : "monitor found ready work",
         });
       }
     }
+    return terminalized;
   };
-  const auditWatchdog = createWatchdogAudit({
-    reconcile: reconcileAndAdvance,
-    terminalizeStale: () => watchdog.terminalizeStale(),
-    inspect: () => watchdog.inspect(),
-    onReconciliationError: (error) => {
-      console.error(`Proactive project reconciliation needs attention (${error.message}).`);
-    },
-    onTerminalizationError: (error) => {
-      console.error(`Watchdog stale-task terminalization needs attention (${error.message}).`);
-    },
-    onInspectionError: (error) => {
-      console.error(`Watchdog inspection needs attention (${error.message}).`);
-    },
-    onTerminalized: (terminalized) => {
-      console.error(humanInputRequired(`Watchdog blocked stale task ${terminalized.projectName} — ${terminalized.taskName}. ${terminalized.reason}`));
-    },
-    onAlert: (alert) => {
-      const key = `${alert.taskId}:${alert.category}:${alert.lastEventAt}`;
-      if (announcedWatchdogAlerts.has(key)) return;
-      announcedWatchdogAlerts.add(key);
-      console.error(humanInputRequired(`Watchdog: ${alert.projectName} — ${alert.taskName} has needed attention for ${alert.ageMinutes} minutes. ${alert.status}. ${alert.remedy}`));
-    },
-  });
-  watchdogScheduler = new SerializedScheduler({
-    task: auditWatchdog,
+  let scheduledTask = async () => {};
+  const watchdogScheduler = new SerializedScheduler({
+    task: () => scheduledTask(),
     intervalMs: parseMonitorIntervalMs(process.env.SHIPMATES_MONITOR_SECONDS),
     onError: (error) => {
-      console.error(`Scheduled watchdog audit needs attention (${error.message}).`);
+      console.error(`Scheduled lifecycle audit needs attention (${error.message}).`);
     },
   });
+  supervisor = new DurableSupervisor({
+    observe: () => watchdog.inspect(),
+    reconcile: reconcileProjects,
+    advance: advanceProjects,
+    project: () => buildDashboardState({
+      store: interactiveStore, projectContext, projectStore, watchdog,
+    }),
+    scheduler: watchdogScheduler,
+  });
+  scheduledTask = createSupervisorTask(supervisor);
+  await supervisor.connect({
+    send: async (snapshot) => {
+      for (const alert of snapshot.watchdog.alerts) {
+        const key = `${alert.taskId}:${alert.category}:${alert.lastEventAt}`;
+        if (announcedWatchdogAlerts.has(key)) continue;
+        announcedWatchdogAlerts.add(key);
+        console.error(humanInputRequired(`Watchdog: ${alert.projectName} — ${alert.taskName} has needed attention for ${alert.ageMinutes} minutes. ${alert.status}. ${alert.remedy}`));
+      }
+    },
+  });
+  await supervisor.connect(dashboardServer);
+  await supervisor.connect(firstmateHerdrSession);
   try {
-    await runWithScheduler({
-      startupTask: auditWatchdog,
-      scheduler: watchdogScheduler,
-      run: () => runFirstmateLoop({
-        askMessage: (prompt) => terminal.question(prompt),
-        runRequest: dispatchRequest,
-        onRequestError: (error) => {
-          console.error(`Firstmate could not complete that request: ${error.message}`);
-        },
-      }),
+    await supervisor.start();
+    await runFirstmateLoop({
+      askMessage: (prompt) => terminal.question(prompt),
+      runRequest: dispatchRequest,
+      onRequestError: (error) => {
+        console.error(`Firstmate could not complete that request: ${error.message}`);
+      },
     });
   } finally {
     process.removeListener("SIGINT", handleSigint);

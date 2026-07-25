@@ -151,6 +151,12 @@ export class ShipMatesDashboardServer {
       error ? reject(error) : resolve()));
   }
 
+  async send(state) {
+    for (const response of this.eventStreams) {
+      response.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
+    }
+  }
+
   get url() {
     return `http://${this.host}:${this.port}`;
   }
