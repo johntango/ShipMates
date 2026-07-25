@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import express from "express";
 import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
+import { projectOperationalState } from "../projections/operational-state.js";
 
 export class ShipMatesDashboardServer {
   constructor({
@@ -262,6 +263,9 @@ function projectTask(snapshot, activeProjectTaskId, reconciliationEngine, durabl
     workspacePath: snapshot.worktree?.worktreePath || null,
     reconciliation: reconciliationEngine.plan({
       snapshot, projectTask: durableProjectTask, source: "dashboard",
+    }),
+    operational: projectOperationalState({
+      snapshot, projectTask: durableProjectTask, reconciliationEngine, source: "dashboard",
     }),
     workers: (snapshot.workers || []).map((worker) => ({
       id: worker.id,

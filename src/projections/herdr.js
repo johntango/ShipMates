@@ -1,3 +1,5 @@
+import { projectOperationalState } from "./operational-state.js";
+
 export class HerdrProjection {
   constructor({ store } = {}) {
     if (!store || typeof store.getSnapshot !== "function") {
@@ -65,6 +67,7 @@ export function projectHerdrSnapshot(snapshot) {
       displayState: displayState(snapshot.state),
       baseSha: snapshot.baseSha,
     },
+    operational: projectOperationalState({ snapshot, source: "herdr" }),
     worktree: projectWorktree(snapshot.worktree),
     workers,
     commits,
