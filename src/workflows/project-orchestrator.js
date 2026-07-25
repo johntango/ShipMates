@@ -1,13 +1,15 @@
 import { resolveFirstmateControlIntent } from "../cli/firstmate-control-intent.js";
+import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
 import { acceptFirstmateDemoWarning } from "./firstmate-demo-recovery.js";
 import { completeFirstmateDemoTask } from "./firstmate-demo-completion.js";
 import { classifyTaskRecovery } from "./task-recovery.js";
 
 export class ProjectOrchestrator {
-  constructor({ taskStore, projectStore } = {}) {
+  constructor({ taskStore, projectStore, reconciliationEngine = new ReconciliationEngine() } = {}) {
     if (!taskStore || !projectStore) throw new TypeError("ProjectOrchestrator requires task and project stores");
     this.taskStore = taskStore;
     this.projectStore = projectStore;
+    this.reconciliationEngine = reconciliationEngine;
   }
 
   async resolveControl(message) {
@@ -18,7 +20,14 @@ export class ProjectOrchestrator {
     const [context, snapshot] = await Promise.all([
       this.projectStore.describeAttempt(taskId), this.taskStore.getSnapshot(taskId),
     ]);
-    return { context, snapshot, recovery: classifyTaskRecovery(snapshot) };
+    return {
+      context,
+      snapshot,
+      recovery: classifyTaskRecovery(snapshot),
+      reconciliation: this.reconciliationEngine.plan({
+        snapshot, projectTask: context?.attempt || null, source: "command",
+      }),
+    };
   }
 
   async applyControl(intent) {
@@ -62,15 +71,18 @@ export class ProjectOrchestrator {
       try {
         inspected = await this.inspectTask(task.taskId);
       } catch (error) {
-        results.push({ planTaskId: task.id, action: "inspect_evidence", status: "blocked", reason: error.message });
+        results.push({ planTaskId: task.id, action: "require_manual_repair", status: "blocked", reason: error.message });
         continue;
       }
       const { recovery, snapshot } = inspected;
-      if (recovery.category === "complete") {
+      const reconciliation = this.reconciliationEngine.plan({
+        snapshot, projectTask: task, source: "project_reconciliation",
+      });
+      if (reconciliation.decision === "record_observed_completion") {
         await this.projectStore.updateTaskStatus({
           projectId, planTaskId: task.id, status: "completed",
         });
-        results.push({ planTaskId: task.id, action: "registry_reconciled", status: "completed", reason: recovery.reason });
+        results.push({ planTaskId: task.id, action: reconciliation.decision, status: "completed", reason: reconciliation.reason });
         continue;
       }
       if (recovery.category === "validation_approval_required") {
@@ -92,7 +104,7 @@ export class ProjectOrchestrator {
         }
         results.push({
           planTaskId: task.id,
-          action: recovery.action,
+          action: reconciliation.decision,
           status: "awaiting_human",
           reason: recovery.reason,
           snapshot: awaiting,
@@ -106,7 +118,7 @@ export class ProjectOrchestrator {
         await this.projectStore.updateTaskStatus({
           projectId, planTaskId: task.id, status: "completed",
         });
-        results.push({ planTaskId: task.id, action: "demo_completed", status: "completed",
+        results.push({ planTaskId: task.id, action: "record_observed_completion", status: "completed",
           reason: recovery.reason, snapshot: completed.snapshot });
         continue;
       }
@@ -120,7 +132,7 @@ export class ProjectOrchestrator {
         }
       }
       results.push({
-        planTaskId: task.id, action: recovery.action,
+        planTaskId: task.id, action: reconciliation.decision,
         status: terminalBlock ? "blocked" : task.status, reason: recovery.reason,
       });
     }
@@ -140,7 +152,7 @@ export class ProjectOrchestrator {
       context,
       planTaskId: task.id,
       status: task.status,
-      action: "registry_current",
+      action: "no_action",
       reason: task.blockingReason || `Project registry already reflects task ${taskId}`,
     };
   }

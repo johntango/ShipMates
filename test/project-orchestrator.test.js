@@ -14,6 +14,7 @@ test("inspects the existing attempt and returns a deterministic recovery action"
   };
   const result = await new ProjectOrchestrator({ taskStore, projectStore }).inspectTask("task-one");
   assert.equal(result.recovery.action, "reconcile_worker");
+  assert.equal(result.reconciliation.decision, "require_manual_repair");
   assert.equal(result.context.projectName, "TestA");
 });
 
@@ -38,7 +39,7 @@ test("startup reconciliation records an exact blocker without creating an attemp
   };
   const results = await new ProjectOrchestrator({ taskStore, projectStore })
     .reconcileProject("project-one");
-  assert.equal(results[0].action, "repair_existing");
+  assert.equal(results[0].action, "require_manual_repair");
   assert.equal(updates[0].blockingReason, "Wrap test failed");
   assert.equal(project.tasks[0].attempts.length, 1);
 });
@@ -122,7 +123,7 @@ test("reconciles an approval-gated validation without treating it as failure", a
 
   const [result] = await orchestrator.reconcileProject(project.id);
   assert.equal(result.status, "awaiting_human");
-  assert.equal(result.action, "request_validation_approval");
+  assert.equal(result.action, "request_human_approval");
   assert.equal(transitions[0].to, "awaiting_human");
   assert.equal(updates[0].status, "dispatched");
   assert.equal(updates[0].blockingReason, undefined);
@@ -163,6 +164,6 @@ test("reconciles one task id into its project projection", async () => {
   });
   const result = await orchestrator.reconcileTask("task-one");
   assert.equal(result.status, "completed");
-  assert.equal(result.action, "registry_reconciled");
+  assert.equal(result.action, "record_observed_completion");
   assert.equal(updates[0].status, "completed");
 });

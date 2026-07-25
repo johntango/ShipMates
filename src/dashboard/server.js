@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import express from "express";
+import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
 
 export class ShipMatesDashboardServer {
   constructor({
@@ -157,18 +158,26 @@ export class ShipMatesDashboardServer {
 
 export async function buildDashboardState({
   store, projectContext, projectStore = null, watchdog = null,
+  reconciliationEngine = new ReconciliationEngine(),
 }) {
   const activeProjectTaskId = await projectContext.load();
+  const projects = projectStore ? await projectStore.list() : [];
+  const projectTaskByTaskId = new Map(projects.flatMap((project) =>
+    project.tasks
+      .filter(({ taskId }) => taskId)
+      .map((task) => [task.taskId, task])));
   const tasks = [];
   for (const taskId of await store.listTaskIds()) {
     try {
-      tasks.push(projectTask(await store.getSnapshot(taskId), activeProjectTaskId));
+      tasks.push(projectTask(
+        await store.getSnapshot(taskId), activeProjectTaskId, reconciliationEngine,
+        projectTaskByTaskId.get(taskId) || null,
+      ));
     } catch {
       // A damaged historical task must not make the operator surface unavailable.
     }
   }
   tasks.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  const projects = projectStore ? await projectStore.list() : [];
   const selectedProject = projectStore && typeof projectStore.active === "function"
     ? await projectStore.active() : null;
   const taskById = new Map(tasks.map((task) => [task.id, task]));
@@ -227,7 +236,7 @@ function projectProjection(project, taskById) {
   };
 }
 
-function projectTask(snapshot, activeProjectTaskId) {
+function projectTask(snapshot, activeProjectTaskId, reconciliationEngine, durableProjectTask) {
   const classification = snapshot.firstmateRuns?.at(-1)?.classification || null;
   const implementer = snapshot.workers?.find(({ id }) => id === "implementer") || null;
   const validation = snapshot.validationRuns?.at(-1) || null;
@@ -245,6 +254,9 @@ function projectTask(snapshot, activeProjectTaskId) {
     authority: classification?.requiredAuthority || "unknown",
     updatedAt: snapshot.lastEventAt,
     workspacePath: snapshot.worktree?.worktreePath || null,
+    reconciliation: reconciliationEngine.plan({
+      snapshot, projectTask: durableProjectTask, source: "dashboard",
+    }),
     workers: (snapshot.workers || []).map((worker) => ({
       id: worker.id,
       status: worker.status,

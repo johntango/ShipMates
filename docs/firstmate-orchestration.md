@@ -20,8 +20,10 @@ must not reimplement this sequence.
 
 The task ledger is authoritative execution state. Project task status is a
 human-facing projection maintained by `ProjectOrchestrator.reconcileTask` and
-`reconcileProject`. Process exits and restart monitoring reconcile ledger
-evidence rather than independently guessing completion from exit codes.
+`reconcileProject`. The [central reconciliation engine](reconciliation-engine.md)
+owns the bounded decisions shared by commands, project reconciliation,
+monitoring, and dashboard projections. Process exits remain observations, not
+independent evidence of completion.
 
 ## Progress
 
