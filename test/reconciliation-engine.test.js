@@ -40,6 +40,26 @@ test("records ledger completion only when the project registry is stale", () => 
     "no_action");
 });
 
+test("does not treat intermediate workflow milestones as task completion", () => {
+  const snapshots = [
+    base({ state: "validating", validationRuns: [{ passed: true }] }),
+    base({
+      state: "validating",
+      workers: [{
+        id: "implementer", status: "reported",
+        report: { status: "completed" }, verification: { noMutation: true },
+      }],
+    }),
+    base({
+      state: "awaiting_worker",
+      workers: [{ id: "implementer", status: "reported", verification: { dirty: true } }],
+    }),
+  ];
+  assert.deepEqual(snapshots.map((snapshot) => engine.plan({
+    snapshot, projectTask: { status: "dispatched" },
+  }).decision), ["require_manual_repair", "require_manual_repair", "require_manual_repair"]);
+});
+
 test("never repeats an uncertain worker without a process observation", () => {
   const snapshot = base({
     state: "awaiting_worker",

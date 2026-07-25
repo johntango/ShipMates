@@ -63,10 +63,6 @@ export class ReconciliationEngine {
         : result("require_manual_repair", recovery.reason, false, context);
     }
 
-    if (new Set(["validation_passed", "verified_no_change", "preserved_changes"]).has(recovery.category)) {
-      return result("record_observed_completion", recovery.reason, true, context);
-    }
-
     return result("require_manual_repair", recovery.reason, false, context);
   }
 }

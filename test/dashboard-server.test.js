@@ -44,6 +44,24 @@ test("projects project plans and binds planned items to durable tasks", async ()
 
   assert.equal(state.projects[0].tasks[0].status, "completed");
   assert.equal(state.projects[0].progress.completed, 1);
+  assert.equal(state.tasks[0].reconciliation.decision, "require_manual_repair");
+});
+
+test("projects completion drift using the durable project task", async () => {
+  const { store, projectContext } = fixture();
+  store.getSnapshot = async () => ({
+    id: "task-001", state: "complete", lastEventAt: "2026-07-15T12:00:00.000Z",
+    workers: [], validationRuns: [], validationRequests: [],
+  });
+  const state = await buildDashboardState({
+    store, projectContext,
+    projectStore: { list: async () => [{
+      id: "project-001", name: "ShipMates", tasks: [{
+        id: "plan-1", taskId: "task-001", status: "dispatched",
+      }],
+    }] },
+  });
+  assert.equal(state.tasks[0].reconciliation.decision, "record_observed_completion");
 });
 
 test("does not count blocked or recovery-required plan work as completed progress", async () => {
