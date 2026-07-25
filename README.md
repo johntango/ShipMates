@@ -39,6 +39,8 @@ Read-only cross-system health inspection is documented in the
 [ShipMates doctor guide](docs/system-doctor.md).
 Authoritative state ownership, persisted fields, migrations, and invariants are
 specified in the [state ownership contract](docs/state-ownership.md).
+Crash-boundary lifecycle testing is described in the
+[lifecycle failure harness guide](docs/lifecycle-failure-harness.md).
 
 ## Using ShipMates
 
