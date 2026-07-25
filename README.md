@@ -47,6 +47,8 @@ External mutation crash safety is specified by the
 [durable operation protocol](docs/durable-operation-protocol.md).
 Typed lifecycle commands and structured refusals are defined by the
 [deterministic Firstmate control plane](docs/firstmate-control-plane.md).
+Lifecycle services and reconnectable clients are separated by the
+[durable supervisor contract](docs/durable-supervisor.md).
 
 ## Using ShipMates
 
