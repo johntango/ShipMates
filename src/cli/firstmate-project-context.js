@@ -24,7 +24,8 @@ export class FirstmateProjectContext {
     if (record?.schemaVersion !== 1 || typeof record.taskId !== "string") return null;
     try {
       const snapshot = await this.store.getSnapshot(record.taskId);
-      return taskArtifactSummary(snapshot).ready ? snapshot.id : null;
+      return snapshot.state !== "complete" && taskArtifactSummary(snapshot).ready
+        ? snapshot.id : null;
     } catch {
       return null;
     }
