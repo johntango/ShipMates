@@ -23,7 +23,8 @@ never sufficient authority for a lifecycle transition.
 The document fields are `schemaVersion`, `activeProjectId`, `projects`, and
 `repositoryDeletionReceipts`. Each Project persists `id`, `name`, `repo`,
 `repoPath`, `baseSha`, `objective`, `status`, `tasks`, `executionPolicy`,
-`demoMode`, `protected`, `archiveReceipt`, `createdAt`, and `updatedAt`.
+`demoMode`, `protected`, `archiveReceipt`, `archivedAt`, `createdAt`, and
+`updatedAt`.
 
 Each plan task persists `id`, `title`, `description`, `status`, `dependsOn`,
 `taskId`, `previousTaskIds`, `attempts`, and `blockingReason`. `taskId` and
