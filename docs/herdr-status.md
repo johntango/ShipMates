@@ -14,6 +14,8 @@ rebuilt from `events.jsonl` through the normal task store.
 The projection includes:
 
 - task lifecycle and ledger watermark;
+- the shared read-only operational view defined by
+  [derived observability](derived-observability.md);
 - Treehouse worktree status and exact head;
 - deterministic task-branch preparation status and reconciliation need;
 - worker backend, pane, status, thread, verification kind, changed-path count,

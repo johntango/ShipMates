@@ -85,8 +85,10 @@ The derived task snapshot schema is 1 and persists `schemaVersion`, `id`,
 validated event payloads above; replay, not the snapshot file, owns them.
 
 The active pointer schema is 1 with `schemaVersion`, `taskId`, and `updatedAt`.
-Herdr projection schema 1 includes its source ledger watermark. Dashboard files
-are rendered artifacts and persist no lifecycle authority.
+Herdr projection schema 1 includes its source ledger watermark and the shared
+read-only operational view defined by
+[derived observability](derived-observability.md). Dashboard files are rendered
+artifacts and persist no lifecycle authority.
 
 ## Migrations
 
