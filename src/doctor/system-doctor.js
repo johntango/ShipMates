@@ -204,6 +204,7 @@ function inspectHumanWait(project, planTask, attempt, snapshot, findings) {
 
 function inspectWorktree(project, planTask, attempt, snapshot, observed, git, findings) {
   const worktree = snapshot.worktree;
+  if (snapshot.state === "complete") return;
   if (!worktree || !new Set(["leased", "return_requested"]).has(worktree.status)) return;
   if (observed?.entries === null) {
     findings.push(finding("uncertainty", "worktrees_unobservable",

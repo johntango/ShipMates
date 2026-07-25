@@ -1,29 +1,19 @@
-import { readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
-
 import { taskArtifactSummary } from "./firstmate-follow-up.js";
 
 export class FirstmateProjectContext {
-  constructor({ store, filename = "active-project.json" } = {}) {
+  constructor({ store } = {}) {
     if (!store || typeof store.getSnapshot !== "function" ||
       typeof store.rootDir !== "string") {
       throw new TypeError("FirstmateProjectContext requires a task store");
     }
     this.store = store;
-    this.target = path.join(store.rootDir, filename);
+    this.activeTaskId = null;
   }
 
   async load() {
-    let record;
+    if (!this.activeTaskId) return null;
     try {
-      record = JSON.parse(await readFile(this.target, "utf8"));
-    } catch (error) {
-      if (error.code === "ENOENT" || error instanceof SyntaxError) return null;
-      throw error;
-    }
-    if (record?.schemaVersion !== 1 || typeof record.taskId !== "string") return null;
-    try {
-      const snapshot = await this.store.getSnapshot(record.taskId);
+      const snapshot = await this.store.getSnapshot(this.activeTaskId);
       return snapshot.state !== "complete" && taskArtifactSummary(snapshot).ready
         ? snapshot.id : null;
     } catch {
@@ -35,13 +25,7 @@ export class FirstmateProjectContext {
     if (!taskArtifactSummary(snapshot).ready) {
       throw new TypeError("Active project must contain implementation artifacts");
     }
-    const temporary = `${this.target}.tmp`;
-    await writeFile(temporary, `${JSON.stringify({
-      schemaVersion: 1,
-      taskId: snapshot.id,
-      updatedAt: new Date().toISOString(),
-    }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(temporary, this.target);
+    this.activeTaskId = snapshot.id;
     return snapshot.id;
   }
 }

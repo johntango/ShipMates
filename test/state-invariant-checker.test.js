@@ -15,7 +15,7 @@ test("publishes a versioned ownership contract for every persisted root field", 
   assert.deepEqual(STATE_CONTRACT.projectRegistry.documentFields,
     ["schemaVersion", "activeProjectId", "projects", "repositoryDeletionReceipts"]);
   assert.equal(STATE_CONTRACT.taskLedger.eventTypes.includes("validation.local.requested"), true);
-  assert.equal(STATE_CONTRACT.projections.includes("active-project.json"), true);
+  assert.equal(STATE_CONTRACT.projections.includes("active-project.json"), false);
 });
 
 test("accepts event replay, its exact snapshot, and derived Herdr watermark", async (t) => {
@@ -25,7 +25,7 @@ test("accepts event replay, its exact snapshot, and derived Herdr watermark", as
   assert.equal(report.readOnly, true);
 });
 
-test("detects a stale snapshot and completed-task active pointer without repairing", async (t) => {
+test("detects a stale snapshot and ignores obsolete UI pointer state", async (t) => {
   const fixture = await createFixture(t);
   const snapshotPath = path.join(fixture.root, "tasks", "task-one", "snapshot.json");
   const stale = JSON.parse(await readFile(snapshotPath, "utf8"));
@@ -37,7 +37,7 @@ test("detects a stale snapshot and completed-task active pointer without repairi
 
   const report = await fixture.checker.inspect();
   assert.equal(report.findings.some(({ code }) => code === "snapshot_stale_or_corrupt"), true);
-  assert.equal(report.findings.some(({ code }) => code === "completed_task_active_pointer"), true);
+  assert.equal(report.findings.some(({ code }) => code === "completed_task_active_pointer"), false);
   assert.equal(JSON.parse(await readFile(snapshotPath, "utf8")).lastEventId, "stale-event");
 });
 

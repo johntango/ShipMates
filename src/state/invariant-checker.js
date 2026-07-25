@@ -54,7 +54,6 @@ export class StateInvariantChecker {
 
     const taskIds = (await this.taskStore.listTaskIds()).slice(0, this.limit);
     for (const taskId of taskIds) await this.#inspectTask(taskId, findings);
-    await this.#inspectActivePointer(findings);
     return {
       schemaVersion: STATE_CONTRACT.schemaVersion,
       readOnly: true,
@@ -106,21 +105,6 @@ export class StateInvariantChecker {
     if (herdr && (herdr.source?.lastEventId !== snapshot.lastEventId ||
       herdr.source?.eventsCount !== snapshot.eventsCount)) {
       findings.push(issue("herdr_projection_watermark_mismatch", `task:${taskId}`, "Herdr projection does not identify its ledger watermark."));
-    }
-  }
-
-  async #inspectActivePointer(findings) {
-    const pointer = await this.#readJson("active-project.json", { allowMissing: true });
-    if (!pointer) return;
-    checkSchema(pointer.schemaVersion, STATE_CONTRACT.activePointer.schemaVersion, "active_pointer", findings);
-    checkFields(pointer, STATE_CONTRACT.activePointer.fields, "active_pointer", findings);
-    try {
-      const snapshot = await this.taskStore.getSnapshot(pointer.taskId);
-      if (snapshot.state === "complete") {
-        findings.push(issue("completed_task_active_pointer", `task:${pointer.taskId}`, "Active pointer is a stale projection and must derive to null."));
-      }
-    } catch (error) {
-      findings.push(issue("active_pointer_target_unreadable", "active_pointer", error.message));
     }
   }
 
