@@ -51,6 +51,8 @@ Lifecycle services and reconnectable clients are separated by the
 [durable supervisor contract](docs/durable-supervisor.md).
 Shared authoritative operator views are specified by
 [derived observability](docs/derived-observability.md).
+The versioned lifecycle/attempt/operation model is defined by the
+[lifecycle v2 migration](docs/lifecycle-v2-migration.md).
 
 ## Using ShipMates
 
