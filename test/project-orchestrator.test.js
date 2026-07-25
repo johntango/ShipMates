@@ -18,6 +18,24 @@ test("inspects the existing attempt and returns a deterministic recovery action"
   assert.equal(result.context.projectName, "TestA");
 });
 
+test("executes task inspection only through a typed control-plane command", async () => {
+  const orchestrator = new ProjectOrchestrator({
+    taskStore: { async getSnapshot() { return {
+      id: "task-one", state: "complete", workers: [], validationRuns: [], validationRequests: [],
+    }; } },
+    projectStore: {
+      async describeAttempt() { return { attempt: { taskId: "task-one", status: "completed" } }; },
+    },
+  });
+  assert.deepEqual(orchestrator.selectCommand("inspect task-one"), {
+    type: "task.inspect", input: { taskId: "task-one" },
+  });
+  const inspected = await orchestrator.executeCommand({
+    type: "task.inspect", input: { taskId: "task-one" },
+  });
+  assert.equal(inspected.reconciliation.decision, "no_action");
+});
+
 test("startup reconciliation records an exact blocker without creating an attempt", async () => {
   const updates = [];
   const project = { id: "project-one", demoMode: true, tasks: [{

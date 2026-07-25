@@ -45,6 +45,8 @@ The bounded cross-surface recovery policy is documented in the
 [central reconciliation engine guide](docs/reconciliation-engine.md).
 External mutation crash safety is specified by the
 [durable operation protocol](docs/durable-operation-protocol.md).
+Typed lifecycle commands and structured refusals are defined by the
+[deterministic Firstmate control plane](docs/firstmate-control-plane.md).
 
 ## Using ShipMates
 

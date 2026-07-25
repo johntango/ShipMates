@@ -1,4 +1,5 @@
 import { resolveFirstmateControlIntent } from "../cli/firstmate-control-intent.js";
+import { FirstmateControlPlane, selectFirstmateCommand } from "../control/firstmate-control-plane.js";
 import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
 import { acceptFirstmateDemoWarning } from "./firstmate-demo-recovery.js";
 import { completeFirstmateDemoTask } from "./firstmate-demo-completion.js";
@@ -10,11 +11,19 @@ export class ProjectOrchestrator {
     this.taskStore = taskStore;
     this.projectStore = projectStore;
     this.reconciliationEngine = reconciliationEngine;
+    this.controlPlane = new FirstmateControlPlane({ handlers: {
+      "task.inspect": ({ taskId }) => this.inspectTask(taskId),
+      "task.reconcile": ({ taskId }) => this.reconcileTask(taskId),
+    } });
   }
 
   async resolveControl(message) {
     return resolveFirstmateControlIntent({ message, projectStore: this.projectStore });
   }
+
+  selectCommand(message) { return selectFirstmateCommand(message); }
+
+  async executeCommand(command) { return this.controlPlane.execute(command); }
 
   async inspectTask(taskId) {
     const [context, snapshot] = await Promise.all([
