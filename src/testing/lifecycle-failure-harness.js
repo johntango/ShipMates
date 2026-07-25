@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { ProjectStore } from "../projects/project-store.js";
+import { DurableOperationProtocol } from "../operations/durable-operation.js";
 import { TaskStore } from "../storage/task-store.js";
 
 const execFileAsync = promisify(execFile);
@@ -37,6 +38,9 @@ export class LifecycleFailureHarness {
     this.artifactRoot = path.join(this.stateRoot, "external-observations");
     this.taskId = "harness-task";
     this.planTaskId = "harness-plan";
+    this.operationProtocol = new DurableOperationProtocol({
+      journal: this.#actionJournal(), hook: (point) => this.inject(point),
+    });
   }
 
   async resume() {
@@ -98,35 +102,9 @@ export class LifecycleFailureHarness {
 
   async #action(operation, action, observe, act) {
     const name = `${operation}.${action}`;
-    let journal = await this.#journal();
-    journal.actions ||= {};
-    if (journal.actions[name]?.receipt) return;
-    const existing = await observe();
-    if (existing.completed) {
-      journal.actions[name] ||= { intent: { id: `${name}:v1` }, attempts: [] };
-      journal.actions[name].receipt = { evidence: existing.evidence };
-      await this.#writeJournal(journal);
-      return;
-    }
-    if (!journal.actions[name]?.intent) {
-      this.#terminate(name, "before_intent");
-      journal.actions[name] = { intent: { id: `${name}:v1` }, attempts: [] };
-      await this.#writeJournal(journal);
-      this.#terminate(name, "after_intent");
-    }
-    this.#terminate(name, "before_action");
-    journal = await this.#journal();
-    journal.actions[name].attempts.push({ id: `${name}:${journal.actions[name].attempts.length + 1}` });
-    await this.#writeJournal(journal);
-    await act();
-    this.#terminate(name, "after_action");
-    const observation = await observe();
-    if (!observation.completed) throw new Error(`${name} action is not independently observable`);
-    this.#terminate(name, "before_receipt");
-    journal = await this.#journal();
-    journal.actions[name].receipt = { evidence: observation.evidence };
-    await this.#writeJournal(journal);
-    this.#terminate(name, "after_receipt");
+    await this.operationProtocol.execute({
+      operationId: name, intent: { id: `${name}:v1` }, observe, act,
+    });
   }
 
   async #observe(name) {
@@ -255,6 +233,24 @@ export class LifecycleFailureHarness {
     const temporary = `${this.journalPath}.tmp`;
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
     await rename(temporary, this.journalPath);
+  }
+  #actionJournal() {
+    const update = async (name, transform) => {
+      const journal = await this.#journal();
+      journal.actions ||= {};
+      const current = journal.actions[name] || { operationId: name, intent: null, attempts: [], receipt: null };
+      journal.actions[name] = transform(current);
+      await this.#writeJournal(journal);
+      return journal.actions[name];
+    };
+    return {
+      read: async (name) => (await this.#journal()).actions?.[name] || null,
+      recordIntent: (name, intent) => update(name, (current) => ({ ...current, intent })),
+      recordAttempt: (name, attempt) => update(name, (current) => ({
+        ...current, attempts: [...(current.attempts || []), attempt],
+      })),
+      recordReceipt: (name, receipt) => update(name, (current) => ({ ...current, receipt })),
+    };
   }
   async #git(cwd, args) { const { stdout = "" } = await this.run("git", args, { cwd }); return stdout; }
   #terminate(operation, phase) { this.inject(`${operation}:${phase}`); }

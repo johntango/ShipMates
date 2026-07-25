@@ -43,6 +43,8 @@ Crash-boundary lifecycle testing is described in the
 [lifecycle failure harness guide](docs/lifecycle-failure-harness.md).
 The bounded cross-surface recovery policy is documented in the
 [central reconciliation engine guide](docs/reconciliation-engine.md).
+External mutation crash safety is specified by the
+[durable operation protocol](docs/durable-operation-protocol.md).
 
 ## Using ShipMates
 
