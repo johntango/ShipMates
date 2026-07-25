@@ -139,6 +139,37 @@ test("records capability-limited local validation and rejects a remote step", ()
   );
 });
 
+test("replays pre-request local validation without weakening exact-head safety", () => {
+  const report = localValidationReport();
+  delete report.intentSha256;
+  assert.equal(replayTaskEvents(validationLifecycleEvents(report)).validationRuns[0].passed, true);
+
+  const changedHead = localValidationReport();
+  delete changedHead.intentSha256;
+  changedHead.finalHeadSha = "b".repeat(40);
+  changedHead.headChanged = true;
+  assert.throws(
+    () => replayTaskEvents(validationLifecycleEvents(changedHead)),
+    /Legacy local validation changed HEAD/u,
+  );
+
+  const wrongHead = localValidationReport();
+  delete wrongHead.intentSha256;
+  wrongHead.initialHeadSha = "b".repeat(40);
+  wrongHead.finalHeadSha = "b".repeat(40);
+  assert.throws(
+    () => replayTaskEvents(validationLifecycleEvents(wrongHead)),
+    /exact active leased head/u,
+  );
+
+  const wrongState = validationLifecycleEvents(report);
+  wrongState.splice(7, 1);
+  assert.throws(
+    () => replayTaskEvents(wrongState),
+    /exact active leased head/u,
+  );
+});
+
 test("accepts fast local validation while keeping every remote step disabled", () => {
   const events = validationLifecycleEvents(localValidationReport());
   const result = events.find(({ type }) => type === "validation.local.recorded");

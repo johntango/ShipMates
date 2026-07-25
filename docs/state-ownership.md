@@ -12,10 +12,10 @@ external system.
 | Task event ledger (`tasks/TASK/events.jsonl`) | Execution history, lifecycle transitions, durable operation intent, approvals, receipts, observations, validation and delivery evidence |
 | Project registry (`projects.json`) | Project/repository identity, plan/dependency structure, Project status, task-attempt relationships, launch identity, archive/deletion metadata |
 | External systems | Process existence, Git HEAD/status, Treehouse lease ownership, no-mistakes run state, GitHub PR/check/merge state |
-| Derived projections | `snapshot.json`, `active-project.json`, dashboard output, and Herdr metadata; none can override an owner above |
+| Derived projections | `snapshot.json`, dashboard output, and Herdr metadata; none can override an owner above |
 
 An observation becomes durable history only through a valid task event. A
-process exit, pane status, dashboard badge, snapshot field, or active pointer is
+process exit, pane status, dashboard badge, snapshot field, or client selection is
 never sufficient authority for a lifecycle transition.
 
 ## Project registry fields (schema 1)
@@ -74,6 +74,13 @@ The `data` payload fields by family are:
 | `scout.synthesis.recorded` | synthesis ID, worker/report bindings, checks and conclusion |
 | `scout.follow_up.*` | follow-up/synthesis/check/worker/reply bindings, selected or resolved report digest and comparison |
 
+Historical pre-request `validation.local.recorded` events contain only
+`report`: they have no operation or request binding, and their schema-1 report
+predates `intentSha256`. Replay accepts that shape only when no validation
+request exists and the report is local-only, did not change `HEAD`, and binds
+both recorded heads to the task's exact active leased head while the task is
+`validating`. New validation evidence uses the request-bound payload above.
+
 The derived task snapshot schema is 1 and persists `schemaVersion`, `id`,
 `kind`, `state`, `repo`, `baseSha`, `worktree`, `workers`, `eventsCount`,
 `lastEventId`, `lastEventAt`, `evidence`, `approvals`, `githubObservations`,
@@ -84,7 +91,8 @@ The derived task snapshot schema is 1 and persists `schemaVersion`, `id`,
 `scoutFollowUps`. Nested fields are deterministic normalized copies of the
 validated event payloads above; replay, not the snapshot file, owns them.
 
-The active pointer schema is 1 with `schemaVersion`, `taskId`, and `updatedAt`.
+The former `active-project.json` pointer is obsolete. Selection is in-memory
+reconnectable client state and never lifecycle authority.
 Herdr projection schema 1 includes its source ledger watermark and the shared
 read-only operational view defined by
 [derived observability](derived-observability.md). Dashboard files are rendered
@@ -98,8 +106,7 @@ artifacts and persist no lifecycle authority.
 - Missing `repositoryDeletionReceipts` migrates to an empty array.
 - A missing or corrupt task snapshot is rebuilt only from the complete event
   ledger; no reverse migration from snapshot to events exists.
-- Missing, malformed, stale, unreadable, or completed-task active pointers
-  derive to no active task.
+- Restart never restores a task from persisted UI selection.
 - There is no implicit migration for an unknown schema version or event type;
   invariant checking fails closed and requires an explicit migration.
 
@@ -117,7 +124,6 @@ one-time approval consumption, exact repository and Git-head binding, and
 proof-before-return/delivery/merge cleanup. Repeating an identical event is
 idempotent; reusing its ID with different content fails.
 
-Projection invariants require persisted snapshots to equal event replay, Herdr
-to cite the current ledger watermark, and active pointers never to restore a
-completed or unreadable task. Unknown persisted fields are contract violations,
+Projection invariants require persisted snapshots to equal event replay and
+Herdr to cite the current ledger watermark. Unknown persisted fields are contract violations,
 because every persisted field must have an owner and migration policy.

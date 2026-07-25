@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { FirstmateProjectContext } from "../src/cli/firstmate-project-context.js";
 
-test("persists and reloads the human's active project", async (t) => {
+test("keeps the human's active project as in-memory client state", async (t) => {
   const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-project-"));
   t.after(() => rm(rootDir, { recursive: true, force: true }));
   const value = snapshot();

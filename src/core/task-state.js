@@ -639,7 +639,8 @@ function applyEvent(snapshot, event, index) {
     case "validation.local.recorded": {
       requireCreated(snapshot, event);
       const { report } = event.data;
-      validateLocalValidationReport(snapshot, report);
+      if (isLegacyLocalValidationReport(snapshot, event.data)) validateLegacyLocalValidationReport(snapshot, report);
+      else validateLocalValidationReport(snapshot, report);
       const request = snapshot.validationRequests.find(({ operationId }) =>
         operationId === event.data.operationId);
       if (snapshot.validationRequests.length > 0 &&
@@ -1225,6 +1226,34 @@ function applyEvent(snapshot, event, index) {
 
     default:
       throw new TaskStateError(`Unknown event type: ${event.type}`);
+  }
+}
+
+function isLegacyLocalValidationReport(snapshot, data) {
+  return snapshot.validationRequests.length === 0 && data.operationId === undefined &&
+    data.requestEventId === undefined && data.report?.intentSha256 === undefined;
+}
+
+function validateLegacyLocalValidationReport(snapshot, report) {
+  if (!report || report.schemaVersion !== 1 || report.taskId !== snapshot.id ||
+    report.mode !== "local-only" || report.remoteOperations !== false ||
+    typeof report.passed !== "boolean" || typeof report.headChanged !== "boolean") {
+    throw new TaskStateError("Legacy local validation report identity or mode is invalid");
+  }
+  requireTimestamp("Legacy local validation startedAt", report.startedAt);
+  requireTimestamp("Legacy local validation completedAt", report.completedAt);
+  requireFullSha("Legacy local validation initial head", report.initialHeadSha);
+  requireFullSha("Legacy local validation final head", report.finalHeadSha);
+  requireNonEmpty("Legacy local validation run ID", report.runId);
+  if (report.headChanged || report.initialHeadSha !== report.finalHeadSha) {
+    throw new TaskStateError("Legacy local validation changed HEAD");
+  }
+  if (snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    report.initialHeadSha !== snapshot.worktree.headSha ||
+    report.finalHeadSha !== snapshot.worktree.headSha) {
+    throw new TaskStateError(
+      "Legacy local validation is not bound to the exact active leased head",
+    );
   }
 }
 

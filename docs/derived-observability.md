@@ -12,7 +12,6 @@ lifecycle truth. Unknown observation fields are discarded. Prompts, tokens, and
 raw reports are never copied. An unchanged ledger and unchanged observations
 produce the same operational fields.
 
-UI-only selection remains a compatibility hint for navigation while clients are
-migrated; it is not consulted by the operational projector, reconciliation
-engine, supervisor, or typed command handlers and may be deleted and rebuilt
-without changing lifecycle behavior.
+UI-only selection is in-memory reconnectable client state. The obsolete
+`active-project.json` file is ignored and may be removed without changing
+lifecycle behavior.
