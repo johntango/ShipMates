@@ -17,7 +17,9 @@ test("derives operator state from authoritative evidence and live observations",
     taskId: "task-one", state: "blocked", eventsCount: 9,
     lastEventId: "event-9", lastEventAt: "2026-07-25T12:00:00Z",
   });
-  assert.deepEqual(projection.blocker, { state: "blocked", reason: "Dependency is unavailable" });
+  assert.deepEqual(projection.blocker, {
+    state: "blocked", reason: "worker_blocked", workerId: "implementer",
+  });
   assert.equal(projection.observations.worker.status, "exited");
   assert.equal(projection.recovery.evidence.source, "dashboard");
 });
@@ -25,24 +27,57 @@ test("derives operator state from authoritative evidence and live observations",
 test("shows the exact validated commit and delivery destination", () => {
   const projection = projectOperationalState({ snapshot: base({
     state: "complete",
-    validationRuns: [{ passed: true, headSha: "validated-sha", outcome: "passed" }],
-    evidence: [{ kind: "local-delivery", value: "validated-sha" }],
+    validationRuns: [{ passed: true, finalHeadSha: "validated-sha", outcome: "passed" }],
+    evidence: [{ kind: "local-delivery", value: JSON.stringify({
+      repoPath: "/repos/project", baseSha: "base-sha", headSha: "validated-sha",
+      method: "fast-forward",
+    }) }],
   }) });
   assert.deepEqual(projection.validation, {
     status: "passed", commit: "validated-sha", outcome: "passed",
   });
   assert.deepEqual(projection.delivery, {
-    kind: "local", destination: "validated-sha", operationId: null,
+    kind: "local",
+    destination: { repository: "/repos/project", commit: "validated-sha" },
+    operationId: null,
   });
 });
 
 test("does not copy prompts, report prose, or unknown live observation fields", () => {
   const projection = projectOperationalState({
-    snapshot: base({ prompt: "secret", workers: [] }),
-    observations: { worker: { status: "running" }, prompt: "secret", token: "secret" },
+    snapshot: base({
+      state: "blocked", prompt: "secret",
+      workers: [{ id: "worker-one", failure: "secret failure prose" }],
+    }),
+    observations: {
+      worker: { status: "running", token: "secret", prompt: "secret" },
+      pullRequest: { number: 7, prompt: "secret", nested: { token: "secret" } },
+      prompt: "secret",
+      token: "secret",
+    },
   });
-  assert.deepEqual(Object.keys(projection.observations), ["worker"]);
+  assert.deepEqual(projection.observations, {
+    worker: { status: "running" }, pullRequest: { number: 7 },
+  });
+  assert.deepEqual(projection.blocker, {
+    state: "blocked", reason: "worker_failed", workerId: "worker-one",
+  });
   assert.equal(JSON.stringify(projection).includes("secret"), false);
+});
+
+test("projects a GitHub repository and pull request as the delivery destination", () => {
+  const projection = projectOperationalState({ snapshot: base({
+    state: "complete",
+    githubMerges: [{
+      status: "completed", operationId: "merge-one", repository: "acme/project",
+      prNumber: 17, result: { repository: "acme/project", prNumber: 17, mergeCommitSha: "merge-sha" },
+    }],
+  }) });
+  assert.deepEqual(projection.delivery, {
+    kind: "github",
+    destination: { repository: "acme/project", pullRequest: 17, commit: "merge-sha" },
+    operationId: "merge-one",
+  });
 });
 
 function base(overrides = {}) {

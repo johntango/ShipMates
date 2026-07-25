@@ -24,7 +24,7 @@ export function projectOperationalState({
     validation: validation ? Object.freeze({
       status: validation.gate?.status === "awaiting_approval" ? "awaiting_approval"
         : validation.passed === true ? "passed" : validation.passed === false ? "failed" : "unknown",
-      commit: validation.headSha || validation.commitSha || null,
+      commit: validation.finalHeadSha || validation.headSha || validation.commitSha || null,
       outcome: validation.outcome || null,
     }) : null,
     delivery,
@@ -32,31 +32,74 @@ export function projectOperationalState({
 }
 
 function deriveBlocker(snapshot, validation) {
+  if (validation?.gate?.status === "awaiting_approval") {
+    return blocker(snapshot, "validation_approval_required");
+  }
+  if (validation?.passed === false) return blocker(snapshot, "validation_failed");
   const worker = [...(snapshot.workers || [])].reverse().find(({ failure, report }) =>
     failure || report?.status === "blocked");
-  const reason = validation?.findings?.find(({ message }) => message)?.message ||
-    worker?.failure?.message || worker?.failure || worker?.report?.summary ||
-    (new Set(["blocked", "failed", "recovery_required"]).has(snapshot.state)
-      ? `Task is ${snapshot.state.replaceAll("_", " ")}` : null);
-  return reason ? Object.freeze({ state: snapshot.state, reason: String(reason) }) : null;
+  if (worker?.failure) return blocker(snapshot, "worker_failed", { workerId: worker.id });
+  if (worker?.report?.status === "blocked") {
+    return blocker(snapshot, "worker_blocked", { workerId: worker.id });
+  }
+  return new Set(["blocked", "failed", "recovery_required"]).has(snapshot.state)
+    ? blocker(snapshot, `lifecycle_${snapshot.state}`)
+    : null;
+}
+
+function blocker(snapshot, reason, details = {}) {
+  return Object.freeze({ state: snapshot.state, reason, ...details });
 }
 
 function deriveDelivery(snapshot) {
   const local = [...(snapshot.evidence || [])].reverse().find(({ kind }) => kind === "local-delivery");
   const merge = [...(snapshot.githubMerges || [])].reverse().find(({ status }) => status === "completed");
-  if (local) return Object.freeze({ kind: "local", destination: local.value, operationId: null });
+  const localDestination = parseLocalDestination(local?.value);
+  if (localDestination) {
+    return Object.freeze({ kind: "local", destination: localDestination, operationId: null });
+  }
   if (merge) return Object.freeze({
-    kind: "github", destination: merge.result?.mergeCommitSha || merge.mergeCommitSha || null,
+    kind: "github",
+    destination: Object.freeze({
+      repository: merge.result?.repository || merge.repository || null,
+      pullRequest: merge.result?.prNumber || merge.prNumber || null,
+      commit: merge.result?.mergeCommitSha || merge.mergeCommitSha || null,
+    }),
     operationId: merge.operationId,
   });
   return null;
 }
 
+function parseLocalDestination(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed?.repoPath !== "string" || typeof parsed?.headSha !== "string") return null;
+    return Object.freeze({ repository: parsed.repoPath, commit: parsed.headSha });
+  } catch {
+    return null;
+  }
+}
+
 function sanitizeObservations(observations) {
+  const fields = {
+    worker: ["status", "pid", "workerId", "threadId"],
+    worktree: ["state", "status", "leaseHolder", "headSha", "branch"],
+    repository: ["status", "path", "headSha", "branch", "dirty"],
+    pullRequest: ["status", "number", "url", "state", "draft", "merged", "mergeable", "headSha"],
+    checks: ["status", "conclusion", "headSha", "satisfied", "pending", "failed"],
+  };
   const allowed = {};
-  for (const name of ["worker", "worktree", "repository", "pullRequest", "checks"]) {
+  for (const [name, names] of Object.entries(fields)) {
     if (observations[name] && typeof observations[name] === "object") {
-      allowed[name] = Object.freeze({ ...observations[name] });
+      const projected = {};
+      for (const field of names) {
+        const value = observations[name][field];
+        if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+          projected[field] = value;
+        }
+      }
+      allowed[name] = Object.freeze(projected);
     }
   }
   return Object.freeze(allowed);
