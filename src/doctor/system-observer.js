@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { TreehouseWorktreeManager } from "../adapters/treehouse.js";
 
 const execFileAsync = promisify(execFile);
+const observationLimit = 100;
 
 export class SystemDoctorObserver {
   constructor({ executeFile = execFileAsync, treehouse = new TreehouseWorktreeManager() } = {}) {
@@ -27,7 +28,11 @@ export class SystemDoctorObserver {
         this.#git(resolved, ["status", "--porcelain=v1", "--untracked-files=all"]),
       ]);
       const changes = status.split(/\r?\n/u).filter(Boolean);
-      return { path: resolved, exists: true, headSha: head.trim(), clean: changes.length === 0, changes };
+      return {
+        path: resolved, exists: true, headSha: head.trim(), clean: changes.length === 0,
+        changes: changes.slice(0, observationLimit),
+        truncation: truncation(changes.length, observationLimit),
+      };
     } catch (error) {
       return { path: resolved, exists: true, error: error.message };
     }
@@ -35,7 +40,11 @@ export class SystemDoctorObserver {
 
   async worktrees(repoPath) {
     try {
-      return { repoPath: path.resolve(repoPath), entries: await this.treehouse.list({ repoPath }) };
+      const entries = await this.treehouse.list({ repoPath });
+      return {
+        repoPath: path.resolve(repoPath), entries: entries.slice(0, observationLimit),
+        truncation: truncation(entries.length, observationLimit),
+      };
     } catch (error) {
       return { repoPath: path.resolve(repoPath), entries: null, error: error.message };
     }
@@ -66,4 +75,8 @@ export class SystemDoctorObserver {
     });
     return stdout;
   }
+}
+
+function truncation(total, limit) {
+  return { limit, total, omitted: Math.max(0, total - limit), truncated: total > limit };
 }

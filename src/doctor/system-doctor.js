@@ -3,6 +3,7 @@ import path from "node:path";
 import { inspectProjectInvariants } from "../projects/project-invariants.js";
 
 const activePlanStatuses = new Set(["claimed", "dispatched"]);
+const limits = Object.freeze({ projects: 50, tasks: 100, attempts: 20, findings: 200, workers: 50 });
 
 export class ShipMatesDoctor {
   constructor({ projectStore, taskStore, observer, clock = () => new Date() } = {}) {
@@ -17,11 +18,12 @@ export class ShipMatesDoctor {
 
   async inspect({ project: projectFilter = null, task: taskFilter = null } = {}) {
     const allProjects = await this.projectStore.list({ includeArchived: true });
-    const selected = selectProjects(allProjects, projectFilter, taskFilter);
-    if (projectFilter && selected.length === 0) throw new Error(`No project matched ${projectFilter}`);
-    if (taskFilter && !selected.some((project) => matchingTasks(project, taskFilter).length > 0)) {
+    const matchingProjects = selectProjects(allProjects, projectFilter, taskFilter);
+    if (projectFilter && matchingProjects.length === 0) throw new Error(`No project matched ${projectFilter}`);
+    if (taskFilter && !matchingProjects.some((project) => matchingTasks(project, taskFilter).length > 0)) {
       throw new Error(`No task matched ${taskFilter}`);
     }
+    const selected = matchingProjects.slice(0, limits.projects);
 
     const destinationByPath = new Map();
     const worktreesByPath = new Map();
@@ -33,12 +35,13 @@ export class ShipMatesDoctor {
     const findings = [];
     const projects = [];
     for (const project of selected) {
-      const projectFindings = inspectProjectInvariants(project).map(({ code, subject }) =>
+      let projectFindings = inspectProjectInvariants(project).slice(0, limits.findings).map(({ code, subject }) =>
         finding("violation", `registry_${code}`, { projectId: project.id, subject },
           `Project registry invariant ${code} failed for ${subject}.`,
           manualRepair(`Repair ${project.id} in ${this.projectStore.target} without discarding task history.`)));
       const tasks = [];
-      const selectedTasks = taskFilter ? matchingTasks(project, taskFilter) : project.tasks;
+      const matchingPlanTasks = taskFilter ? matchingTasks(project, taskFilter) : project.tasks;
+      const selectedTasks = matchingPlanTasks.slice(0, limits.tasks);
       for (const planTask of selectedTasks) {
         const taskReport = await this.#inspectPlanTask(project, planTask,
           worktreesByPath.get(path.resolve(project.repoPath)),
@@ -49,45 +52,65 @@ export class ShipMatesDoctor {
       }
       const destination = destinationByPath.get(path.resolve(project.repoPath));
       inspectDestination(project, destination, projectFindings);
+      const projectFindingTotal = projectFindings.length;
+      projectFindings = projectFindings.slice(0, limits.findings);
       findings.push(...projectFindings);
       projects.push({
         id: project.id, name: project.name, status: project.status,
         repository: { identity: project.repo, registeredPath: project.repoPath, observed: destination },
         worktrees: worktreesByPath.get(path.resolve(project.repoPath)),
         tasks, findings: projectFindings,
+        truncation: {
+          tasks: truncation(matchingPlanTasks.length, limits.tasks),
+          findings: truncation(projectFindingTotal, limits.findings),
+        },
       });
     }
 
-    const counts = countFindings(findings);
+    const findingTotal = findings.length;
+    const boundedFindings = findings.slice(0, limits.findings);
+    const counts = countFindings(boundedFindings);
+    const wasTruncated = matchingProjects.length > limits.projects || findingTotal > limits.findings ||
+      projects.some(projectWasTruncated);
     return {
       schemaVersion: 1,
       generatedAt: this.clock().toISOString(),
       readOnly: true,
       filters: { project: projectFilter, task: taskFilter },
-      clean: findings.length === 0,
-      summary: { projects: projects.length, tasks: projects.reduce((sum, item) => sum + item.tasks.length, 0), findings: findings.length, ...counts },
+      clean: boundedFindings.length === 0 && !wasTruncated,
+      summary: { projects: projects.length, tasks: projects.reduce((sum, item) => sum + item.tasks.length, 0), findings: boundedFindings.length, ...counts },
       projects,
-      findings,
+      findings: boundedFindings,
+      truncation: {
+        projects: truncation(matchingProjects.length, limits.projects),
+        findings: truncation(findingTotal, limits.findings),
+      },
     };
   }
 
   async #inspectPlanTask(project, planTask, worktrees, destination, projectFindings, isFinalTask) {
     const attempts = [];
-    for (const attempt of planTask.attempts || []) {
+    const allAttempts = planTask.attempts || [];
+    for (const attempt of allAttempts.slice(0, limits.attempts)) {
       let snapshot = null;
+      let ledgerUnreadable = false;
       let observedProcess = null;
       let observedWorktree = null;
       try {
         snapshot = await this.taskStore.getSnapshot(attempt.taskId);
       } catch (error) {
+        ledgerUnreadable = true;
         projectFindings.push(finding("violation", "task_ledger_unreadable",
           scope(project, planTask, attempt.taskId), `Task ledger cannot be replayed: ${error.message}`,
-          manualRepair(`Repair the ledger for ${attempt.taskId} before any retry.`)));
+          manualRepair(`Inspect and repair ${ledgerPath(this.taskStore, attempt.taskId)} in place; preserve the original file and do not retry ${attempt.taskId} until every retained JSONL event replays successfully.`)));
       }
+      observedProcess = await this.#inspectProcess(project, planTask, attempt, projectFindings);
       if (!snapshot) {
-        projectFindings.push(finding("violation", "task_ledger_missing",
-          scope(project, planTask, attempt.taskId), "Registered task attempt has no durable task ledger.",
-          operation("reconcile_task", `shipmates reconcile --task ${attempt.taskId}`)));
+        if (!ledgerUnreadable) {
+          projectFindings.push(finding("violation", "task_ledger_missing",
+            scope(project, planTask, attempt.taskId), "Registered task attempt has no durable task ledger.",
+            manualRepair(`Restore ${ledgerPath(this.taskStore, attempt.taskId)} from durable evidence, or remove the stale attempt from ${this.projectStore.target}; preserve history and do not redispatch ${attempt.taskId} until ownership is proven.`)));
+        }
       } else {
         inspectProjection(project, planTask, attempt, snapshot, projectFindings);
         inspectValidation(project, planTask, attempt, snapshot, projectFindings);
@@ -97,7 +120,6 @@ export class ShipMatesDoctor {
         }
         inspectWorktree(project, planTask, attempt, snapshot, worktrees, observedWorktree, projectFindings);
         inspectDelivery(project, planTask, attempt, snapshot, destination, projectFindings, isFinalTask);
-        observedProcess = await this.#inspectProcess(project, planTask, attempt, projectFindings);
       }
       attempts.push({
         taskId: attempt.taskId, registryStatus: attempt.status,
@@ -108,6 +130,7 @@ export class ShipMatesDoctor {
     return {
       id: planTask.id, title: planTask.title, status: planTask.status,
       blockingReason: planTask.blockingReason || null, attempts,
+      truncation: { attempts: truncation(allAttempts.length, limits.attempts) },
     };
   }
 
@@ -118,7 +141,7 @@ export class ShipMatesDoctor {
     if (activePlanStatuses.has(attempt.status) && observed.running === false) {
       projectFindings.push(finding("uncertainty", "worker_process_missing",
         scope(project, planTask, attempt.taskId), `Recorded worker process ${pid} is not running.`,
-        operation("mark_worker_lost", `shipmates reconcile --task ${attempt.taskId}`)));
+        manualRepair(`Confirm PID ${pid} with ps -p ${pid}; then update attempt ${attempt.taskId} in ${this.projectStore.target} only if durable ledger evidence proves the worker exited, and do not launch a duplicate worker.`)));
     } else if (observed.running === null) {
       projectFindings.push(finding("uncertainty", "worker_process_unobservable",
         scope(project, planTask, attempt.taskId), `Worker process ${pid} could not be observed: ${observed.error}`,
@@ -144,7 +167,7 @@ function inspectProjection(project, planTask, attempt, snapshot, findings) {
   if (snapshot.state === "complete" && activePlanStatuses.has(attempt.status)) {
     findings.push(finding("stale_projection", "completed_task_still_active",
       scope(project, planTask, attempt.taskId), "The ledger proves completion but the Project attempt remains active.",
-      operation("record_observed_completion", `shipmates reconcile --task ${attempt.taskId}`)));
+      manualRepair(`Replay ${ledgerPath(null, attempt.taskId)} and update attempt ${attempt.taskId} in the Project registry to completed only if its terminal evidence proves completion; do not redispatch it.`)));
   }
   if (attempt.status === "completed" && snapshot.state !== "complete") {
     findings.push(finding("violation", "registry_completion_not_proven",
@@ -159,7 +182,7 @@ function inspectValidation(project, planTask, attempt, snapshot, findings) {
   if (request && (!validation || validation.requestEventId !== request.requestEventId) && snapshot.state === "validating") {
     findings.push(finding("uncertainty", "validation_result_missing",
       scope(project, planTask, attempt.taskId), "Validation intent exists without a matching terminal result.",
-      operation("resume_existing_validation", `shipmates reconcile --task ${attempt.taskId}`)));
+      manualRepair(`Inspect the latest validation request in ${ledgerPath(null, attempt.taskId)} and record only its existing terminal result; do not start a second validation run.`)));
   }
   if (validation?.passed === true && validation.finalHeadSha !== snapshot.worktree?.headSha) {
     findings.push(finding("violation", "validated_head_mismatch",
@@ -175,7 +198,7 @@ function inspectHumanWait(project, planTask, attempt, snapshot, findings) {
   if (!hasApprovalCommand && !planTask.blockingReason) {
     findings.push(finding("violation", "human_wait_has_no_prompt",
       scope(project, planTask, attempt.taskId), "Task awaits a human without an explicit question or approval gate.",
-      operation("request_human_approval", `shipmates reconcile --task ${attempt.taskId}`)));
+      manualRepair(`Add the exact pending question or approval gate for ${attempt.taskId} to its durable ledger before leaving it awaiting_human; do not infer approval.`)));
   }
 }
 
@@ -190,10 +213,14 @@ function inspectWorktree(project, planTask, attempt, snapshot, observed, git, fi
   }
   const entry = observed?.entries?.find(({ worktreePath }) =>
     path.resolve(worktreePath) === path.resolve(worktree.worktreePath));
-  if (!entry || entry.state !== "leased" || entry.leaseHolder !== attempt.taskId) {
+  if (!entry && observed?.truncation?.truncated) {
+    findings.push(finding("uncertainty", "worktree_lease_unobserved",
+      scope(project, planTask, attempt.taskId), "The matching Treehouse lease is outside the bounded observation.",
+      operation("inspect_worktrees", `treehouse status --repo ${project.repoPath}`)));
+  } else if (!entry || entry.state !== "leased" || entry.leaseHolder !== attempt.taskId) {
     findings.push(finding("violation", "worktree_lease_mismatch",
       scope(project, planTask, attempt.taskId), "Durable lease evidence does not match observed Treehouse ownership.",
-      operation("require_manual_repair", `shipmates doctor --task ${attempt.taskId} --json`)));
+      manualRepair(`Compare Treehouse ownership for ${worktree.worktreePath} with ledger ${ledgerPath(null, attempt.taskId)}; repair only the stale record, preserve the worktree and commits, and do not release or reassign the lease until ownership is proven.`)));
   }
   if (git?.error) {
     findings.push(finding("uncertainty", "worktree_git_unobservable",
@@ -202,7 +229,7 @@ function inspectWorktree(project, planTask, attempt, snapshot, observed, git, fi
   } else if (git && git.headSha !== worktree.headSha) {
     findings.push(finding("violation", "worktree_head_mismatch",
       scope(project, planTask, attempt.taskId), `Observed worktree HEAD ${git.headSha} does not match durable HEAD ${worktree.headSha}.`,
-      operation("require_manual_repair", `shipmates doctor --task ${attempt.taskId} --json`)));
+      manualRepair(`At ${worktree.worktreePath}, preserve observed commit ${git.headSha} and compare it with recorded commit ${worktree.headSha} in ${ledgerPath(null, attempt.taskId)}; correct only disproven metadata and do not reset, clean, or checkout the worktree.`)));
   } else if (git?.dirty && snapshot.state !== "running" && snapshot.state !== "awaiting_worker") {
     findings.push(finding("uncertainty", "worktree_unexpected_changes",
       scope(project, planTask, attempt.taskId), "Leased worktree has changes outside an active implementation state.",
@@ -230,11 +257,11 @@ function inspectDelivery(project, planTask, attempt, snapshot, destination, find
   } else if (path.resolve(delivery.repoPath) !== path.resolve(project.repoPath)) {
     findings.push(finding("violation", "delivery_destination_mismatch",
       scope(project, planTask, attempt.taskId), "Final delivery evidence targets a repository other than the registered Project repository.",
-      operation("retry_delivery", `shipmates reconcile --task ${attempt.taskId}`)));
+      manualRepair(`Do not deliver ${attempt.taskId}; compare its recorded delivery repository ${delivery.repoPath} with registered destination ${project.repoPath}, then correct the disproven registry or evidence record without moving commits.`)));
   } else if (destination?.headSha && delivery.headSha !== destination.headSha) {
     findings.push(finding("stale_projection", "destination_head_mismatch",
       scope(project, planTask, attempt.taskId), `Registered destination HEAD is ${destination.headSha}, not delivered commit ${delivery.headSha}.`,
-      operation("retry_delivery", `shipmates reconcile --task ${attempt.taskId}`)));
+      manualRepair(`At ${project.repoPath}, preserve destination commit ${destination.headSha} and verify whether delivered commit ${delivery.headSha} should be advanced by the normal reviewed delivery workflow; do not reset or force-update the destination.`)));
   }
 }
 
@@ -251,7 +278,8 @@ function summarizeSnapshot(snapshot) {
       worktreePath: snapshot.worktree.worktreePath || null,
       headSha: snapshot.worktree.headSha || null,
     } : null,
-    workers: (snapshot.workers || []).map(({ id, backend, status }) => ({ id, backend, status })),
+    workers: (snapshot.workers || []).slice(0, limits.workers).map(({ id, backend, status }) => ({ id, backend, status })),
+    truncation: { workers: truncation((snapshot.workers || []).length, limits.workers) },
     validation: validation ? {
       operationId: validation.operationId,
       outcome: validation.outcome || null,
@@ -287,6 +315,23 @@ function finding(kind, code, target, message, recovery) {
 
 function operation(name, command) { return { operation: name, command }; }
 function manualRepair(instruction) { return { operation: "require_manual_repair", instruction }; }
+
+function ledgerPath(taskStore, taskId) {
+  const root = taskStore?.rootDir || "$SHIPMATES_STATE_DIR";
+  return path.join(root, "tasks", taskId, "events.jsonl");
+}
+
+function truncation(total, limit) {
+  return { limit, total, omitted: Math.max(0, total - limit), truncated: total > limit };
+}
+
+function projectWasTruncated(project) {
+  return project.truncation.tasks.truncated || project.truncation.findings.truncated ||
+    project.worktrees?.truncation?.truncated === true ||
+    project.repository.observed?.truncation?.truncated === true ||
+    project.tasks.some((task) => task.truncation.attempts.truncated ||
+      task.attempts.some((attempt) => attempt.ledger?.truncation?.workers?.truncated === true));
+}
 
 function countFindings(findings) {
   const counts = { violations: 0, uncertainties: 0, staleProjections: 0 };

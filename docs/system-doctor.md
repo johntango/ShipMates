@@ -30,11 +30,10 @@ bounded Project/task observations, and findings. Findings are classified as:
 - `stale_projection`: derived Project state has not caught up with authoritative
   ledger or destination evidence.
 
-Every finding includes one recommended operation and either an exact command or
-a concrete manual-repair instruction. Commands such as
-`shipmates reconcile --task TASK_ID` describe the explicit recovery operation;
-doctor never invokes them. The later reconciliation command must independently
-prove a repair safe and idempotent before mutating state.
+Every finding includes one recommended operation and either an executable,
+read-only inspection command or a concrete manual-repair instruction naming the
+affected path, task, and safety constraints. Doctor never invokes recovery
+operations.
 
 Exit status is `0` for a clean report, `1` when findings exist, and `2` for
 invalid filters, malformed options, or an inspection setup failure. A nonzero
@@ -43,4 +42,7 @@ status never means doctor attempted a repair.
 The structured report deliberately excludes raw worker briefs, model prose,
 and full event histories. Durable ledgers remain authoritative; doctor exposes
 only bounded state, HEAD, validation, process, and lease facts needed to explain
-the finding and recovery operation.
+the finding and recovery operation. Arrays for projects, tasks, attempts,
+Treehouse entries, Git changes, workers, and findings have deterministic limits.
+Their adjacent `truncation` metadata reports the limit, total, omitted count, and
+whether truncation occurred; a report with an incomplete inspection is not clean.

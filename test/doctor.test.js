@@ -37,7 +37,8 @@ test("reports stale completion, missing processes, and exact recovery commands",
   assert.deepEqual(report.findings.map(({ code }) => code).sort(), [
     "completed_task_still_active", "worker_process_missing",
   ]);
-  assert.equal(report.findings[0].recovery.command, "shipmates reconcile --task task-one");
+  const completion = report.findings.find(({ code }) => code === "completed_task_still_active");
+  assert.match(completion.recovery.instruction, /do not redispatch/u);
 });
 
 test("reports missing and corrupt ledgers and registry invariants", async () => {
@@ -50,6 +51,28 @@ test("reports missing and corrupt ledgers and registry invariants", async () => 
 
   const corrupt = await fixture({ project: project(), snapshotError: new Error("bad JSONL") });
   assert.equal(corrupt.findings.some(({ code, message }) => code === "task_ledger_unreadable" && /bad JSONL/u.test(message)), true);
+  assert.equal(corrupt.findings.some(({ code }) => code === "task_ledger_missing"), false);
+});
+
+test("observes registry processes when the ledger is unreadable", async () => {
+  const source = project();
+  source.tasks[0].attempts[0].status = "dispatched";
+  source.tasks[0].attempts[0].launchReceipt = { kind: "process", pid: 4242 };
+  const report = await fixture({ project: source, snapshotError: new Error("bad JSONL"), processRunning: false });
+  assert.equal(report.findings.some(({ code }) => code === "worker_process_missing"), true);
+  assert.equal(report.projects[0].tasks[0].attempts[0].process.running, false);
+});
+
+test("caps report collections and exposes deterministic truncation metadata", async () => {
+  const source = project();
+  source.tasks[0].attempts = Array.from({ length: 25 }, (_, index) => ({
+    taskId: `task-${index}`, status: "completed", blockingReason: null,
+  }));
+  const report = await fixture({ project: source });
+  assert.equal(report.projects[0].tasks[0].attempts.length, 20);
+  assert.deepEqual(report.projects[0].tasks[0].truncation.attempts, {
+    limit: 20, total: 25, omitted: 5, truncated: true,
+  });
 });
 
 test("reports worktree uncertainty, validation uncertainty, and absent destinations", async () => {
