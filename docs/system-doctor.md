@@ -46,3 +46,5 @@ the finding and recovery operation. Arrays for projects, tasks, attempts,
 Treehouse entries, Git changes, workers, and findings have deterministic limits.
 Their adjacent `truncation` metadata reports the limit, total, omitted count, and
 whether truncation occurred; a report with an incomplete inspection is not clean.
+Worktree records on completed tasks are retained as authoritative history, not
+treated as active leases to compare with current Treehouse or Git state.
