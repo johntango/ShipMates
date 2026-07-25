@@ -38,6 +38,7 @@ import {
   taskArtifactSummary,
 } from "../src/cli/firstmate-follow-up.js";
 import { readFirstmateMessage } from "../src/cli/firstmate-message.js";
+import { handleValidationApproval } from "../src/cli/firstmate-validation-approval.js";
 import { appearsToRequireHumanInput, humanInputRequired } from "../src/cli/terminal-style.js";
 import {
   answerProjectQuery,
@@ -799,43 +800,15 @@ async function runInteractiveFirstmate() {
           console.log(`Created and selected ${activeProject.name} in ${activeProject.repo}.`);
           return;
         }
-        const approveValidation = message.match(
-          /^approve validation for task ([a-z0-9][a-z0-9._-]{2,63})$/iu,
-        );
-        if (approveValidation) {
-          const approvedTaskId = approveValidation[1].toLowerCase();
-          const snapshot = await interactiveStore.getSnapshot(approvedTaskId);
-          const prior = snapshot.validationRuns?.at(-1);
-          const intentIndex = prior?.command?.args?.indexOf("--intent") ?? -1;
-          const intent = intentIndex >= 0 ? prior.command.args[intentIndex + 1] : null;
-          if (!intent) throw new Error(`Task ${approvedTaskId} has no durable validation intent`);
-          const binaryPath = process.env.NO_MISTAKES_BIN ||
-            "/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes";
-          const gate = new NoMistakesLocalGate({
-            binaryPath,
-            stateRoot: path.join(interactiveStore.rootDir, "no-mistakes"),
-            onProgress: (value) => console.error(`[no-mistakes] ${value}`),
-          });
-          await new LocalValidationWorkflow({
-            store: interactiveStore, gate, actor: "firstmate",
-          }).approve({ taskId: approvedTaskId, intent });
-          const registered = await projectStore.describeAttempt(approvedTaskId);
-          const registeredProject = registered
-            ? await projectStore.get(registered.projectId) : null;
-          await new LocalDeliveryWorkflow({
-            store: interactiveStore, actor: "firstmate",
-          }).deliver({
-            taskId: approvedTaskId,
-            destinationRepoPath: registeredProject?.repoPath,
-          });
-          const reconciled = await orchestrator.reconcileTask(approvedTaskId);
-          activeProject = await projectStore.get(reconciled.context.projectId);
-          console.log(`Approved validation and delivered “${reconciled.context.taskName}” in ${reconciled.context.projectName}; the task is complete.`);
-          if (activeProject.executionPolicy?.autoAdvance !== false) {
-            setImmediate(() => void advanceProject(activeProject.id, {
-              reason: "validation approved and delivered",
-            }));
-          }
+        const validationApproval = await handleValidationApproval(message, {
+          store: interactiveStore,
+          projectStore,
+          orchestrator,
+          advanceProject,
+        });
+        if (validationApproval) {
+          activeProject = validationApproval.project;
+          console.log(`Approved validation and delivered “${validationApproval.context.taskName}” in ${validationApproval.context.projectName}; the task is complete.`);
           return;
         }
         const addProject = message.match(/^add project\s+(.+)$/iu);
