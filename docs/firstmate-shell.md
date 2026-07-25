@@ -159,11 +159,24 @@ Useful conversational commands are:
 ```text
 add project /absolute/path/to/another/repository
 create project AnotherProjectInTheSelectedRepository
+create TestA under DemoTest0
 list projects
 switch project ProjectName
 enable demo mode for ProjectName
 archive project ProjectName
 ```
+
+Validation approval is also an exact conversational control:
+
+```text
+approve validation for task task-123
+```
+
+Firstmate sends the approval to the already-running no-mistakes gate, appends
+the terminal result to the same durable validation operation, fast-forwards the
+exact validated commit into the registered Project repository rather than the
+task worktree, and reconciles the Project task before any dependent work can
+start. It never launches a duplicate validation run.
 
 `enable demo mode for ProjectName` is an explicit project-scoped, local-only
 capability-demo policy. Demo tasks still use the controlled local commit and
@@ -186,6 +199,11 @@ task still records its exact repository and base SHA. Broad objectives are saved
 as plans for review rather than launched all at once. Subsequent concrete
 instructions can bind execution to a planned task while independent repository
 projects remain isolated.
+
+An explicitly targeted creation command such as `create TestA under DemoTest0`
+resolves the named registered repository and creates the Project directly in
+the local registry. It does not depend on the currently selected repository,
+enter external-write approval, or create a worker task.
 
 The dashboard provides bounded project controls. **Approve plan** moves a saved
 plan into dispatchable state; **Pause project** prevents new planned work from

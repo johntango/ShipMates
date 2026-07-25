@@ -24,7 +24,7 @@ before acquiring a local-write lease and again when validation begins.
 
 ## Capability boundary
 
-The adapter always calls:
+The adapter starts validation with:
 
 ```text
 no-mistakes axi run --intent INTENT --skip rebase,push,pr,ci
@@ -37,6 +37,13 @@ Callers cannot change the skipped steps or add `--yes`. The child environment:
 - points GitHub and GitLab CLI configuration at empty task directories;
 - removes ambient GitHub, GitLab, Bitbucket, Azure DevOps, and OpenAI API
   tokens.
+
+If that run parks at an approval gate, the task-bound approval path first
+inspects the existing run and calls `axi respond --action approve` only while
+it is nonterminal. It then inspects the same run again. A terminal status from
+the first inspection is reconciled directly, covering the crash window after
+no-mistakes completed but before ShipMates recorded the result; neither path
+starts a second validation run.
 
 The initial `axi` trigger pushes the commit only into no-mistakes' local bare
 gate repository. Rebase, branch push, pull-request, and CI steps must be

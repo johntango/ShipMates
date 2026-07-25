@@ -185,6 +185,42 @@ test("allows human review when local validation pauses at an approval gate", () 
   assert.equal(replayTaskEvents(validationLifecycleEvents(approval)).state, "awaiting_human");
 });
 
+test("reconciles a terminal pass for the exact previously recorded approval gate", () => {
+  const approval = localValidationReport();
+  approval.passed = false;
+  approval.outcome = null;
+  approval.runStatus = "running";
+  approval.gate = { step: "test", status: "awaiting_approval" };
+  approval.steps.find(({ step }) => step === "test").status = "awaiting_approval";
+  for (const step of approval.steps.slice(approval.steps.findIndex(({ step }) => step === "test") + 1)) {
+    if (!new Set(["push", "pr", "ci"]).has(step.step)) step.status = "pending";
+  }
+  const events = validationLifecycleEvents(approval);
+  const resultIndex = events.findIndex(({ type }) => type === "validation.local.recorded");
+  events.splice(resultIndex, 0, event("validation-request", "validation.local.requested", {
+    operationId: "validation-v1", attemptId: "attempt-one",
+    headSha: approval.initialHeadSha, branch: approval.branch,
+    intentSha256: approval.intentSha256,
+    tool: {
+      name: approval.tool.name, pinned: approval.tool.pinned,
+      version: approval.tool.version, sourceCommit: approval.tool.sourceCommit,
+      binarySha256: approval.tool.binarySha256,
+    },
+  }));
+  events[resultIndex + 1].data.operationId = "validation-v1";
+  events[resultIndex + 1].data.requestEventId = "validation-request";
+  const terminal = localValidationReport();
+  terminal.command.args = ["axi", "status"];
+  events.push(event("validation-reconciled", "validation.local.reconciled", {
+    runId: approval.runId, report: terminal,
+  }));
+
+  const snapshot = replayTaskEvents(events);
+  assert.equal(snapshot.validationRuns.at(-1).passed, true);
+  assert.equal(snapshot.validationRequests.at(-1).passed, true);
+  assert.equal(snapshot.validationRuns.at(-1).priorEventId, "validation-result");
+});
+
 test("records a self-consistent recovery audit at the exact ledger watermark", () => {
   const events = [
     createdEvent(),

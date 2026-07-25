@@ -29,7 +29,9 @@ test("fast-forwards a clean local checkout to the exact validated commit", async
     },
   });
 
-  const result = await workflow.deliver({ taskId: "task-001" });
+  const result = await workflow.deliver({
+    taskId: "task-001", destinationRepoPath: "/repo",
+  });
 
   assert.equal(result.reused, false);
   assert.equal(result.snapshot.state, "complete");
@@ -45,10 +47,26 @@ test("refuses delivery when the destination checkout is dirty", async () => {
   });
 
   await assert.rejects(
-    workflow.deliver({ taskId: "task-001" }),
+    workflow.deliver({ taskId: "task-001", destinationRepoPath: "/repo" }),
     (error) => error instanceof LocalDeliveryError && /uncommitted/u.test(error.message),
   );
   assert.equal(store.value.state, "validating");
+});
+
+test("completes the ledger when the validated commit was already delivered", async () => {
+  const store = new MemoryStore(snapshot());
+  const workflow = new LocalDeliveryWorkflow({
+    store,
+    runGit: async (_cwd, args) => args[0] === "rev-parse" ? `${HEAD}\n` : "",
+  });
+
+  const result = await workflow.deliver({
+    taskId: "task-001", destinationRepoPath: "/repo",
+  });
+
+  assert.equal(result.reused, true);
+  assert.equal(result.snapshot.state, "complete");
+  assert.equal(result.snapshot.evidence.length, 1);
 });
 
 test("only offers local delivery for an exact passing validation", () => {

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -13,11 +14,29 @@ export class LocalDeliveryWorkflow {
     this.actor = actor;
   }
 
-  async deliver({ taskId }) {
+  async deliver({ taskId, destinationRepoPath }) {
+    if (typeof destinationRepoPath !== "string" || destinationRepoPath.trim() === "") {
+      throw new LocalDeliveryError("Local delivery requires the registered Project repository path");
+    }
     let snapshot = await this.store.getSnapshot(taskId);
     const target = requireValidatedTarget(snapshot);
-    const destination = await inspect(this.runGit, target.repoPath);
-    if (destination.headSha === target.headSha) return { snapshot, reused: true, ...target };
+    const repoPath = path.resolve(destinationRepoPath);
+    if (repoPath === path.resolve(target.worktreePath)) {
+      throw new LocalDeliveryError("Local delivery destination cannot be the task worktree");
+    }
+    const destination = await inspect(this.runGit, repoPath);
+    if (destination.headSha === target.headSha) {
+      if (!destination.clean) {
+        throw new LocalDeliveryError(
+          "Local checkout has uncommitted or untracked changes; delivery cannot be completed",
+        );
+      }
+      snapshot = await recordDelivery(
+        this.store, snapshot, this.actor, taskId, repoPath, target,
+      );
+      snapshot = await completeLocally(this.store, snapshot, this.actor, taskId);
+      return { snapshot, reused: true, ...target, repoPath };
+    }
     if (destination.headSha !== target.baseSha) {
       throw new LocalDeliveryError(
         `Local checkout moved from task base ${target.baseSha} to ${destination.headSha}`,
@@ -33,25 +52,16 @@ export class LocalDeliveryWorkflow {
       throw new LocalDeliveryError("Validated task worktree no longer matches its exact commit");
     }
 
-    await this.runGit(target.repoPath, ["merge", "--ff-only", target.headSha]);
-    const delivered = await inspect(this.runGit, target.repoPath);
+    await this.runGit(repoPath, ["merge", "--ff-only", target.headSha]);
+    const delivered = await inspect(this.runGit, repoPath);
     if (!delivered.clean || delivered.headSha !== target.headSha) {
       throw new LocalDeliveryError("Local delivery did not land the exact validated commit");
     }
-    snapshot = await this.store.recordEvidence({
-      taskId,
-      actor: this.actor,
-      kind: "local-delivery",
-      value: JSON.stringify({
-        repoPath: target.repoPath,
-        baseSha: target.baseSha,
-        headSha: target.headSha,
-        method: "fast-forward",
-      }),
-      eventId: `${taskId}:local-delivery:${target.headSha}:v1`,
-    });
+    snapshot = await recordDelivery(
+      this.store, snapshot, this.actor, taskId, repoPath, target,
+    );
     snapshot = await completeLocally(this.store, snapshot, this.actor, taskId);
-    return { snapshot, reused: false, ...target };
+    return { snapshot, reused: false, ...target, repoPath };
   }
 }
 
@@ -108,6 +118,21 @@ async function defaultRunGit(cwd, args) {
     maxBuffer: 4 * 1024 * 1024,
   });
   return stdout;
+}
+
+async function recordDelivery(store, snapshot, actor, taskId, repoPath, target) {
+  return store.recordEvidence({
+    taskId,
+    actor,
+    kind: "local-delivery",
+    value: JSON.stringify({
+      repoPath,
+      baseSha: target.baseSha,
+      headSha: target.headSha,
+      method: "fast-forward",
+    }),
+    eventId: `${taskId}:local-delivery:${target.headSha}:v1`,
+  });
 }
 
 async function completeLocally(store, snapshot, actor, taskId) {

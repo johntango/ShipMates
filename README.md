@@ -122,11 +122,22 @@ Useful commands include:
 ```text
 add project /absolute/path/to/repository
 create project ProjectName
+create TestA under DemoTest0
 list projects
 switch project ProjectName
 enable demo mode for ProjectName
 archive project ProjectName
 ```
+
+When local validation pauses for a human decision, Firstmate prints an exact
+task-bound response such as:
+
+```text
+approve validation for task task-123
+```
+
+The [Firstmate shell guide](docs/firstmate-shell.md#interactive-cli) owns the
+approval and repository-selection semantics for conversational commands.
 
 Firstmate resolves project references against the registry rather than treating
 surrounding conversational wording as a project name. Once a plan is saved,

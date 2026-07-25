@@ -353,6 +353,17 @@ export class TaskStore {
     });
   }
 
+  async reconcileLocalValidation({ taskId, actor, report, runId, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(),
+      taskId,
+      type: "validation.local.reconciled",
+      at,
+      actor,
+      data: { report, runId },
+    });
+  }
+
   async recordRecoveryAudit({ taskId, actor, report, eventId, at }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),

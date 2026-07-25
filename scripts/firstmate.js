@@ -38,6 +38,7 @@ import {
   taskArtifactSummary,
 } from "../src/cli/firstmate-follow-up.js";
 import { readFirstmateMessage } from "../src/cli/firstmate-message.js";
+import { handleValidationApproval } from "../src/cli/firstmate-validation-approval.js";
 import { appearsToRequireHumanInput, humanInputRequired } from "../src/cli/terminal-style.js";
 import {
   answerProjectQuery,
@@ -316,7 +317,7 @@ if (!classifyOnly) {
     if (validationApprovalRequired) {
       console.error(humanInputRequired(
         `Task ${taskId} local validation awaits human approval at ${validated.report.gate.step}. ` +
-        "Review the validation details in the task dashboard before deciding how to proceed.",
+        `Review the validation details, then tell Firstmate: approve validation for task ${taskId}`,
       ));
     } else if (validated.report.passed) {
       console.error(humanInputRequired(
@@ -551,9 +552,15 @@ async function runInteractiveFirstmate() {
     const taskContext = await humanTaskContext(current);
     if (action.decision === "deliver_changes") {
       try {
+        const registered = await projectStore.describeAttempt(action.taskId);
+        const registeredProject = registered
+          ? await projectStore.get(registered.projectId) : null;
         const delivered = await new LocalDeliveryWorkflow({
           store: interactiveStore,
-        }).deliver({ taskId: action.taskId });
+        }).deliver({
+          taskId: action.taskId,
+          destinationRepoPath: registeredProject?.repoPath,
+        });
         await interactiveDashboard.write(delivered.snapshot);
         const subject = `“${taskContext.taskName}” in ${taskContext.projectName}`;
         const reply = delivered.reused
@@ -780,12 +787,28 @@ async function runInteractiveFirstmate() {
         }
         const createProject = parseProjectCreation(message);
         if (createProject) {
-          const context = await discoverFirstmateContext({ cwd: activeProject.repoPath });
+          let targetProject = activeProject;
+          if (createProject.repositoryQuery) {
+            const repository = await projectStore.repository(createProject.repositoryQuery);
+            targetProject = repository.projects[0];
+          }
+          const context = await discoverFirstmateContext({ cwd: targetProject.repoPath });
           activeProject = await projectStore.create({
-            name: createProject, repo: context.repo,
+            name: createProject.name, repo: context.repo,
             repoPath: context.repoPath, baseSha: context.baseSha,
           });
           console.log(`Created and selected ${activeProject.name} in ${activeProject.repo}.`);
+          return;
+        }
+        const validationApproval = await handleValidationApproval(message, {
+          store: interactiveStore,
+          projectStore,
+          orchestrator,
+          advanceProject,
+        });
+        if (validationApproval) {
+          activeProject = validationApproval.project;
+          console.log(`Approved validation and delivered “${validationApproval.context.taskName}” in ${validationApproval.context.projectName}; the task is complete.`);
           return;
         }
         const addProject = message.match(/^add project\s+(.+)$/iu);

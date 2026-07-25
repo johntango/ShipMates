@@ -178,6 +178,33 @@ test("records an approval gate as not passed without advancing remote steps", as
   assert.equal(report.steps.find(({ step }) => step === "push").status, "pending");
 });
 
+test("approves the existing gate and returns its terminal passing result", async () => {
+  const calls = [];
+  const base = fakeRunner({ output: passingOutput(), calls });
+  let statusReads = 0;
+  const runner = async (command, args, options) => {
+    if (command.endsWith("no-mistakes") && args.join(" ") === "axi status" &&
+      statusReads++ === 0) {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: gateOutput(), stderr: "" };
+    }
+    return base(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes", runner,
+    clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  const report = await gate.respond({
+    taskId: "validation-001", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate locally", action: "approve",
+  });
+
+  assert.equal(report.passed, true);
+  assert.deepEqual(calls.find(({ args }) => args[1] === "respond")?.args,
+    ["axi", "respond", "--action", "approve"]);
+});
+
 test("rejects malformed output and a remote-capable step that ran", async () => {
   assert.throws(() => parseAxiOutput("outcome: passed\n"), NoMistakesOutputError);
   const output = passingOutput().replace(
