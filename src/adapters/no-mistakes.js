@@ -192,6 +192,73 @@ export class NoMistakesLocalGate {
     };
   }
 
+  async respond({ taskId, worktreePath, expectedHeadSha, intent, action }) {
+    requireNonEmpty(taskId, "taskId");
+    requireNonEmpty(intent, "intent");
+    if (!new Set(["approve", "skip"]).has(action)) {
+      throw new TypeError("Local validation response action must be approve or skip");
+    }
+    const expected = fullSha(expectedHeadSha, "expectedHeadSha");
+    const workingDirectory = path.resolve(worktreePath);
+    const pinEvidence = await this.verifyPin();
+    const runtimeHome = await this.#runtimeHome(workingDirectory);
+    await this.#initialize({ runtimeHome, worktreePath: workingDirectory });
+    const before = await this.#inspect(workingDirectory);
+    if (before.headSha !== expected || before.dirty) {
+      throw new NoMistakesGateError(
+        "Local validation response requires a clean worktree at the exact expected head",
+      );
+    }
+    let args = ["axi", "status"];
+    const startedAt = this.clock().toISOString();
+    const options = {
+      cwd: workingDirectory,
+      env: localOnlyEnvironment({ taskRoot: runtimeHome }),
+      timeout: this.timeoutMs,
+      maxBuffer: 4 * 1024 * 1024,
+      onStderrLine: this.onProgress,
+    };
+    let result = await this.runner(this.binaryPath, args, options);
+    let parsed = parseAxiOutput(result.stdout);
+    if (parsed.outcome === null) {
+      args = ["axi", "respond", "--action", action];
+      await this.runner(this.binaryPath, args, options);
+      result = await this.runner(this.binaryPath, ["axi", "status"], options);
+      parsed = parseAxiOutput(result.stdout);
+    }
+    const completedAt = this.clock().toISOString();
+    const after = await this.#inspect(workingDirectory);
+    if (after.branch !== before.branch || after.dirty || before.headSha !== after.headSha ||
+      !after.headSha.startsWith(parsed.head)) {
+      throw new NoMistakesGateError(
+        "Validator response changed or no longer matches the exact task worktree",
+      );
+    }
+    validateLocalSteps(parsed.steps, { terminal: parsed.outcome !== null });
+    const passed = result.exitCode === 0 && parsed.outcome === "passed" &&
+      parsed.gate === null && parsed.steps.every(({ status }) =>
+        new Set(["completed", "skipped"]).has(status));
+    return {
+      schemaVersion: 1,
+      taskId,
+      tool: {
+        name: "no-mistakes", binary: this.binaryPath, pinned: true,
+        version: pinEvidence.version, sourceCommit: pinEvidence.sourceCommit,
+        binarySha256: pinEvidence.binarySha256,
+      },
+      mode: "local-only", remoteOperations: false, intentSha256: digest(intent),
+      command: { args, skipSteps: [...this.skipSteps] },
+      startedAt, completedAt, branch: after.branch,
+      initialHeadSha: before.headSha, finalHeadSha: after.headSha, headChanged: false,
+      runId: parsed.runId, runStatus: parsed.runStatus, outcome: parsed.outcome,
+      passed, findings: parsed.findings, steps: parsed.steps, gate: parsed.gate,
+      process: {
+        exitCode: result.exitCode,
+        stdoutSha256: digest(result.stdout), stderrSha256: digest(result.stderr),
+      },
+    };
+  }
+
   pinEvidence() {
     return Object.freeze({
       name: "no-mistakes",

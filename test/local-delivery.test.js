@@ -29,7 +29,9 @@ test("fast-forwards a clean local checkout to the exact validated commit", async
     },
   });
 
-  const result = await workflow.deliver({ taskId: "task-001" });
+  const result = await workflow.deliver({
+    taskId: "task-001", destinationRepoPath: "/repo",
+  });
 
   assert.equal(result.reused, false);
   assert.equal(result.snapshot.state, "complete");
@@ -45,7 +47,7 @@ test("refuses delivery when the destination checkout is dirty", async () => {
   });
 
   await assert.rejects(
-    workflow.deliver({ taskId: "task-001" }),
+    workflow.deliver({ taskId: "task-001", destinationRepoPath: "/repo" }),
     (error) => error instanceof LocalDeliveryError && /uncommitted/u.test(error.message),
   );
   assert.equal(store.value.state, "validating");

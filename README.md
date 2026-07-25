@@ -129,6 +129,17 @@ enable demo mode for ProjectName
 archive project ProjectName
 ```
 
+When local validation pauses for a human decision, Firstmate prints an exact
+task-bound response such as:
+
+```text
+approve validation for task task-123
+```
+
+That command approves the existing no-mistakes gate, records its terminal
+result without starting another run, delivers the exact validated commit, and
+repairs the Project projection before advancing dependent work.
+
 Firstmate resolves project references against the registry rather than treating
 surrounding conversational wording as a project name. Once a plan is saved,
 unplanned work cannot be attached beside it. The plan must be durably approved,

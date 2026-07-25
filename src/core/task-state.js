@@ -670,6 +670,33 @@ function applyEvent(snapshot, event, index) {
       break;
     }
 
+    case "validation.local.reconciled": {
+      requireCreated(snapshot, event);
+      const { report, runId } = event.data;
+      validateLocalValidationReport(snapshot, report, {
+        states: ["awaiting_human"], allowApprovalResponse: true,
+      });
+      const prior = snapshot.validationRuns.at(-1);
+      const request = snapshot.validationRequests.at(-1);
+      if (!prior || prior.runId !== runId || report.runId !== runId ||
+        prior.gate?.status !== "awaiting_approval" || report.gate !== null ||
+        report.passed !== true || request?.status !== "completed" ||
+        request.runId !== runId || prior.initialHeadSha !== report.initialHeadSha ||
+        prior.finalHeadSha !== report.finalHeadSha ||
+        prior.intentSha256 !== report.intentSha256) {
+        throw new TaskStateError(
+          "Reconciled local validation must terminally pass the exact recorded approval gate",
+        );
+      }
+      snapshot.validationRuns[snapshot.validationRuns.length - 1] = {
+        ...report, eventId: event.id, at: event.at, actor: event.actor,
+        priorEventId: prior.eventId,
+      };
+      request.passed = true;
+      request.reconciledEventId = event.id;
+      break;
+    }
+
     case "recovery.audit.recorded": {
       requireCreated(snapshot, event);
       validateRecoveryAudit(snapshot, event.data.report, event);
@@ -2458,7 +2485,9 @@ function requireFullSha(label, value) {
   }
 }
 
-function validateLocalValidationReport(snapshot, report) {
+function validateLocalValidationReport(snapshot, report, {
+  states = ["validating"], allowApprovalResponse = false,
+} = {}) {
   if (!report || typeof report !== "object" || Array.isArray(report)) {
     throw new TaskStateError("Local validation report must be an object");
   }
@@ -2490,7 +2519,7 @@ function validateLocalValidationReport(snapshot, report) {
   ];
   if (Object.keys(report.tool || {}).sort().join(",") !== reportToolKeys.join(",") ||
     report.tool?.name !== "no-mistakes" || report.tool?.pinned !== true ||
-    snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    !states.includes(snapshot.state) || snapshot.worktree?.status !== "leased" ||
     report.branch !== snapshot.worktree.branch ||
     report.initialHeadSha !== snapshot.worktree.headSha ||
     report.finalHeadSha !== snapshot.worktree.headSha) {
@@ -2530,14 +2559,18 @@ function validateLocalValidationReport(snapshot, report) {
     "rebase,push,pr,ci",
     "rebase,review,document,push,pr,ci",
   ]);
+  const approvalResponse = allowApprovalResponse &&
+    new Set([
+      JSON.stringify(["axi", "respond", "--action", "approve"]),
+      JSON.stringify(["axi", "status"]),
+    ]).has(JSON.stringify(report.command?.args));
   if (
     !allowedSkipSteps.has(skipSteps) ||
-    !Array.isArray(report.command?.args) || report.command.args.length !== 6 ||
-    report.command.args[0] !== "axi" || report.command.args[1] !== "run" ||
-    report.command.args[2] !== "--intent" ||
-    digestText(report.command.args[3]) !== report.intentSha256 ||
-    report.command.args[4] !== "--skip" ||
-    report.command.args[5] !== skipSteps ||
+    (!approvalResponse && (!Array.isArray(report.command?.args) ||
+      report.command.args.length !== 6 || report.command.args[0] !== "axi" ||
+      report.command.args[1] !== "run" || report.command.args[2] !== "--intent" ||
+      digestText(report.command.args[3]) !== report.intentSha256 ||
+      report.command.args[4] !== "--skip" || report.command.args[5] !== skipSteps)) ||
     report.command.args.includes("--yes")
   ) {
     throw new TaskStateError("Local validation command is not capability-limited");

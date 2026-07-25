@@ -316,7 +316,7 @@ if (!classifyOnly) {
     if (validationApprovalRequired) {
       console.error(humanInputRequired(
         `Task ${taskId} local validation awaits human approval at ${validated.report.gate.step}. ` +
-        "Review the validation details in the task dashboard before deciding how to proceed.",
+        `Review the validation details, then tell Firstmate: approve validation for task ${taskId}`,
       ));
     } else if (validated.report.passed) {
       console.error(humanInputRequired(
@@ -551,9 +551,15 @@ async function runInteractiveFirstmate() {
     const taskContext = await humanTaskContext(current);
     if (action.decision === "deliver_changes") {
       try {
+        const registered = await projectStore.describeAttempt(action.taskId);
+        const registeredProject = registered
+          ? await projectStore.get(registered.projectId) : null;
         const delivered = await new LocalDeliveryWorkflow({
           store: interactiveStore,
-        }).deliver({ taskId: action.taskId });
+        }).deliver({
+          taskId: action.taskId,
+          destinationRepoPath: registeredProject?.repoPath,
+        });
         await interactiveDashboard.write(delivered.snapshot);
         const subject = `“${taskContext.taskName}” in ${taskContext.projectName}`;
         const reply = delivered.reused
@@ -791,6 +797,45 @@ async function runInteractiveFirstmate() {
             repoPath: context.repoPath, baseSha: context.baseSha,
           });
           console.log(`Created and selected ${activeProject.name} in ${activeProject.repo}.`);
+          return;
+        }
+        const approveValidation = message.match(
+          /^approve validation for task ([a-z0-9][a-z0-9._-]{2,63})$/iu,
+        );
+        if (approveValidation) {
+          const approvedTaskId = approveValidation[1].toLowerCase();
+          const snapshot = await interactiveStore.getSnapshot(approvedTaskId);
+          const prior = snapshot.validationRuns?.at(-1);
+          const intentIndex = prior?.command?.args?.indexOf("--intent") ?? -1;
+          const intent = intentIndex >= 0 ? prior.command.args[intentIndex + 1] : null;
+          if (!intent) throw new Error(`Task ${approvedTaskId} has no durable validation intent`);
+          const binaryPath = process.env.NO_MISTAKES_BIN ||
+            "/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes";
+          const gate = new NoMistakesLocalGate({
+            binaryPath,
+            stateRoot: path.join(interactiveStore.rootDir, "no-mistakes"),
+            onProgress: (value) => console.error(`[no-mistakes] ${value}`),
+          });
+          await new LocalValidationWorkflow({
+            store: interactiveStore, gate, actor: "firstmate",
+          }).approve({ taskId: approvedTaskId, intent });
+          const registered = await projectStore.describeAttempt(approvedTaskId);
+          const registeredProject = registered
+            ? await projectStore.get(registered.projectId) : null;
+          await new LocalDeliveryWorkflow({
+            store: interactiveStore, actor: "firstmate",
+          }).deliver({
+            taskId: approvedTaskId,
+            destinationRepoPath: registeredProject?.repoPath,
+          });
+          const reconciled = await orchestrator.reconcileTask(approvedTaskId);
+          activeProject = await projectStore.get(reconciled.context.projectId);
+          console.log(`Approved validation and delivered “${reconciled.context.taskName}” in ${reconciled.context.projectName}; the task is complete.`);
+          if (activeProject.executionPolicy?.autoAdvance !== false) {
+            setImmediate(() => void advanceProject(activeProject.id, {
+              reason: "validation approved and delivered",
+            }));
+          }
           return;
         }
         const addProject = message.match(/^add project\s+(.+)$/iu);

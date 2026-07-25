@@ -133,11 +133,37 @@ test("moves an approval-gated validation to awaiting human", async () => {
   assert.equal(store.transitions[0].to, "awaiting_human");
 });
 
+test("approves and reconciles the exact existing validation gate", async () => {
+  const store = new MemoryStore();
+  const intent = "Validate locally";
+  const gated = {
+    ...validationReport(),
+    intentSha256: "unused",
+    gate: { step: "test", status: "awaiting_approval" },
+  };
+  const workflow = new LocalValidationWorkflow({
+    store,
+    gate: {
+      pinEvidence,
+      async run() { return gated; },
+      async respond() { return { ...gated, gate: null, passed: true }; },
+    },
+  });
+  await workflow.run({ taskId: "validation-001", intent });
+  store.snapshot.validationRuns[0].intentSha256 =
+    store.snapshot.validationRequests[0].intentSha256;
+  const result = await workflow.approve({ taskId: "validation-001", intent });
+  assert.equal(result.report.passed, true);
+  assert.equal(result.snapshot.state, "ready_to_merge");
+  assert.equal(store.reconciliations.length, 1);
+});
+
 class MemoryStore {
   constructor() {
     this.records = [];
     this.evidence = [];
     this.transitions = [];
+    this.reconciliations = [];
     this.snapshot = {
       state: "validating",
       validationRequests: [],
@@ -163,6 +189,13 @@ class MemoryStore {
 
   async recordEvidence(record) {
     this.evidence.push(record);
+    return this.snapshot;
+  }
+
+  async reconcileLocalValidation(record) {
+    this.reconciliations.push(record);
+    this.snapshot.validationRuns[0] = record.report;
+    this.snapshot.validationRequests[0].passed = true;
     return this.snapshot;
   }
 

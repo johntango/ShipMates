@@ -166,6 +166,17 @@ enable demo mode for ProjectName
 archive project ProjectName
 ```
 
+Validation approval is also an exact conversational control:
+
+```text
+approve validation for task task-123
+```
+
+Firstmate sends the approval to the already-running no-mistakes gate, appends
+the terminal result to the same durable validation operation, fast-forwards the
+exact validated commit locally, and reconciles the Project task before any
+dependent work can start. It never launches a duplicate validation run.
+
 `enable demo mode for ProjectName` is an explicit project-scoped, local-only
 capability-demo policy. Demo tasks still use the controlled local commit and
 the Implementer's focused checks, but skip no-mistakes and every remote
