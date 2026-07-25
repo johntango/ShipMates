@@ -29,6 +29,18 @@ test("ignores a stale pointer whose task has no artifacts", async (t) => {
   assert.equal(await context.load(), null);
 });
 
+test("does not restore a completed task as the active project", async (t) => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-project-"));
+  t.after(() => rm(rootDir, { recursive: true, force: true }));
+  const completed = { ...snapshot(), state: "complete" };
+  const context = new FirstmateProjectContext({
+    store: { rootDir, getSnapshot: async () => completed },
+  });
+  await context.save(snapshot());
+
+  assert.equal(await context.load(), null);
+});
+
 function snapshot() {
   return {
     id: "task-project",
