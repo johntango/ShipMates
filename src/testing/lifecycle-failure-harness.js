@@ -60,6 +60,7 @@ export class LifecycleFailureHarness {
     return {
       completed: project?.status === "completed" && snapshot.state === "complete",
       operations: journal.operations,
+      actions: journal.actions,
       project,
       snapshot,
       destinationHead: destinationHead.trim(),
@@ -78,7 +79,9 @@ export class LifecycleFailureHarness {
 
   async #operation(name, observe, act) {
     let journal = await this.#journal();
-    if (journal.operations[name]?.receipt) return;
+    const actionNames = LIFECYCLE_ACTIONS.filter((action) => action.startsWith(`${name}.`));
+    const actionsComplete = actionNames.every((action) => journal.actions?.[action]?.receipt);
+    if (journal.operations[name]?.receipt && actionsComplete) return;
     if (!journal.operations[name]?.intent) {
       this.#terminate(name, "before_intent");
       journal.operations[name] = { intent: { id: `${name}:v1`, at: new Date().toISOString() }, receipt: null };
@@ -86,7 +89,7 @@ export class LifecycleFailureHarness {
       this.#terminate(name, "after_intent");
     }
     let observation = await observe();
-    if (!observation.completed) {
+    if (!observation.completed || !actionsComplete) {
       this.#terminate(name, "before_action");
       await act();
       this.#terminate(name, "after_action");
