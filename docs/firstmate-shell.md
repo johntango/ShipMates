@@ -225,6 +225,10 @@ history for the newest task that actually produced implementation artifacts.
 A newer answer-only or ambiguous request with no files therefore cannot hide
 the most recent useful result. Responses use human-facing descriptions while
 retaining exact internal task identity in the ledger and artifact paths.
+On restart, Firstmate restores a saved active-project target only while its task
+is incomplete and still has implementation artifacts. A completed task remains
+in durable history but is not reopened as the active target or marked active in
+the dashboard.
 
 Revision language such as “modify the existing implementation,” “change the
 page,” or “make it blue” continues the active project. Firstmate discovers the
