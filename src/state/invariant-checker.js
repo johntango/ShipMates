@@ -3,14 +3,15 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { inspectProjectInvariants } from "../projects/project-invariants.js";
-import { projectHerdrSnapshot } from "../projections/herdr.js";
+import { HerdrProjection } from "../projections/herdr.js";
 import { STATE_CONTRACT } from "./state-contract.js";
 
 export class StateInvariantChecker {
-  constructor({ rootDir, projectStore, taskStore, read = readFile, limit = 500 } = {}) {
+  constructor({ rootDir, projectStore, taskStore, herdrProjection, read = readFile, limit = 500 } = {}) {
     this.rootDir = path.resolve(rootDir);
     this.projectStore = projectStore;
     this.taskStore = taskStore;
+    this.herdrProjection = herdrProjection;
     this.read = read;
     this.limit = limit;
   }
@@ -23,6 +24,7 @@ export class StateInvariantChecker {
         "project_registry", findings);
       checkFields(rawRegistry, STATE_CONTRACT.projectRegistry.documentFields,
         "project_registry", findings);
+      inspectRawProjects(rawRegistry.projects, findings, this.limit);
     }
     let projects = [];
     try {
@@ -77,17 +79,32 @@ export class StateInvariantChecker {
       checkFields(event, STATE_CONTRACT.taskLedger.eventEnvelopeFields, `task:${taskId}:event:${index}`, findings);
       if (!STATE_CONTRACT.taskLedger.eventTypes.includes(event.type)) {
         findings.push(issue("unknown_task_event", `task:${taskId}:event:${event.id}`, event.type));
+      } else {
+        checkFields(event.data, STATE_CONTRACT.taskLedger.eventPayloadFields[event.type],
+          `task:${taskId}:event:${index}:data`, findings);
       }
     }
     checkSchema(snapshot.schemaVersion, STATE_CONTRACT.taskLedger.snapshotSchemaVersion, `task:${taskId}:snapshot`, findings);
     checkFields(snapshot, STATE_CONTRACT.taskLedger.snapshotFields, `task:${taskId}:snapshot`, findings);
-    const persisted = await this.#readJson(path.join("tasks", taskId, "snapshot.json"), { allowMissing: true });
+    let persisted;
+    try {
+      persisted = await this.#readJson(path.join("tasks", taskId, "snapshot.json"), { allowMissing: true });
+    } catch (error) {
+      findings.push(issue("snapshot_corrupt", `task:${taskId}:snapshot`, error.message));
+    }
     if (!persisted) findings.push(issue("snapshot_missing", `task:${taskId}`, "Derived snapshot can be rebuilt from events.jsonl."));
     else if (!isDeepStrictEqual(persisted, snapshot)) {
       findings.push(issue("snapshot_stale_or_corrupt", `task:${taskId}`, "Persisted snapshot differs from authoritative event replay."));
     }
-    const herdr = projectHerdrSnapshot(snapshot);
-    if (herdr.source.lastEventId !== snapshot.lastEventId || herdr.source.eventsCount !== snapshot.eventsCount) {
+    let herdr;
+    try {
+      const projection = this.herdrProjection || new HerdrProjection({ store: this.taskStore });
+      herdr = await projection.read({ taskId });
+    } catch (error) {
+      findings.push(issue("herdr_projection_unreadable", `task:${taskId}`, error.message));
+    }
+    if (herdr && (herdr.source?.lastEventId !== snapshot.lastEventId ||
+      herdr.source?.eventsCount !== snapshot.eventsCount)) {
       findings.push(issue("herdr_projection_watermark_mismatch", `task:${taskId}`, "Herdr projection does not identify its ledger watermark."));
     }
   }
@@ -123,6 +140,24 @@ function checkSchema(actual, expected, target, findings) {
 function checkFields(value, documented, target, findings) {
   for (const field of Object.keys(value || {})) {
     if (!documented.includes(field)) findings.push(issue("undocumented_persisted_field", `${target}.${field}`, "Field is absent from the state contract."));
+  }
+}
+
+function inspectRawProjects(projects, findings, limit) {
+  for (const project of Array.isArray(projects) ? projects.slice(0, limit) : []) {
+    checkFields(project, STATE_CONTRACT.projectRegistry.projectFields, `project:${project.id}`, findings);
+    if (project.executionPolicy) checkFields(project.executionPolicy,
+      STATE_CONTRACT.projectRegistry.executionPolicyFields, `project:${project.id}:execution_policy`, findings);
+    for (const task of Array.isArray(project.tasks) ? project.tasks : []) {
+      checkFields(task, STATE_CONTRACT.projectRegistry.taskFields, `plan_task:${project.id}:${task.id}`, findings);
+      for (const attempt of Array.isArray(task.attempts) ? task.attempts : []) {
+        checkFields(attempt, STATE_CONTRACT.projectRegistry.attemptFields,
+          `attempt:${attempt.taskId}`, findings);
+        if (attempt.launchReceipt) checkFields(attempt.launchReceipt,
+          STATE_CONTRACT.projectRegistry.launchReceiptFields,
+          `attempt:${attempt.taskId}:launch_receipt`, findings);
+      }
+    }
   }
 }
 

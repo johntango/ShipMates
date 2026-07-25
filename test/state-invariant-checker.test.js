@@ -58,6 +58,28 @@ test("detects undocumented registry fields and cross-project attempt reuse", asy
   assert.equal(report.findings.some(({ code }) => code === "attempt_owned_by_multiple_projects"), true);
 });
 
+test("detects raw nested fields, corrupt snapshots, payload drift, and Herdr drift", async (t) => {
+  const fixture = await createFixture(t);
+  await writeFile(path.join(fixture.root, "projects.json"), JSON.stringify({
+    schemaVersion: 1, activeProjectId: null, repositoryDeletionReceipts: [],
+    projects: [{ id: "p1", name: "P", repo: "owner/repo", repoPath: "/repo", baseSha: "abc",
+      status: "active", tasks: [{ id: "plan-1", title: "T", attempts: [], hidden: true }] }],
+  }));
+  const eventsPath = path.join(fixture.root, "tasks", "task-one", "events.jsonl");
+  const events = (await readFile(eventsPath, "utf8")).trim().split("\n").map(JSON.parse);
+  events[0].data.hidden = true;
+  await writeFile(eventsPath, `${events.map(JSON.stringify).join("\n")}\n`);
+  await writeFile(path.join(fixture.root, "tasks", "task-one", "snapshot.json"), "{broken");
+  const checker = new StateInvariantChecker({ rootDir: fixture.root,
+    projectStore: fixture.projectStore, taskStore: fixture.taskStore,
+    herdrProjection: { read: async () => ({ source: { lastEventId: "old", eventsCount: 1 } }) } });
+  const report = await checker.inspect();
+  for (const code of ["undocumented_persisted_field", "snapshot_corrupt",
+    "herdr_projection_watermark_mismatch"]) {
+    assert.equal(report.findings.some((finding) => finding.code === code), true);
+  }
+});
+
 test("parses and renders the invariant CLI", () => {
   assert.deepEqual(parseInvariantArgs([]), { json: false });
   assert.deepEqual(parseInvariantArgs(["--json"]), { json: true });
