@@ -50,6 +50,29 @@ test("returns an existing receipt without observing or acting again", async () =
   assert.equal(calls, 0);
 });
 
+test("rejects changed intent even when a receipt exists", async () => {
+  const { journal } = fixture();
+  await journal.recordIntent("delete-1", { target: "branch", recordedAt: "earlier" });
+  await journal.recordReceipt("delete-1", { evidence: { absent: true } });
+  await assert.rejects(() => new DurableOperationProtocol({ journal }).execute({
+    operationId: "delete-1", intent: { target: "other-branch" },
+    observe: async () => ({ completed: true, evidence: { absent: true } }), act: async () => {},
+  }), /cannot be reused with different intent/u);
+});
+
+test("persists intent before the initial observation", async () => {
+  const { journal, events } = fixture();
+  await new DurableOperationProtocol({ journal }).execute({
+    operationId: "push-1", intent: { target: "origin/main" },
+    observe: async () => {
+      events.push("observe");
+      return { completed: true, evidence: { headSha: "abc" } };
+    },
+    act: async () => {},
+  });
+  assert.equal(events.indexOf("intent") < events.indexOf("observe"), true);
+});
+
 test("rejects operation id reuse with different intent", async () => {
   const { journal } = fixture();
   await journal.recordIntent("push-1", { target: "origin/main", recordedAt: "earlier" });
@@ -65,6 +88,14 @@ test("fails closed when an action has no independent completion evidence", async
     operationId: "opaque-1", intent: { target: "remote" },
     observe: async () => ({ completed: false }), act: async () => {},
   }), /not independently observable/u);
+});
+
+test("rejects completed observations without evidence", async () => {
+  const { journal } = fixture();
+  await assert.rejects(() => new DurableOperationProtocol({ journal }).execute({
+    operationId: "opaque-1", intent: { target: "remote" },
+    observe: async () => ({ completed: true }), act: async () => {},
+  }), /must contain evidence/u);
 });
 
 function fixture() {

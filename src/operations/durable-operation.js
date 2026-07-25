@@ -17,18 +17,17 @@ export class DurableOperationProtocol {
       throw new TypeError("Durable operation requires operationId, intent, observe, and act");
     }
     let operation = await this.journal.read(operationId);
-    if (operation?.receipt) return completed(operation, true);
-
-    let observation = normalizeObservation(await observe(intent));
     if (!operation?.intent) {
       await this.#phase(operationId, "before_intent");
       operation = await this.journal.recordIntent(operationId, {
         ...intent, recordedAt: this.clock().toISOString(),
       });
       await this.#phase(operationId, "after_intent");
-    } else {
-      assertSameIntent(operation.intent, intent, operationId);
     }
+    assertSameIntent(operation.intent, intent, operationId);
+    if (operation.receipt) return completed(operation, true);
+
+    let observation = normalizeObservation(await observe(intent));
 
     if (!observation.completed) {
       await this.#phase(operationId, "before_action");
@@ -60,6 +59,9 @@ export class DurableOperationError extends Error {}
 function normalizeObservation(value) {
   if (!value || typeof value.completed !== "boolean") {
     throw new DurableOperationError("Operation observation must contain boolean completed");
+  }
+  if (value.completed && (value.evidence === null || value.evidence === undefined)) {
+    throw new DurableOperationError("Completed operation observation must contain evidence");
   }
   return { completed: value.completed, evidence: value.evidence ?? null };
 }
