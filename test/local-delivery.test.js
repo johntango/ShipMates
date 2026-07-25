@@ -59,7 +59,10 @@ test("allows delivery when the only untracked files are macOS metadata", async (
   const workflow = new LocalDeliveryWorkflow({
     store,
     runGit: async (cwd, args) => {
-      if (args[0] === "status") return cwd === "/repo" ? "?? .DS_Store\0?? assets/.DS_Store\0" : "";
+      if (args[0] === "status") {
+        assert.deepEqual(args, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+        return cwd === "/repo" ? "?? .DS_Store\0?? assets/.DS_Store\0" : "";
+      }
       if (args[0] === "rev-parse") return `${cwd === "/repo" ? destinationHead : HEAD}\n`;
       if (args[0] === "merge") {
         destinationHead = HEAD;

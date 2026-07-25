@@ -106,7 +106,7 @@ function requireValidatedTarget(snapshot) {
 async function inspect(runGit, cwd) {
   const [headSha, status] = await Promise.all([
     runGit(cwd, ["rev-parse", "HEAD"]),
-    runGit(cwd, ["status", "--porcelain=v1", "-z"]),
+    runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
   ]);
   return { headSha: headSha.trim(), clean: hasOnlyBenignMetadata(status) };
 }
