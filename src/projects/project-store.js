@@ -66,6 +66,25 @@ export class ProjectStore {
     return { projects, receipt };
   }
 
+  async purgeRepository({ repoPath }) {
+    const resolvedPath = path.resolve(repoPath);
+    const document = await this.#read();
+    const projects = document.projects.filter((project) =>
+      path.resolve(project.repoPath) === resolvedPath);
+    if (projects.length === 0) throw new Error(`No projects exist for repository ${resolvedPath}`);
+    if (projects.some((project) => project.protected === true)) {
+      throw new Error(`Repository ${resolvedPath} is protected`);
+    }
+    const ids = new Set(projects.map(({ id }) => id));
+    document.projects = document.projects.filter(({ id }) => !ids.has(id));
+    if (ids.has(document.activeProjectId)) {
+      document.activeProjectId = document.projects.find(({ status }) =>
+        status !== "archived")?.id || null;
+    }
+    await this.#write(document);
+    return { projects };
+  }
+
   async active() {
     const document = await this.#read();
     return document.projects.find(({ id, status }) => id === document.activeProjectId && status !== "archived") || null;
