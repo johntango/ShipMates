@@ -19,6 +19,19 @@ test("completes the disposable lifecycle exactly once", async (t) => {
   assertCompletion(result);
 });
 
+test("persists the merge receipt after restarting past its action", async (t) => {
+  const fixture = await createFixture(t);
+  const point = "deliver.merge:after_action";
+  const interrupted = new LifecycleFailureHarness({
+    ...fixture.options,
+    inject(candidate) { if (candidate === point) throw new InjectedLifecycleTermination(point); },
+  });
+  await assert.rejects(() => interrupted.resume(), (error) => error.point === point);
+
+  const restarted = new LifecycleFailureHarness(fixture.options);
+  assertCompletion(await restarted.resume());
+});
+
 test("restarts safely at every durable intent and external action boundary", async (t) => {
   for (const operation of [...LIFECYCLE_OPERATIONS, ...LIFECYCLE_ACTIONS]) {
     for (const phase of TERMINATION_PHASES) {
@@ -46,6 +59,8 @@ function assertCompletion(result) {
   });
   assert.equal(Object.keys(result.operations).length, LIFECYCLE_OPERATIONS.length);
   assert.equal(Object.values(result.operations).every(({ intent, receipt }) => intent && receipt), true);
+  assert.equal(Object.keys(result.actions).length, LIFECYCLE_ACTIONS.length);
+  assert.equal(Object.values(result.actions).every(({ intent, receipt }) => intent && receipt), true);
 }
 
 async function createFixture(t) {

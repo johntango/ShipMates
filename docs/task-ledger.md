@@ -124,6 +124,11 @@ observations remain read-only. `.shipmates/` is local operational state and must
 not contain credentials or replace GitHub as the authority for remote
 repository facts.
 
+These typed request/result events remain the compatibility path for workflows
+not yet adapted to the [durable operation protocol](durable-operation-protocol.md).
+Their existing explicit reconciliation commands must observe the external
+target and resolve uncertain intent without blindly repeating a mutation.
+
 Mutating workers reuse the worker lifecycle with `mode=ship` and
 `sandbox=workspace-write`. Their terminal verification records the unchanged
 commit and branch plus the exact staged, unstaged, and untracked path set. It is
