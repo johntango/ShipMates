@@ -1248,6 +1248,13 @@ function validateLegacyLocalValidationReport(snapshot, report) {
   if (report.headChanged || report.initialHeadSha !== report.finalHeadSha) {
     throw new TaskStateError("Legacy local validation changed HEAD");
   }
+  if (snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    report.initialHeadSha !== snapshot.worktree.headSha ||
+    report.finalHeadSha !== snapshot.worktree.headSha) {
+    throw new TaskStateError(
+      "Legacy local validation is not bound to the exact active leased head",
+    );
+  }
 }
 
 function validateScoutSynthesisRecord(snapshot, record) {
