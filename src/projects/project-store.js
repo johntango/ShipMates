@@ -111,7 +111,11 @@ export class ProjectStore {
     if (!context) return null;
     const project = await this.get(context.projectId);
     const task = project.tasks.find(({ id }) => id === context.planTaskId);
-    return { ...context, attempt: task.attempts.find((attempt) => attempt.taskId === taskId) || null };
+    return {
+      ...context,
+      projectTask: task,
+      attempt: task.attempts.find((attempt) => attempt.taskId === taskId) || null,
+    };
   }
 
   async activate(query) {

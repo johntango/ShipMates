@@ -279,7 +279,9 @@ test("migrates legacy current and previous task ids into attempt history", async
   await store.attachTask({ projectId: project.id, taskId: "task-current", title: "Work" });
   const loaded = await store.get(project.id);
   assert.deepEqual(loaded.tasks[0].attempts.map(({ taskId }) => taskId), ["task-current"]);
-  assert.equal((await store.describeAttempt("task-current")).attempt.status, "dispatched");
+  const described = await store.describeAttempt("task-current");
+  assert.equal(described.attempt.status, "dispatched");
+  assert.deepEqual(described.projectTask.attempts.map(({ taskId }) => taskId), ["task-current"]);
 });
 
 test("plan revisions preserve attempt history and cannot remove executed tasks", async () => {

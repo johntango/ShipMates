@@ -43,9 +43,11 @@ proposed -> clarified -> approved_for_dispatch -> preparing -> running
 ```
 
 Some work can return from `awaiting_worker`, `validating`,
-`awaiting_human`, or `ready_to_merge` to `running`. Any non-terminal state can
-enter `blocked`, `failed`, `cancelled`, or `recovery_required`. Terminal and
-exceptional states cannot be exited by an ordinary transition.
+`awaiting_human`, or `ready_to_merge` to `running`. Any active state can enter
+an exceptional state. `blocked` and `recovery_required` resume only through an
+explicit typed command; terminal states cannot be exited. The authoritative
+ownership and terminal classification is defined by the
+[lifecycle v2 migration](lifecycle-v2-migration.md).
 
 A verified no-mutation exercise uses the shorter cleanup branch
 `running -> validating -> cleaning -> complete`; it has no pull request or
