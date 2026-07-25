@@ -6,14 +6,14 @@ observe again, and persist a receipt. Operation IDs are immutable bindings to
 their target and inputs; reusing an ID with different intent fails closed.
 
 `DurableOperationProtocol` implements this policy against an atomic journal
-interface. A workflow supplies four idempotent journal methods plus operation-
-specific `observe` and `act` functions. Existing receipts return immediately.
-An intent without a receipt is always observed before action, and an action that
-cannot be independently observed never receives a success receipt.
+interface. A workflow supplies `read`, `recordIntent`, `recordAttempt`, and
+`recordReceipt` methods plus operation-specific `observe` and `act` functions.
+Existing receipts return immediately. An intent without a receipt is always
+observed before action. For that action to be safe, `completed: false` must
+prove the exact intended effect is absent; `completed: true` must include
+evidence for the exact result. An action that cannot provide that independent
+observation never receives a success receipt.
 
-The lifecycle failure harness now uses this production protocol for its clone,
-artifact, commit, fetch, and merge effects and injects termination on both sides
-of every boundary. Task-ledger workflows should expose their existing typed
-request/result events through the same journal interface as they are migrated;
-their current explicit reconciliation commands remain the safe compatibility
-path until that adapter is installed.
+The [lifecycle failure harness guide](lifecycle-failure-harness.md) describes the
+exhaustive crash-boundary exercise. The [task ledger guide](task-ledger.md)
+owns the compatibility path for existing typed workflow events.
