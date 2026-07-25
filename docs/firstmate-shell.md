@@ -110,10 +110,12 @@ UUID-derived task and request IDs, displays `You:`, and waits for the prompt.
 After dispatching a request, interactive mode immediately displays `You:` again
 while that task continues in its worker panes. Task completion or failure is
 reported asynchronously, and each new prompt receives a fresh durable task
-identity and re-reads the repository context. Enter `/exit`, `exit`, or `quit`
-to stop accepting instructions; already dispatched tasks are allowed to finish.
-Explicit task arguments, piped input, `--classify-only`, and delivery commands
-remain one-shot automation interfaces.
+identity and re-reads the repository context. If a request fails, Firstmate
+reports the error and returns to `You:` so a later instruction can recover or
+continue the session. Enter `/exit`, `exit`, or `quit` to stop accepting
+instructions; already dispatched tasks are allowed to finish. Explicit task
+arguments, piped input, `--classify-only`, and delivery commands remain one-shot
+automation interfaces.
 
 Interactive requests now pass first through one durable, read-only Codex
 conversation owned by Firstmate. This is distinct from the bounded Scouts and
@@ -176,7 +178,9 @@ Firstmate sends the approval to the already-running no-mistakes gate, appends
 the terminal result to the same durable validation operation, fast-forwards the
 exact validated commit into the registered Project repository rather than the
 task worktree, and reconciles the Project task before any dependent work can
-start. It never launches a duplicate validation run.
+start. If the latest validation result is already a terminal pass, the same
+command retries delivery directly without requiring or replaying the original
+validation intent. It never launches a duplicate validation run.
 
 `enable demo mode for ProjectName` is an explicit project-scoped, local-only
 capability-demo policy. Demo tasks still use the controlled local commit and
@@ -250,8 +254,9 @@ the controlled commit and no-mistakes result name the same exact SHA, the main
 checkout is clean, and its HEAD still equals the task base. It then runs an
 exact `git merge --ff-only SHA`, verifies the resulting clean HEAD, records
 delivery evidence, and completes the task ledger. A dirty or diverged checkout
-is rejected without attempting the merge. Repeating an already completed
-delivery is idempotent.
+is rejected without attempting the merge. Untracked `.DS_Store` files are
+treated as harmless metadata; tracked changes and every other untracked path
+remain protected. Repeating an already completed delivery is idempotent.
 
 Verified `.html` and `.htm` implementation artifacts also receive a “Review
 page” control. Firstmate resolves the selected file index against the exact

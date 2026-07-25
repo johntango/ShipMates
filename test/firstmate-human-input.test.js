@@ -84,3 +84,49 @@ test("approval command validates, delivers, reconciles, and advances dependent w
     "project-1", { reason: "validation approved and delivered" },
   ]);
 });
+
+test("retries delivery without rerunning validation after a terminal pass", async () => {
+  const { handleValidationApproval } = await import(
+    "../src/cli/firstmate-validation-approval.js"
+  );
+  const calls = [];
+  const project = {
+    id: "project-1",
+    repoPath: "/registered/project",
+    executionPolicy: { autoAdvance: false },
+  };
+  await handleValidationApproval(
+    "approve validation for task task-123",
+    {
+      store: {
+        rootDir: "/state",
+        getSnapshot: async () => ({
+          validationRuns: [{
+            passed: true,
+            command: { args: ["axi", "respond", "--action", "approve"] },
+          }],
+        }),
+      },
+      projectStore: {
+        describeAttempt: async () => ({ projectId: project.id }),
+        get: async () => project,
+      },
+      orchestrator: {
+        reconcileTask: async () => ({
+          context: { projectId: project.id, projectName: "TestA", taskName: "Tests" },
+        }),
+      },
+      createValidationWorkflow: () => ({
+        approve: async () => assert.fail("passing validation must not run again"),
+      }),
+      createDeliveryWorkflow: () => ({
+        deliver: async (input) => calls.push(input),
+      }),
+      advanceProject: async () => assert.fail("auto advance is disabled"),
+    },
+  );
+
+  assert.deepEqual(calls, [{
+    taskId: "task-123", destinationRepoPath: "/registered/project",
+  }]);
+});
