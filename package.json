@@ -3,6 +3,9 @@
 	"version": "1.0.0",
 	"private": true,
 	"type": "module",
+	"bin": {
+		"shipmates": "scripts/shipmates.js"
+	},
 	"scripts": {
 		"test": "node --test test",
 		"start": "node agent.js",
@@ -19,7 +22,8 @@
 		"firstmate:delivery": "node --env-file=.env scripts/firstmate.js --delivery",
 		"github:draft-pr": "node scripts/github-draft-pr.js",
 		"herdr:status": "node scripts/herdr-status.js",
-		"dashboard": "node scripts/dashboard.js"
+		"dashboard": "node scripts/dashboard.js",
+		"doctor": "node scripts/shipmates.js doctor"
 	},
 	"dependencies": {
 		"@openai/agents": "^0.13.2",
