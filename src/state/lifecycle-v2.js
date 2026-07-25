@@ -45,7 +45,7 @@ export async function migrateLifecycleRecords({ store, projectStore = null, writ
     const snapshot = await store.getSnapshot(taskId);
     const context = projectStore?.describeAttempt
       ? await projectStore.describeAttempt(taskId) : null;
-    const record = projectLifecycleV2({ snapshot, projectTask: context?.attempt || null });
+    const record = projectLifecycleV2({ snapshot, projectTask: context?.projectTask || null });
     await write(record);
     records.push(record);
   }
@@ -58,28 +58,29 @@ function projectAttempts(snapshot, projectTask) {
       attempt: index + 1, taskId: attempt.taskId, status: attempt.status || null,
       current: attempt.taskId === projectTask.taskId,
     }));
-  return (snapshot.workers || []).map((worker, index) => Object.freeze({
-    attempt: index + 1, taskId: snapshot.id, workerId: worker.id,
-    status: worker.status, current: index === snapshot.workers.length - 1,
-  }));
+  return [Object.freeze({
+    attempt: 1, taskId: snapshot.id, status: null, current: true,
+  })];
 }
 
 function projectOperations(snapshot) {
   const operations = [];
   for (const [kind, collection] of Object.entries(operationCollections)) {
     for (const [index, operation] of (snapshot[collection] || []).entries()) {
+      const status = normalizedOperationStatus(kind, operation);
       operations.push(Object.freeze({
         kind, operationId: operation.operationId || `${kind}-${index + 1}`,
-        status: operation.status || normalizedValidationStatus(operation),
-        terminal: new Set(["completed", "failed", "cancelled", "verified"]).has(
-          operation.status || normalizedValidationStatus(operation)),
+        status,
+        terminal: new Set(["completed", "failed", "cancelled", "verified"]).has(status),
       }));
     }
   }
   return operations;
 }
 
-function normalizedValidationStatus(operation) {
+function normalizedOperationStatus(kind, operation) {
+  if (operation.status) return operation.status;
+  if (kind === "post_merge") return "verified";
   if (operation.passed === true) return "completed";
   if (operation.passed === false) return "failed";
   return "requested";

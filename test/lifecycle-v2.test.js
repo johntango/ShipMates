@@ -57,6 +57,53 @@ test("migrates every live record at its exact authoritative watermark", async ()
   ]);
 });
 
+test("migrates ordered project attempts from their containing planned task", async () => {
+  const [record] = await migrateLifecycleRecords({
+    store: {
+      async listTaskIds() { return ["task-two"]; },
+      async getSnapshot() { return base({ id: "task-two", workers: [
+        { id: "worker-one", status: "completed" },
+        { id: "scout-one", status: "running" },
+      ] }); },
+    },
+    projectStore: {
+      async describeAttempt() {
+        return { projectTask: {
+          taskId: "task-two",
+          attempts: [
+            { taskId: "task-one", status: "blocked" },
+            { taskId: "task-two", status: "dispatched" },
+          ],
+        } };
+      },
+    },
+    write: async () => {},
+  });
+  assert.deepEqual(record.attempts, [
+    { attempt: 1, taskId: "task-one", status: "blocked", current: false },
+    { attempt: 2, taskId: "task-two", status: "dispatched", current: true },
+  ]);
+});
+
+test("does not represent parallel workers as retries", () => {
+  const record = projectLifecycleV2({ snapshot: base({ workers: [
+    { id: "worker-one", status: "completed" },
+    { id: "scout-one", status: "running" },
+  ] }) });
+  assert.deepEqual(record.attempts, [
+    { attempt: 1, taskId: "task-one", status: null, current: true },
+  ]);
+});
+
+test("projects verified post-merge assurances as terminal operations", () => {
+  const record = projectLifecycleV2({ snapshot: base({
+    postMergeAssurances: [{ operationId: "assurance-one" }],
+  }) });
+  assert.deepEqual(record.operations, [{
+    kind: "post_merge", operationId: "assurance-one", status: "verified", terminal: true,
+  }]);
+});
+
 test("fails closed on unknown legacy lifecycle states", () => {
   assert.throws(() => projectLifecycleV2({ snapshot: base({ state: "mystery" }) }),
     /supported task snapshot/u);
