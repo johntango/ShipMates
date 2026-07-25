@@ -52,3 +52,21 @@ test("cancels multiline paste without dispatching partial lines", async () => {
   });
   assert.deepEqual(requests, []);
 });
+
+test("reports a request failure and keeps listening", async () => {
+  const answers = ["first request", "second request", "/exit"];
+  const requests = [];
+  const errors = [];
+  const result = await runFirstmateLoop({
+    askMessage: async () => answers.shift(),
+    runRequest: async (message) => {
+      requests.push(message);
+      if (message === "first request") throw new Error("delivery blocked");
+    },
+    onRequestError: async (error, message) => errors.push([error.message, message]),
+  });
+
+  assert.deepEqual(requests, ["first request", "second request"]);
+  assert.deepEqual(errors, [["delivery blocked", "first request"]]);
+  assert.equal(result.completed, 1);
+});

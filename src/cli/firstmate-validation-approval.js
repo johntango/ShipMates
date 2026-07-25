@@ -25,18 +25,20 @@ export async function handleValidationApproval(message, {
   const taskId = match[1].toLowerCase();
   const snapshot = await store.getSnapshot(taskId);
   const prior = snapshot.validationRuns?.at(-1);
-  const intentIndex = prior?.command?.args?.indexOf("--intent") ?? -1;
-  const intent = intentIndex >= 0 ? prior.command.args[intentIndex + 1] : null;
-  if (!intent) throw new Error(`Task ${taskId} has no durable validation intent`);
+  if (prior?.passed !== true) {
+    const intentIndex = prior?.command?.args?.indexOf("--intent") ?? -1;
+    const intent = intentIndex >= 0 ? prior.command.args[intentIndex + 1] : null;
+    if (!intent) throw new Error(`Task ${taskId} has no durable validation intent`);
 
-  const gate = createGate({
-    binaryPath,
-    stateRoot: path.join(store.rootDir, "no-mistakes"),
-    onProgress,
-  });
-  await createValidationWorkflow({
-    store, gate, actor: "firstmate",
-  }).approve({ taskId, intent });
+    const gate = createGate({
+      binaryPath,
+      stateRoot: path.join(store.rootDir, "no-mistakes"),
+      onProgress,
+    });
+    await createValidationWorkflow({
+      store, gate, actor: "firstmate",
+    }).approve({ taskId, intent });
+  }
 
   const registered = await projectStore.describeAttempt(taskId);
   const registeredProject = registered

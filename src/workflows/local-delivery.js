@@ -108,7 +108,16 @@ async function inspect(runGit, cwd) {
     runGit(cwd, ["rev-parse", "HEAD"]),
     runGit(cwd, ["status", "--porcelain=v1", "-z"]),
   ]);
-  return { headSha: headSha.trim(), clean: status.length === 0 };
+  return { headSha: headSha.trim(), clean: hasOnlyBenignMetadata(status) };
+}
+
+function hasOnlyBenignMetadata(status) {
+  if (status.length === 0) return true;
+  return status.split("\0").filter(Boolean).every((entry) => {
+    if (!entry.startsWith("?? ")) return false;
+    const file = entry.slice(3);
+    return file.split("/").at(-1) === ".DS_Store";
+  });
 }
 
 async function defaultRunGit(cwd, args) {

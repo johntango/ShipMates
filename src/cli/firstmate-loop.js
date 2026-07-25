@@ -1,6 +1,6 @@
 const exitCommands = new Set(["/exit", "exit", "quit"]);
 
-export async function runFirstmateLoop({ askMessage, runRequest, onReady } = {}) {
+export async function runFirstmateLoop({ askMessage, runRequest, onReady, onRequestError } = {}) {
   if (typeof askMessage !== "function" || typeof runRequest !== "function") {
     throw new TypeError("runFirstmateLoop requires askMessage and runRequest");
   }
@@ -36,8 +36,13 @@ export async function runFirstmateLoop({ askMessage, runRequest, onReady } = {})
       message = lines.join("\n").trim();
       if (!message) continue;
     }
-    await runRequest(message);
-    completed += 1;
+    try {
+      await runRequest(message);
+      completed += 1;
+    } catch (error) {
+      if (typeof onRequestError !== "function") throw error;
+      await onRequestError(error, message);
+    }
   }
   return { completed };
 }

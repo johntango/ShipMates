@@ -53,6 +53,30 @@ test("refuses delivery when the destination checkout is dirty", async () => {
   assert.equal(store.value.state, "validating");
 });
 
+test("allows delivery when the only untracked files are macOS metadata", async () => {
+  const store = new MemoryStore(snapshot());
+  let destinationHead = BASE;
+  const workflow = new LocalDeliveryWorkflow({
+    store,
+    runGit: async (cwd, args) => {
+      if (args[0] === "status") return cwd === "/repo" ? "?? .DS_Store\0?? assets/.DS_Store\0" : "";
+      if (args[0] === "rev-parse") return `${cwd === "/repo" ? destinationHead : HEAD}\n`;
+      if (args[0] === "merge") {
+        destinationHead = HEAD;
+        return "fast-forwarded";
+      }
+      throw new Error("unexpected git call");
+    },
+  });
+
+  const result = await workflow.deliver({
+    taskId: "task-001", destinationRepoPath: "/repo",
+  });
+
+  assert.equal(result.snapshot.state, "complete");
+  assert.equal(result.headSha, HEAD);
+});
+
 test("completes the ledger when the validated commit was already delivered", async () => {
   const store = new MemoryStore(snapshot());
   const workflow = new LocalDeliveryWorkflow({

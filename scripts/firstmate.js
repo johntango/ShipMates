@@ -1317,6 +1317,9 @@ async function runInteractiveFirstmate() {
     await runFirstmateLoop({
       askMessage: (prompt) => terminal.question(prompt),
       runRequest: dispatchRequest,
+      onRequestError: (error) => {
+        console.error(`Firstmate could not complete that request: ${error.message}`);
+      },
     });
     clearInterval(watchdogInterval);
   } finally {
