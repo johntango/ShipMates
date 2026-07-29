@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+import { NoMistakesGateError } from "../src/adapters/no-mistakes.js";
+
 test("surfaces validation and push approval gates in the Firstmate terminal", async () => {
   const source = await readFile(path.resolve("scripts/firstmate.js"), "utf8");
   assert.match(source, /local validation awaits human approval at/u);
@@ -129,4 +131,50 @@ test("retries delivery without rerunning validation after a terminal pass", asyn
   assert.deepEqual(calls, [{
     taskId: "task-123", destinationRepoPath: "/registered/project",
   }]);
+});
+
+test("moves a rejected validation response out of stale human-input state", async () => {
+  const { handleValidationApproval } = await import(
+    "../src/cli/firstmate-validation-approval.js"
+  );
+  const calls = [];
+  const snapshots = [{
+    state: "awaiting_human",
+    validationRuns: [{
+      command: { args: ["axi", "run", "--intent", "repair approval"] },
+    }],
+  }, { state: "awaiting_human" }];
+
+  await assert.rejects(
+    handleValidationApproval("approve validation for task task-123", {
+      store: {
+        rootDir: "/state",
+        getSnapshot: async () => snapshots.shift(),
+        transition: async (input) => calls.push(["transition", input]),
+      },
+      projectStore: {},
+      orchestrator: {
+        reconcileTask: async (taskId) => calls.push(["reconcile", taskId]),
+      },
+      createGate: () => ({}),
+      createValidationWorkflow: () => ({
+        approve: async () => {
+          throw new NoMistakesGateError("validator head changed");
+        },
+      }),
+    }),
+    /requires reconciliation; it is no longer waiting for human input/u,
+  );
+
+  assert.deepEqual(calls, [
+    ["transition", {
+      taskId: "task-123",
+      from: "awaiting_human",
+      to: "recovery_required",
+      actor: "firstmate",
+      reason: "Validation approval could not be reconciled safely: validator head changed",
+      eventId: "task-123:validation:approval-recovery-required:v1",
+    }],
+    ["reconcile", "task-123"],
+  ]);
 });

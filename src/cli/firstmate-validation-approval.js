@@ -1,6 +1,9 @@
 import path from "node:path";
 
-import { NoMistakesLocalGate } from "../adapters/no-mistakes.js";
+import {
+  NoMistakesGateError,
+  NoMistakesLocalGate,
+} from "../adapters/no-mistakes.js";
 import { LocalDeliveryWorkflow } from "../workflows/local-delivery.js";
 import { LocalValidationWorkflow } from "../workflows/local-validation.js";
 
@@ -35,9 +38,29 @@ export async function handleValidationApproval(message, {
       stateRoot: path.join(store.rootDir, "no-mistakes"),
       onProgress,
     });
-    await createValidationWorkflow({
-      store, gate, actor: "firstmate",
-    }).approve({ taskId, intent });
+    try {
+      await createValidationWorkflow({
+        store, gate, actor: "firstmate",
+      }).approve({ taskId, intent });
+    } catch (error) {
+      if (!(error instanceof NoMistakesGateError)) throw error;
+      const current = await store.getSnapshot(taskId);
+      if (current.state === "awaiting_human") {
+        await store.transition({
+          taskId,
+          from: "awaiting_human",
+          to: "recovery_required",
+          actor: "firstmate",
+          reason: `Validation approval could not be reconciled safely: ${error.message}`,
+          eventId: `${taskId}:validation:approval-recovery-required:v1`,
+        });
+        await orchestrator.reconcileTask(taskId);
+      }
+      throw new Error(
+        `Validation approval for ${taskId} requires reconciliation; it is no longer waiting for human input. ${error.message}`,
+        { cause: error },
+      );
+    }
   }
 
   const registered = await projectStore.describeAttempt(taskId);
