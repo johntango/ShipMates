@@ -58,6 +58,8 @@ export async function handleValidationApproval(message, {
           reason: `Validation approval could not be reconciled safely: ${error.message}`,
           eventId: `${taskId}:validation:approval-recovery-required:v1`,
         });
+      }
+      if (current.state === "awaiting_human" || current.state === "recovery_required") {
         await orchestrator.reconcileTask(taskId);
       }
       throw new Error(

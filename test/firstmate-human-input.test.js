@@ -182,3 +182,56 @@ for (const [label, ApprovalError] of [
     ["reconcile", "task-123"],
   ]);
 });
+
+test("retries project reconciliation after the recovery transition succeeds", async () => {
+  const { handleValidationApproval } = await import(
+    "../src/cli/firstmate-validation-approval.js"
+  );
+  const calls = [];
+  let state = "awaiting_human";
+  let reconciliations = 0;
+  const options = {
+    store: {
+      rootDir: "/state",
+      getSnapshot: async () => ({
+        state,
+        validationRuns: [{
+          command: { args: ["axi", "run", "--intent", "repair approval"] },
+        }],
+      }),
+      transition: async (input) => {
+        calls.push(["transition", input.from, input.to]);
+        state = input.to;
+      },
+    },
+    projectStore: {},
+    orchestrator: {
+      reconcileTask: async (taskId) => {
+        calls.push(["reconcile", taskId]);
+        reconciliations += 1;
+        if (reconciliations === 1) throw new Error("project store unavailable");
+      },
+    },
+    createGate: () => ({}),
+    createValidationWorkflow: () => ({
+      approve: async () => {
+        throw new LocalValidationRecoveryRequiredError("validator head changed");
+      },
+    }),
+  };
+
+  await assert.rejects(
+    handleValidationApproval("approve validation for task task-123", options),
+    /project store unavailable/u,
+  );
+  await assert.rejects(
+    handleValidationApproval("approve validation for task task-123", options),
+    /requires reconciliation/u,
+  );
+
+  assert.deepEqual(calls, [
+    ["transition", "awaiting_human", "recovery_required"],
+    ["reconcile", "task-123"],
+    ["reconcile", "task-123"],
+  ]);
+});
