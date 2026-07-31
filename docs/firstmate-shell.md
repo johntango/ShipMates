@@ -183,13 +183,19 @@ Validation approval is also an exact conversational control:
 approve validation for task task-123
 ```
 
-Firstmate sends the approval to the already-running no-mistakes gate, appends
+The dashboard shows this command only while the task is `awaiting_human` and
+the recorded no-mistakes gate is genuinely `awaiting_approval`. Firstmate sends
+the approval to the already-running no-mistakes gate, appends
 the terminal result to the same durable validation operation, fast-forwards the
 exact validated commit into the registered Project repository rather than the
 task worktree, and reconciles the Project task before any dependent work can
 start. If the latest validation result is already a terminal pass, the same
 command retries delivery directly without requiring or replaying the original
-validation intent. It never launches a duplicate validation run.
+validation intent. It never launches a duplicate validation run. If the gate
+rejects the response, or its pinned no-mistakes identity or exact task worktree
+no longer matches, Firstmate fails closed, moves an outstanding human wait to
+`recovery_required`, and reconciles the Project instead of continuing to claim
+that human input is pending.
 
 `enable demo mode for ProjectName` is an explicit project-scoped, local-only
 capability-demo policy. Demo tasks still use the controlled local commit and
