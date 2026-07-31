@@ -64,6 +64,27 @@ test("projects completion drift using the durable project task", async () => {
   assert.equal(state.tasks[0].reconciliation.decision, "record_observed_completion");
 });
 
+test("projects the exact Firstmate command for a validation approval gate", async () => {
+  const { store, projectContext } = fixture();
+  const original = store.getSnapshot;
+  store.getSnapshot = async () => ({
+    ...await original(),
+    state: "awaiting_human",
+    validationRuns: [{
+      passed: false,
+      outcome: null,
+      gate: { step: "test", status: "awaiting_approval" },
+    }],
+  });
+
+  const state = await buildDashboardState({ store, projectContext });
+
+  assert.equal(
+    state.tasks[0].humanAction,
+    "approve validation for task task-001",
+  );
+});
+
 test("does not count blocked or recovery-required plan work as completed progress", async () => {
   const { store, projectContext } = fixture();
   const projects = [{
@@ -182,11 +203,14 @@ test("project actions acknowledge completed workflow results", async () => {
 
 test("ships a Bootstrap page with light, dark, and system themes", async () => {
   const page = await readFile(path.resolve("src/dashboard/public/index.html"), "utf8");
+  const script = await readFile(path.resolve("src/dashboard/public/dashboard.js"), "utf8");
   assert.match(page, /bootstrap\.min\.css/u);
   assert.match(page, /option value="system"/u);
   assert.match(page, /option value="light"/u);
   assert.match(page, /option value="dark"/u);
   assert.match(page, /Send to Firstmate/u);
+  assert.match(script, /Human input required\./u);
+  assert.match(script, /task\.humanAction/u);
 });
 
 test("accepts bounded human messages and rejects empty or control input", () => {

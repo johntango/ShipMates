@@ -50,6 +50,22 @@ test("classifies a validation approval gate separately from failure", () => {
   assert.match(recovery.reason, /review/u);
 });
 
+test("recovery-required state takes precedence over a stale approval gate", () => {
+  const recovery = classifyTaskRecovery({
+    id: "task-recovery",
+    state: "recovery_required",
+    validationRuns: [{
+      passed: false,
+      gate: { step: "review", status: "awaiting_approval" },
+    }],
+    validationRequests: [],
+    workers: [],
+  });
+  assert.equal(recovery.category, "recovery_required");
+  assert.equal(recovery.action, "inspect_preserved_workspace");
+  assert.equal(recovery.safeToAutomate, false);
+});
+
 test("classifies failed FirstMate intake before worker dispatch as terminally blocked", () => {
   const recovery = classifyTaskRecovery({
     id: "task-intake", state: "proposed", workers: [], validationRuns: [], validationRequests: [],

@@ -281,6 +281,10 @@ function projectTask(snapshot, activeProjectTaskId, reconciliationEngine, durabl
       passed: validation.passed,
       outcome: validation.outcome,
     } : null,
+    humanAction: snapshot.state === "awaiting_human" &&
+      validation?.gate?.status === "awaiting_approval"
+      ? `approve validation for task ${snapshot.id}`
+      : null,
     taskProgress,
   };
 }
