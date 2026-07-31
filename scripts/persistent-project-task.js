@@ -9,6 +9,10 @@ import { HerdrProjectAgentObserver } from "../src/adapters/herdr-project-agent.j
 import { HerdrNoMistakesObserver } from "../src/adapters/herdr-no-mistakes.js";
 import { ProjectAgentController } from "../src/agents/project-agent.js";
 import { ProjectStore } from "../src/projects/project-store.js";
+import {
+  configureAgentTracing,
+  tracingConfigFromEnv,
+} from "../src/observability/agent-tracing.js";
 import { PersistentProjectExecutor } from "../src/workflows/persistent-project-executor.js";
 
 const [projectId, planTaskId, baseSha] = process.argv.slice(2);
@@ -17,6 +21,9 @@ if (!projectId || !planTaskId || !baseSha || !instruction) {
   throw new Error("Usage: persistent-project-task.js PROJECT PLAN_TASK BASE_SHA < instruction");
 }
 const stateRoot = path.resolve(process.env.SHIPMATES_STATE_DIR || ".shipmates");
+const tracingConfig = configureAgentTracing({
+  config: tracingConfigFromEnv(process.env), stateRoot,
+});
 const projectStore = new ProjectStore({ rootDir: stateRoot });
 const executor = new PersistentProjectExecutor({
   projectStore,
@@ -79,6 +86,7 @@ const operations = {
 };
 const result = await new ProjectAgentController({
   project, task, operations, observer,
+  tracingConfig,
   model: process.env.SHIPMATES_PROJECT_AGENT_MODEL || process.env.SHIPMATES_FIRSTMATE_MODEL || "gpt-5.6-luna",
 }).execute(instruction);
 console.log(JSON.stringify({ project: project.name, task: planTaskId, result, implementation, validation }, null, 2));

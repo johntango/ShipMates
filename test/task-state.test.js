@@ -340,6 +340,29 @@ test("records typed Firstmate runs and rejects inconsistent authority", () => {
   );
 });
 
+test("replays legacy traced Firstmate requests without trace details", () => {
+  const events = [
+    event("created", "task.created", {
+      kind: "firstmate-intake",
+      repo: "johntango/Shipmates-Practice",
+      baseSha: "abc123",
+    }),
+    event("requested", "firstmate.run.requested", {
+      requestId: "request-legacy-trace",
+      attemptId: "attempt-legacy-trace",
+      requestSha256: "a".repeat(64),
+      model: "gpt-5.6-luna",
+      maxTurns: 1,
+      tracingEnabled: true,
+      storeResponse: false,
+    }),
+  ];
+
+  const snapshot = replayTaskEvents(events);
+  assert.equal(snapshot.firstmateRuns[0].traceMode, "platform");
+  assert.equal(snapshot.firstmateRuns[0].traceId, null);
+});
+
 test("blocks draft PR creation until the validated head has an exact branch push", () => {
   const title = "Practice draft";
   const binding = {

@@ -65,6 +65,10 @@ import { startDashboardWithFallback } from "../src/dashboard/start.js";
 import { ProjectStore } from "../src/projects/project-store.js";
 import { FirstmateWatchdog } from "../src/monitoring/firstmate-watchdog.js";
 import {
+  configureAgentTracing,
+  tracingConfigFromEnv,
+} from "../src/observability/agent-tracing.js";
+import {
   parseMonitorIntervalMs,
   SerializedScheduler,
 } from "../src/monitoring/watchdog-scheduler.js";
@@ -146,6 +150,10 @@ const tracingEnabled = parseBoolean(
   process.env.SHIPMATES_FIRSTMATE_TRACING,
 );
 const store = new TaskStore({ rootDir });
+const tracingConfig = configureAgentTracing({
+  config: tracingConfigFromEnv(process.env),
+  stateRoot: rootDir,
+});
 herdrObserver = createHerdrObserver({ store });
 removeTerminationCleanup = installTerminationCleanup(herdrObserver);
 await herdrObserver?.firstmateStage({
@@ -154,7 +162,7 @@ await herdrObserver?.firstmateStage({
   message: "Classifying request",
   customStatus: "classifying",
 });
-const shell = new FirstmateShell({ store, model, tracingEnabled });
+const shell = new FirstmateShell({ store, model, tracingEnabled, tracingConfig });
 const result = await shell.classify({
   taskId,
   requestId,

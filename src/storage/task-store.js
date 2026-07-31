@@ -384,6 +384,8 @@ export class TaskStore {
     model,
     maxTurns,
     tracingEnabled,
+    traceMode,
+    traceId,
     storeResponse,
     eventId,
     at,
@@ -401,6 +403,8 @@ export class TaskStore {
         model,
         maxTurns,
         tracingEnabled,
+        ...(traceMode === undefined ? {} : { traceMode }),
+        ...(traceId === undefined ? {} : { traceId }),
         storeResponse,
       },
     });
