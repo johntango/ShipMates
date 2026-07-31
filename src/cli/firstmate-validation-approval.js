@@ -5,7 +5,10 @@ import {
   NoMistakesLocalGate,
 } from "../adapters/no-mistakes.js";
 import { LocalDeliveryWorkflow } from "../workflows/local-delivery.js";
-import { LocalValidationWorkflow } from "../workflows/local-validation.js";
+import {
+  LocalValidationRecoveryRequiredError,
+  LocalValidationWorkflow,
+} from "../workflows/local-validation.js";
 
 export async function handleValidationApproval(message, {
   store,
@@ -43,7 +46,8 @@ export async function handleValidationApproval(message, {
         store, gate, actor: "firstmate",
       }).approve({ taskId, intent });
     } catch (error) {
-      if (!(error instanceof NoMistakesGateError)) throw error;
+      if (!(error instanceof NoMistakesGateError) &&
+        !(error instanceof LocalValidationRecoveryRequiredError)) throw error;
       const current = await store.getSnapshot(taskId);
       if (current.state === "awaiting_human") {
         await store.transition({

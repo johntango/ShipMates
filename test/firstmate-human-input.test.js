@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { NoMistakesGateError } from "../src/adapters/no-mistakes.js";
+import { LocalValidationRecoveryRequiredError } from "../src/workflows/local-validation.js";
 
 test("surfaces validation and push approval gates in the Firstmate terminal", async () => {
   const source = await readFile(path.resolve("scripts/firstmate.js"), "utf8");
@@ -133,7 +134,10 @@ test("retries delivery without rerunning validation after a terminal pass", asyn
   }]);
 });
 
-test("moves a rejected validation response out of stale human-input state", async () => {
+for (const [label, ApprovalError] of [
+  ["gate error", NoMistakesGateError],
+  ["recovery-required error", LocalValidationRecoveryRequiredError],
+]) test(`moves a rejected validation ${label} out of stale human-input state`, async () => {
   const { handleValidationApproval } = await import(
     "../src/cli/firstmate-validation-approval.js"
   );
@@ -159,7 +163,7 @@ test("moves a rejected validation response out of stale human-input state", asyn
       createGate: () => ({}),
       createValidationWorkflow: () => ({
         approve: async () => {
-          throw new NoMistakesGateError("validator head changed");
+          throw new ApprovalError("validator head changed");
         },
       }),
     }),
