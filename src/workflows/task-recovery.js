@@ -9,6 +9,9 @@ export function classifyTaskRecovery(snapshot) {
   if (snapshot.state === "complete") {
     return decision("complete", "none", "Task is already complete", true);
   }
+  if (snapshot.state === "recovery_required") {
+    return decision("recovery_required", "inspect_preserved_workspace", "Task requires evidence-based workspace recovery", false);
+  }
   const failedIntake = snapshot.firstmateRuns?.at(-1);
   if (snapshot.state === "proposed" && failedIntake?.status === "failed") {
     return decision(
@@ -51,9 +54,6 @@ export function classifyTaskRecovery(snapshot) {
   }
   if (new Set(["dispatch_requested", "started"]).has(implementer?.status)) {
     return decision("worker_uncertain", "reconcile_worker", "Worker intent has no terminal report", true);
-  }
-  if (snapshot.state === "recovery_required") {
-    return decision("recovery_required", "inspect_preserved_workspace", "Task requires evidence-based workspace recovery", false);
   }
   if (activeStates.has(snapshot.state)) {
     return decision("stale_active", "inspect_live_process", "Task is active without conclusive terminal evidence", false);

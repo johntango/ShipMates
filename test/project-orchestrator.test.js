@@ -212,6 +212,36 @@ test("reconciles an approval-gated validation without treating it as failure", a
   assert.equal(updates[0].blockingReason, undefined);
 });
 
+test("reconciliation blocks recovery-required validation despite a stale approval gate", async () => {
+  const updates = [];
+  const project = { id: "project-recovery", demoMode: false, tasks: [{
+    id: "validate", taskId: "task-recovery", status: "dispatched",
+  }] };
+  const orchestrator = new ProjectOrchestrator({
+    taskStore: { async getSnapshot() { return {
+      id: "task-recovery",
+      state: "recovery_required",
+      workers: [],
+      validationRequests: [],
+      validationRuns: [{
+        passed: false,
+        gate: { step: "review", status: "awaiting_approval" },
+      }],
+    }; } },
+    projectStore: {
+      async get() { return project; },
+      async describeAttempt() { return { attempt: project.tasks[0] }; },
+      async updateTaskStatus(input) { updates.push(input); },
+    },
+  });
+
+  const [result] = await orchestrator.reconcileProject(project.id);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.action, "require_manual_repair");
+  assert.equal(updates[0].status, "blocked");
+  assert.match(updates[0].blockingReason, /workspace recovery/u);
+});
+
 test("dismisses only an attempt with no execution evidence", async () => {
   let transitioned = false;
   const taskStore = {
