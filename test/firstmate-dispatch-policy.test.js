@@ -9,6 +9,7 @@ import { TaskStore } from "../src/storage/task-store.js";
 import {
   authorizeFirstmateDispatch,
   isProcessReceiptLive,
+  readProcessCommand,
   ReadOnlyInspectionTracker,
   verifyAuthorizedClassification,
 } from "../src/workflows/firstmate-dispatch-policy.js";
@@ -164,6 +165,18 @@ test("requires a matching command identity when recovering a process receipt", (
   assert.equal(isProcessReceiptLive({
     kind: "process", pid: 42, commandToken: "request-reused",
   }, options), false);
+});
+
+test("reads an untruncated process command for recovery identity", () => {
+  let invocation;
+  const command = readProcessCommand(42, (...args) => {
+    invocation = args;
+    return "full worker command";
+  });
+  assert.equal(command, "full worker command");
+  assert.deepEqual(invocation, [
+    "ps", ["-ww", "-o", "command=", "-p", "42"], { encoding: "utf8" },
+  ]);
 });
 
 function planningProject() {

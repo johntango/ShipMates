@@ -148,9 +148,7 @@ function defaultReceiptLiveness(receipt) {
 
 export function isProcessReceiptLive(receipt, {
   signalProcess = (pid) => process.kill(pid, 0),
-  readCommand = (pid) => execFileSync("ps", ["-o", "command=", "-p", String(pid)], {
-    encoding: "utf8",
-  }),
+  readCommand = readProcessCommand,
 } = {}) {
   if (receipt?.kind !== "process" || !Number.isSafeInteger(receipt.pid) || receipt.pid <= 0 ||
     typeof receipt.commandToken !== "string" || !receipt.commandToken) {
@@ -162,6 +160,12 @@ export function isProcessReceiptLive(receipt, {
   } catch (error) {
     return false;
   }
+}
+
+export function readProcessCommand(pid, execute = execFileSync) {
+  return execute("ps", ["-ww", "-o", "command=", "-p", String(pid)], {
+    encoding: "utf8",
+  });
 }
 
 function evidenceValue(snapshot, kind, requestId) {
