@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   mkdir,
   open,
@@ -22,12 +23,14 @@ export class TaskStore {
     idFactory = randomUUID,
     lockTimeoutMs = 2_000,
     lockRetryMs = 20,
+    processIdentity = readProcessIdentity,
   } = {}) {
     this.rootDir = path.resolve(rootDir);
     this.clock = clock;
     this.idFactory = idFactory;
     this.lockTimeoutMs = lockTimeoutMs;
     this.lockRetryMs = lockRetryMs;
+    this.processIdentity = processIdentity;
   }
 
   async createTask({ taskId, kind, repo, baseSha, actor, eventId, at }) {
@@ -862,6 +865,7 @@ export class TaskStore {
         if (error.code !== "EEXIST") {
           throw error;
         }
+        if (await this.#removeStaleLock(lockPath)) continue;
         if (Date.now() - startedAt >= this.lockTimeoutMs) {
           throw new TaskStoreError(`Timed out waiting for task lock: ${lockId}`);
         }
@@ -870,8 +874,11 @@ export class TaskStore {
     }
 
     try {
+      const ownerIdentity = this.processIdentity(process.pid);
       await handle.writeFile(
-        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+        `${JSON.stringify({
+          pid: process.pid, ownerIdentity, acquiredAt: new Date().toISOString(),
+        })}\n`,
       );
       await handle.sync();
       return await operation();
@@ -882,6 +889,25 @@ export class TaskStore {
           throw error;
         }
       });
+    }
+  }
+
+  async #removeStaleLock(lockPath) {
+    let owner;
+    try {
+      owner = JSON.parse(await readFile(lockPath, "utf8"));
+    } catch {
+      return false;
+    }
+    if (!Number.isSafeInteger(owner?.pid) || typeof owner?.ownerIdentity !== "string" ||
+      !owner.ownerIdentity) return false;
+    if (this.processIdentity(owner.pid) === owner.ownerIdentity) return false;
+    try {
+      await unlink(lockPath);
+      return true;
+    } catch (error) {
+      if (error.code === "ENOENT") return true;
+      throw error;
     }
   }
 
@@ -914,6 +940,16 @@ export class TaskStore {
 
   #snapshotPath(taskId) {
     return path.join(this.#taskDir(taskId), "snapshot.json");
+  }
+}
+
+function readProcessIdentity(pid) {
+  try {
+    return execFileSync("ps", ["-ww", "-o", "lstart=,command=", "-p", String(pid)], {
+      encoding: "utf8",
+    }).trim() || null;
+  } catch {
+    return null;
   }
 }
 

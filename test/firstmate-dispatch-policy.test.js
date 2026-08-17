@@ -8,6 +8,7 @@ import { TaskStore } from "../src/storage/task-store.js";
 
 import {
   authorizeFirstmateDispatch,
+  findProcessReceipt,
   isProcessReceiptLive,
   readProcessCommand,
   ReadOnlyInspectionTracker,
@@ -177,6 +178,37 @@ test("reads an untruncated process command for recovery identity", () => {
   assert.deepEqual(invocation, [
     "ps", ["-ww", "-o", "command=", "-p", "42"], { encoding: "utf8" },
   ]);
+});
+
+test("recovers a launched worker when interruption precedes receipt persistence", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-read-only-handshake-"));
+  const store = new TaskStore({ rootDir });
+  const tracker = new ReadOnlyInspectionTracker({
+    store, isReceiptLive: () => true,
+    findReceipt: (commandToken) => ({ kind: "process", pid: 42, commandToken }),
+  });
+  await tracker.prepare({
+    taskId: "task-handshake", requestId: "request-handshake",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  });
+
+  const recovered = await tracker.reconcileInterrupted();
+  assert.equal(recovered[0].live, true);
+  assert.deepEqual(recovered[0].receipt, {
+    kind: "process", pid: 42, commandToken: "request-handshake",
+  });
+  assert.equal((await store.getSnapshot("task-handshake")).evidence.at(-1).kind,
+    "read-only-launch-receipt");
+});
+
+test("finds a worker receipt from its durable request token", () => {
+  const receipt = findProcessReceipt("request-target", () => [
+    "  10 /node /firstmate.js task-other request-other",
+    "  42 /node /firstmate.js task-target request-target",
+  ].join("\n"));
+  assert.deepEqual(receipt, {
+    kind: "process", pid: 42, commandToken: "request-target",
+  });
 });
 
 function planningProject() {

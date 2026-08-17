@@ -33,11 +33,15 @@ export class FirstmateDispatchPolicyError extends Error {
 }
 
 export class ReadOnlyInspectionTracker {
-  constructor({ store, actor = "firstmate", isReceiptLive = defaultReceiptLiveness } = {}) {
+  constructor({
+    store, actor = "firstmate", isReceiptLive = defaultReceiptLiveness,
+    findReceipt = findProcessReceipt,
+  } = {}) {
     if (!store) throw new TypeError("ReadOnlyInspectionTracker requires a task store");
     this.store = store;
     this.actor = actor;
     this.isReceiptLive = isReceiptLive;
+    this.findReceipt = findReceipt;
   }
 
   async prepare({ taskId, requestId, repo, baseSha, project }) {
@@ -97,7 +101,13 @@ export class ReadOnlyInspectionTracker {
       const results = [];
       for (const item of await this.outstanding()) {
         const execution = evidenceValue(item.snapshot, "firstmate-local-execution", item.requestId);
-        const receipt = evidenceValue(item.snapshot, "read-only-launch-receipt", item.requestId);
+        let receipt = evidenceValue(item.snapshot, "read-only-launch-receipt", item.requestId);
+        if (!execution && !receipt) {
+          receipt = await this.findReceipt(item.requestId);
+          if (receipt) await this.recordReceipt({
+            taskId: item.taskId, requestId: item.requestId, receipt,
+          });
+        }
         if (!execution && receipt && await this.isReceiptLive(receipt)) {
           results.push({ ...item, receipt, live: true });
           continue;
@@ -166,6 +176,18 @@ export function readProcessCommand(pid, execute = execFileSync) {
   return execute("ps", ["-ww", "-o", "command=", "-p", String(pid)], {
     encoding: "utf8",
   });
+}
+
+export function findProcessReceipt(commandToken, execute = execFileSync) {
+  if (typeof commandToken !== "string" || !commandToken) return null;
+  const processes = execute("ps", ["-axww", "-o", "pid=,command="], { encoding: "utf8" });
+  for (const line of processes.split(/\r?\n/u)) {
+    const match = line.match(/^\s*(\d+)\s+(.+)$/u);
+    if (match?.[2].includes(commandToken)) {
+      return { kind: "process", pid: Number(match[1]), commandToken };
+    }
+  }
+  return null;
 }
 
 function evidenceValue(snapshot, kind, requestId) {

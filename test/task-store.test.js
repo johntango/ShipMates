@@ -144,6 +144,20 @@ test("times out instead of stealing an existing lock", async (t) => {
   await assert.rejects(createTask(store), TaskStoreError);
 });
 
+test("recovers an exclusive lock whose process identity is stale", async (t) => {
+  const rootDir = await temporaryState(t);
+  const lockDir = path.join(rootDir, "locks");
+  await mkdir(lockDir, { recursive: true });
+  await writeFile(path.join(lockDir, "inspection.lock"), JSON.stringify({
+    pid: 42, ownerIdentity: "original-process", acquiredAt: "2026-08-17T12:00:00Z",
+  }), "utf8");
+  const store = new TaskStore({
+    rootDir, processIdentity: (pid) => pid === process.pid ? "current-process" : null,
+  });
+
+  assert.equal(await store.withExclusiveLock("inspection", async () => "acquired"), "acquired");
+});
+
 async function createTask(store) {
   return store.createTask({
     taskId: "ledger-test-001",
