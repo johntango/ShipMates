@@ -19,6 +19,19 @@ test("routes standard and persistent projects through one dispatch contract", as
   assert.deepEqual(calls.map(([mode]) => mode), ["standard", "persistent"]);
 });
 
+test("routes read-only work through the standard backend for persistent projects", async () => {
+  const calls = [];
+  const router = new ProjectExecutionBackendRouter({
+    standard: async () => { calls.push("standard"); },
+    persistent: async () => { calls.push("persistent"); },
+  });
+  await router.dispatch({
+    authorizedAuthority: "read_only",
+    project: { executionPolicy: { mode: "persistent_project" } },
+  });
+  assert.deepEqual(calls, ["standard"]);
+});
+
 test("standard backend launches the common worker contract", () => {
   const calls = [];
   const child = { stdin: { end: (value) => calls.push(["stdin", value]) } };

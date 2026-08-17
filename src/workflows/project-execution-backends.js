@@ -8,7 +8,8 @@ export class ProjectExecutionBackendRouter {
   }
 
   dispatch(input) {
-    const mode = input.project?.executionPolicy?.mode === "persistent_project"
+    const mode = input.authorizedAuthority !== "read_only" &&
+      input.project?.executionPolicy?.mode === "persistent_project"
       ? "persistent" : "standard";
     return this[mode](input);
   }

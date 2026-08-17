@@ -8,6 +8,7 @@ import { TaskStore } from "../src/storage/task-store.js";
 
 import {
   authorizeFirstmateDispatch,
+  isProcessReceiptLive,
   ReadOnlyInspectionTracker,
   verifyAuthorizedClassification,
 } from "../src/workflows/firstmate-dispatch-policy.js";
@@ -150,6 +151,19 @@ test("terminates a missing interrupted worker and permits retry", async () => {
     repo: "owner/repo", baseSha: "abc123", project: planningProject(),
   });
   assert.deepEqual(await store.listTaskIds(), ["task-retry", "task-stopped"]);
+});
+
+test("requires a matching command identity when recovering a process receipt", () => {
+  const options = {
+    signalProcess() {},
+    readCommand: () => "/node /firstmate.js task-one request-original owner/repo abc",
+  };
+  assert.equal(isProcessReceiptLive({
+    kind: "process", pid: 42, commandToken: "request-original",
+  }, options), true);
+  assert.equal(isProcessReceiptLive({
+    kind: "process", pid: 42, commandToken: "request-reused",
+  }, options), false);
 });
 
 function planningProject() {

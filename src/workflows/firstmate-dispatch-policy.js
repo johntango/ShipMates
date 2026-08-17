@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 export function authorizeFirstmateDispatch({ requiredAuthority, project, plannedTask = null }) {
   if (requiredAuthority === "read_only") {
     return { mode: "read_only", trackProjectAttempt: false };
@@ -141,14 +143,24 @@ export class ReadOnlyInspectionTracker {
 }
 
 function defaultReceiptLiveness(receipt) {
-  if (receipt?.kind !== "process" || !Number.isSafeInteger(receipt.pid) || receipt.pid <= 0) {
+  return isProcessReceiptLive(receipt);
+}
+
+export function isProcessReceiptLive(receipt, {
+  signalProcess = (pid) => process.kill(pid, 0),
+  readCommand = (pid) => execFileSync("ps", ["-o", "command=", "-p", String(pid)], {
+    encoding: "utf8",
+  }),
+} = {}) {
+  if (receipt?.kind !== "process" || !Number.isSafeInteger(receipt.pid) || receipt.pid <= 0 ||
+    typeof receipt.commandToken !== "string" || !receipt.commandToken) {
     return false;
   }
   try {
-    process.kill(receipt.pid, 0);
-    return true;
+    signalProcess(receipt.pid);
+    return readCommand(receipt.pid).includes(receipt.commandToken);
   } catch (error) {
-    return error?.code === "EPERM";
+    return false;
   }
 }
 

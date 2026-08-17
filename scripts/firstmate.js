@@ -393,12 +393,12 @@ async function readExistingTaskSnapshot(store, taskId) {
   }
 }
 
-function launchReceipt(handle) {
+function launchReceipt(handle, commandToken = null) {
   if (typeof handle?.paneId === "string" && handle.paneId) {
     return { kind: "pane", paneId: handle.paneId };
   }
   if (Number.isSafeInteger(handle?.pid) && handle.pid > 0) {
-    return { kind: "process", pid: handle.pid };
+    return { kind: "process", pid: handle.pid, ...(commandToken ? { commandToken } : {}) };
   }
   throw new Error("Worker launch returned without an exact process or pane identity");
 }
@@ -1110,7 +1110,8 @@ async function runInteractiveFirstmate() {
           ? !projectForTask.tasks.some(({ dependsOn }) => dependsOn.includes(plannedTask.id))
           : true;
         const taskName = plannedTask?.title || instruction.split(/[.!?\n]/u)[0].trim().slice(0, 120) || "Unplanned work";
-        if (plannedTask && projectForTask.executionPolicy?.mode === "persistent_project") {
+        if (dispatchPolicy.mode === "implementation" && plannedTask &&
+          projectForTask.executionPolicy?.mode === "persistent_project") {
           console.error(`Firstmate is starting “${taskName}” in ${projectNameForTask}.`);
           await orchestrator.attachAttempt({
             projectId: projectIdForTask, taskId, title: instruction.slice(0, 160), planTaskId,
@@ -1122,7 +1123,7 @@ async function runInteractiveFirstmate() {
           });
           await projectStore.recordLaunchReceipt({
             projectId: projectIdForTask, planTaskId, taskId,
-            receipt: launchReceipt(child),
+            receipt: launchReceipt(child, requestId),
           });
           if (projectAgentObserver.paneIdFor(projectIdForTask)) {
             console.error(`${projectNameForTask} — ${taskName} is running in its Herdr Project Agent pane ${child.paneId}.`);
@@ -1182,22 +1183,20 @@ async function runInteractiveFirstmate() {
           demoMode: projectForTask?.demoMode === true,
           authorizedAuthority: requiredAuthority,
         });
-        if (dispatchPolicy.trackProjectAttempt) {
-          await projectStore.recordLaunchReceipt({
+        const receipt = launchReceipt(child, requestId);
+        const receiptRecorded = dispatchPolicy.trackProjectAttempt
+          ? projectStore.recordLaunchReceipt({
             projectId: projectIdForTask, planTaskId, taskId,
-            receipt: launchReceipt(child),
-          });
-        } else {
-          await readOnlyInspectionTracker.recordReceipt({
-            taskId, requestId, receipt: launchReceipt(child),
-          });
-        }
+            receipt,
+          })
+          : readOnlyInspectionTracker.recordReceipt({ taskId, requestId, receipt });
         latestTaskId = taskId;
         activeRequests.set(taskId, child);
         if (projectParent) {
           console.error(`“${taskName}” is continuing ${projectNameForTask} from its validated dependency.`);
         }
         child.once("error", async (error) => {
+          await receiptRecorded.catch(() => {});
           activeRequests.delete(taskId);
           if (!dispatchPolicy.trackProjectAttempt) {
             await readOnlyInspectionTracker.reconcile({ taskId, requestId });
@@ -1205,6 +1204,7 @@ async function runInteractiveFirstmate() {
           console.error(`“${taskName}” in ${projectNameForTask} could not start (${error.name}).`);
         });
         child.once("exit", async (exitCode, signal) => {
+          await receiptRecorded.catch(() => {});
           activeRequests.delete(taskId);
           console.error(exitCode === 0
             ? `“${taskName}” in ${projectNameForTask} completed.`
@@ -1221,7 +1221,7 @@ async function runInteractiveFirstmate() {
               }));
             }
             let plannedStatus = null;
-            if (planTaskId) {
+            if (dispatchPolicy.trackProjectAttempt && planTaskId) {
               const reconciled = await orchestrator.reconcileTask(taskId);
               plannedStatus = reconciled.status === "awaiting_human"
                 ? "dispatched" : reconciled.status;
@@ -1242,6 +1242,7 @@ async function runInteractiveFirstmate() {
             console.error(`Could not create the review for “${taskName}” in ${projectNameForTask} (${error.name}).`);
           }
         });
+        await receiptRecorded;
     console.error(`“${taskName}” in ${projectNameForTask} was dispatched; Firstmate is listening for more instructions.`);
   });
   const plannedTaskDispatcher = new PlannedTaskDispatcher({
