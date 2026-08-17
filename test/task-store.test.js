@@ -158,6 +158,30 @@ test("recovers an exclusive lock whose process identity is stale", async (t) => 
   assert.equal(await store.withExclusiveLock("inspection", async () => "acquired"), "acquired");
 });
 
+test("ignores incomplete and stale lease claims without removing a live claim", async (t) => {
+  const rootDir = await temporaryState(t);
+  const claimsDir = path.join(rootDir, "locks", "inspection.lock.claims");
+  await mkdir(claimsDir, { recursive: true });
+  await writeFile(path.join(claimsDir, ".pending-interrupted"), "", "utf8");
+  await writeFile(path.join(claimsDir, "stale.json"), JSON.stringify({
+    pid: 42, ownerIdentity: "stopped-process",
+  }), "utf8");
+  const store = new TaskStore({
+    rootDir, processIdentity: (pid) => pid === process.pid ? "current-process" : null,
+  });
+  let active = 0;
+  let maximumActive = 0;
+  const enter = () => store.withExclusiveLock("inspection", async () => {
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    active -= 1;
+  });
+
+  await Promise.all([enter(), enter()]);
+  assert.equal(maximumActive, 1);
+});
+
 async function createTask(store) {
   return store.createTask({
     taskId: "ledger-test-001",

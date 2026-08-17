@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   rename,
+  stat,
   unlink,
 } from "node:fs/promises";
 import path from "node:path";
@@ -778,7 +779,7 @@ export class TaskStore {
     if (!/^[a-z0-9][a-z0-9._-]{2,63}$/u.test(lockId) || typeof operation !== "function") {
       throw new TypeError("Exclusive lock requires a valid lock id and operation");
     }
-    return this.#withFileLock(path.join(this.rootDir, "locks", `${lockId}.lock`), lockId, operation);
+    return this.#withLeaseLock(path.join(this.rootDir, "locks", `${lockId}.lock`), lockId, operation);
   }
 
   async #append(taskId, event, { requireAbsent = false } = {}) {
@@ -865,7 +866,6 @@ export class TaskStore {
         if (error.code !== "EEXIST") {
           throw error;
         }
-        if (await this.#removeStaleLock(lockPath)) continue;
         if (Date.now() - startedAt >= this.lockTimeoutMs) {
           throw new TaskStoreError(`Timed out waiting for task lock: ${lockId}`);
         }
@@ -874,11 +874,8 @@ export class TaskStore {
     }
 
     try {
-      const ownerIdentity = this.processIdentity(process.pid);
       await handle.writeFile(
-        `${JSON.stringify({
-          pid: process.pid, ownerIdentity, acquiredAt: new Date().toISOString(),
-        })}\n`,
+        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
       );
       await handle.sync();
       return await operation();
@@ -892,22 +889,51 @@ export class TaskStore {
     }
   }
 
-  async #removeStaleLock(lockPath) {
-    let owner;
+  async #withLeaseLock(lockPath, lockId, operation) {
+    const claimsDir = `${lockPath}.claims`;
+    await mkdir(claimsDir, { recursive: true, mode: 0o700 });
+    const token = `${process.pid}-${this.idFactory()}`;
+    const temporaryPath = path.join(claimsDir, `.pending-${token}`);
+    const claimPath = path.join(claimsDir, `${token}.json`);
+    const ownerIdentity = this.processIdentity(process.pid);
+    if (!ownerIdentity) throw new TaskStoreError(`Could not establish lock owner identity: ${lockId}`);
+    const handle = await open(temporaryPath, "wx", 0o600);
     try {
-      owner = JSON.parse(await readFile(lockPath, "utf8"));
-    } catch {
-      return false;
+      await handle.writeFile(`${JSON.stringify({
+        pid: process.pid, ownerIdentity, acquiredAt: new Date().toISOString(),
+      })}\n`);
+      await handle.sync();
+    } finally {
+      await handle.close();
     }
-    if (!Number.isSafeInteger(owner?.pid) || typeof owner?.ownerIdentity !== "string" ||
-      !owner.ownerIdentity) return false;
-    if (this.processIdentity(owner.pid) === owner.ownerIdentity) return false;
+    await rename(temporaryPath, claimPath);
+
+    const startedAt = Date.now();
     try {
-      await unlink(lockPath);
-      return true;
-    } catch (error) {
-      if (error.code === "ENOENT") return true;
-      throw error;
+      while (true) {
+        const claims = [];
+        for (const name of await readdir(claimsDir)) {
+          if (!name.endsWith(".json")) continue;
+          const candidatePath = path.join(claimsDir, name);
+          try {
+            const owner = JSON.parse(await readFile(candidatePath, "utf8"));
+            if (this.processIdentity(owner.pid) !== owner.ownerIdentity) continue;
+            const metadata = await stat(candidatePath, { bigint: true });
+            claims.push({ name, publishedAt: metadata.ctimeNs });
+          } catch {}
+        }
+        claims.sort((left, right) => left.publishedAt < right.publishedAt ? -1 :
+          left.publishedAt > right.publishedAt ? 1 : left.name.localeCompare(right.name));
+        if (claims[0]?.name === path.basename(claimPath)) return await operation();
+        if (Date.now() - startedAt >= this.lockTimeoutMs) {
+          throw new TaskStoreError(`Timed out waiting for task lock: ${lockId}`);
+        }
+        await delay(this.lockRetryMs);
+      }
+    } finally {
+      await unlink(claimPath).catch((error) => {
+        if (error.code !== "ENOENT") throw error;
+      });
     }
   }
 
