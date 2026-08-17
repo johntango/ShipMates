@@ -18,6 +18,7 @@ test("continues one durable conversational Codex thread", async () => {
       action: calls.length === 1 ? "plan" : "answer",
       instruction: null,
       planTaskId: null,
+      requiredAuthority: null,
       objective: calls.length === 1 ? "Build ShipMates" : null,
       tasks: calls.length === 1 ? [{ id: "one", title: "Foundation", description: "Build it", dependsOn: [] }] : [],
     }));
@@ -41,6 +42,7 @@ test("returns an existing-task control action without an implementation instruct
       response: "I will apply the approval to the existing task.",
       action: "control", controlType: "accept_demo_warning", taskId: "task-existing123",
       instruction: null, planTaskId: null, objective: null, tasks: [],
+      requiredAuthority: null,
     }));
     return { exitCode: 0 };
   };
@@ -49,4 +51,22 @@ test("returns an existing-task control action without an implementation instruct
   });
   assert.equal(decision.action, "control");
   assert.equal(decision.taskId, "task-existing123");
+});
+
+test("requires authority classification before returning a dispatch", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-authority-"));
+  const runProcess = async (call) => {
+    await writeFile(call.eventsPath, `${JSON.stringify({ type: "thread.started", thread_id: "thread-authority" })}\n${JSON.stringify({ type: "turn.completed" })}\n`);
+    const reportPath = call.args[call.args.indexOf("--output-last-message") + 1];
+    await writeFile(reportPath, JSON.stringify({
+      response: "I will inspect it.", action: "dispatch", controlType: null, taskId: null,
+      instruction: "Inspect the repository", planTaskId: null, requiredAuthority: "read_only",
+      objective: null, tasks: [],
+    }));
+    return { exitCode: 0 };
+  };
+  const decision = await new FirstmateCodexConversation({ rootDir, runProcess }).turn({
+    message: "Inspect it", workingDirectory: process.cwd(), project: {},
+  });
+  assert.equal(decision.requiredAuthority, "read_only");
 });

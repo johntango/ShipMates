@@ -33,9 +33,11 @@ test("standard backend launches the common worker contract", () => {
     project: {}, taskId: "task-one", requestId: "request-one",
     context: { repo: "owner/repo", baseSha: "abc", repoPath: "/repo" },
     instruction: "Build it", validationProfile: "fast", demoMode: true,
+    authorizedAuthority: "local_write",
   }), child);
   assert.deepEqual(calls[0][2], ["/firstmate.js", "task-one", "request-one", "owner/repo", "abc"]);
   assert.equal(calls[0][3].env.SHIPMATES_DEMO_MODE, "1");
+  assert.equal(calls[0][3].env.SHIPMATES_AUTHORIZED_AUTHORITY, "local_write");
   assert.deepEqual(calls[1], ["stdin", "Build it\n"]);
 });
 

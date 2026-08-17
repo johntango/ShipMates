@@ -21,6 +21,8 @@
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[character]);
   const taskTone = (task) => {
+    if (task.presentation?.status === "Failed") return "attention";
+    if (task.presentation?.status === "Blocked safely") return "working";
     if (["failed", "blocked", "recovery_required"].includes(task.state)) return "attention";
     if (["running", "awaiting_worker", "validating", "preparing"].includes(task.state)) return "working";
     return "done";
@@ -41,9 +43,20 @@
             <div><div class="d-flex gap-2 align-items-center"><h2 class="h5 mb-0">${escape(task.summary)}</h2>${task.activeProject ? '<span class="badge text-bg-primary">Active project</span>' : ""}</div><div class="small text-body-secondary mt-1">${escape(task.state.replaceAll("_", " "))}</div></div>
             <span class="badge text-bg-secondary">${escape(task.authority.replaceAll("_", " "))}</span>
           </div>
-          ${task.workers.length ? `<div class="d-flex flex-wrap gap-2 mt-3">${task.workers.map((worker) => `<span class="badge rounded-pill text-bg-info worker-badge">${escape(worker.id)} · ${escape(worker.status)}</span>`).join("")}</div>` : ""}
-          ${task.files.length ? `<div class="list-group list-group-flush mt-3">${task.files.map((file) => `<div class="list-group-item px-0"><strong>${escape(file.filename)}</strong><div class="small text-body-secondary font-monospace file-path">${escape(file.path)}</div></div>`).join("")}</div>` : '<p class="small text-body-secondary mt-3 mb-0">No files produced.</p>'}
-          ${task.taskProgress?.length ? `<div class="alert alert-info py-2 mt-3 mb-0" role="status" aria-live="polite"><strong>${escape(task.taskProgress.at(-1).phase)}:</strong> ${escape(task.taskProgress.at(-1).message)}<details class="small mt-1"><summary>Show task progress</summary><ol class="mt-2 mb-0">${task.taskProgress.map((step) => `<li><strong>${escape(step.phase)}:</strong> ${escape(step.message)}</li>`).join("")}</ol></details></div>` : ""}
+          ${task.presentation ? `<section class="mt-3" aria-label="Human-readable task outcome">
+            <div class="alert ${task.presentation.status === "Passed" ? "alert-success" : task.presentation.status === "Failed" ? "alert-danger" : "alert-warning"} mb-2">
+              <div class="h5 mb-1">${escape(task.presentation.status)}</div>
+              ${task.presentation.nextAction ? `<div><strong>Next action:</strong> ${escape(task.presentation.nextAction)}</div>` : '<div><strong>Next action:</strong> None.</div>'}
+              <div class="small mt-1"><strong>Why:</strong> ${escape(task.presentation.why)}</div>
+            </div>
+            <details class="small"><summary>Work breakdown and detailed evidence</summary>
+              <div class="mt-2"><strong>Work breakdown:</strong> ${escape(task.presentation.workBreakdown.agents.length)} agent(s), ${escape(task.presentation.workBreakdown.tasks.length)} task step(s), ${escape(task.presentation.workBreakdown.tests.length)} test result(s), ${escape(task.presentation.workBreakdown.decisions.length)} decision(s).</div>
+              ${task.workers.length ? `<div class="d-flex flex-wrap gap-2 mt-2">${task.workers.map((worker) => `<span class="badge rounded-pill text-bg-info worker-badge">${escape(worker.id)} · ${escape(worker.status)}</span>`).join("")}</div>` : ""}
+              ${task.files.length ? `<div class="list-group list-group-flush mt-2">${task.files.map((file) => `<div class="list-group-item px-0"><strong>${escape(file.filename)}</strong><div class="text-body-secondary font-monospace file-path">${escape(file.path)}</div></div>`).join("")}</div>` : '<div class="text-body-secondary mt-2">No artifacts recorded.</div>'}
+              ${task.taskProgress?.length ? `<ol class="mt-2 mb-0">${task.taskProgress.map((step) => `<li><strong>${escape(step.phase)}:</strong> ${escape(step.message)}</li>`).join("")}</ol>` : ""}
+              <div class="text-body-secondary mt-2">${escape(task.presentation.evidence.ledger.evidenceCount)} evidence record(s)${task.presentation.evidence.metrics.tokens ? ` · ${escape(task.presentation.evidence.metrics.tokens.total)} tokens` : ""}${Number.isFinite(task.presentation.evidence.metrics.validationDurationMs) ? ` · ${escape(task.presentation.evidence.metrics.validationDurationMs)} ms validation` : ""}</div>
+            </details>
+          </section>` : ""}
           ${task.humanAction ? `<div class="alert alert-warning py-2 mt-3 mb-0" role="alert"><strong>Human input required.</strong> Send this exact command to Firstmate:<br><code>${escape(task.humanAction)}</code></div>` : ""}
           ${task.validation ? `<div class="alert ${task.validation.passed ? "alert-success" : "alert-warning"} py-2 mt-3 mb-0">Validation ${task.validation.passed ? "passed" : "did not pass"}: ${escape(task.validation.outcome || "unknown")}</div>` : ""}
         </div>

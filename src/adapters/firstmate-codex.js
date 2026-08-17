@@ -13,7 +13,8 @@ Choose exactly one action:
   recovery, reconciliation, status requests, or accepted warnings as new work.
 - dispatch: one concrete bounded coding or inspection task is ready; preserve the user's full intent
   in instruction. If it implements a stored planned task, return its exact id in planTaskId; otherwise
-  planTaskId is null. Do not split one request into duplicate work.
+  planTaskId is null. Set requiredAuthority to read_only for inspection or local_write for implementation.
+  External-write and destructive requests must not be dispatched. Do not split one request into duplicate work.
 - plan: the human supplied a broader project objective that needs multiple dependent tasks. Return
   a useful project plan of up to 12 tasks. Use stable short ids and dependsOn ids. Do not dispatch it yet.
 The response is what the human sees. Do not expose internal JSON, schemas, or authority labels.`;
@@ -81,6 +82,13 @@ function validateDecision(value) {
   }
   if (value.action === "dispatch" && (typeof value.instruction !== "string" || !value.instruction.trim())) {
     throw new Error("Firstmate dispatch requires an instruction");
+  }
+  const authorities = new Set(["read_only", "local_write", "external_write", "destructive"]);
+  if (value.action === "dispatch" && !authorities.has(value.requiredAuthority)) {
+    throw new Error("Firstmate dispatch requires an explicit authority classification");
+  }
+  if (value.action !== "dispatch" && value.requiredAuthority !== null) {
+    throw new Error("Firstmate authority classification is only valid for dispatch");
   }
   if (value.action === "control" &&
     (!new Set(["accept_demo_warning", "show_status", "resume_existing"]).has(value.controlType) ||

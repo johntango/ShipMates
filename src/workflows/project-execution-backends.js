@@ -42,7 +42,7 @@ export function createFirstmateProjectExecutionBackends({
       return child;
     },
     standard: ({ taskId, requestId, context, instruction, projectParent,
-      validationProfile, demoMode }) => {
+      validationProfile, demoMode, authorizedAuthority }) => {
       const child = spawnProcess(processPath, [
         firstmateScript, taskId, requestId, context.repo, context.baseSha,
       ], {
@@ -53,6 +53,7 @@ export function createFirstmateProjectExecutionBackends({
           ...(projectParent ? { SHIPMATES_PROJECT_PARENT_TASK_ID: projectParent.id } : {}),
           SHIPMATES_VALIDATION_PROFILE: validationProfile,
           SHIPMATES_DEMO_MODE: demoMode ? "1" : "0",
+          SHIPMATES_AUTHORIZED_AUTHORITY: authorizedAuthority,
         },
         stdio: ["pipe", "ignore", "inherit"],
       });
