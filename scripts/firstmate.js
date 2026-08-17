@@ -85,7 +85,10 @@ import { CodexShipWorkflow } from "../src/workflows/codex-ship.js";
 import { FirstmateCommitWorkflow } from "../src/workflows/firstmate-commit.js";
 import { completeFirstmateDemoTask } from "../src/workflows/firstmate-demo-completion.js";
 import { ProjectOrchestrator } from "../src/workflows/project-orchestrator.js";
-import { PlannedTaskDispatcher } from "../src/workflows/planned-task-dispatch.js";
+import {
+  claimPlannedTaskForDispatch,
+  PlannedTaskDispatcher,
+} from "../src/workflows/planned-task-dispatch.js";
 import { createFirstmateProjectExecutionBackends } from "../src/workflows/project-execution-backends.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
 import { LocalDeliveryWorkflow } from "../src/workflows/local-delivery.js";
@@ -647,13 +650,12 @@ async function runInteractiveFirstmate() {
       console.error(`Could not reattach the active project dashboard (${error.name}).`);
     }
   }
-  const dispatchRequest = (message) => firstmateHerdrSession.withActivity({
+  const dispatchRequest = (message, governedDispatch = null) => firstmateHerdrSession.withActivity({
     message: "FirstMate is handling an instruction",
     status: "coordinating",
   }, async () => {
-        const governedPlanDispatch = message.match(
-          /^Implement planned task ([a-z0-9][a-z0-9._-]{2,63})\b/u,
-        );
+        const governedPlanDispatch = governedDispatch?.planTaskId
+          ? governedDispatch : null;
         const selection = parseProjectSelection(message, await projectStore.list());
         if (selection) {
           if (!selection.project) {
@@ -981,8 +983,8 @@ async function runInteractiveFirstmate() {
           return;
         }
         let instruction = message;
-        let planTaskId = governedPlanDispatch?.[1] || null;
-        let requiredAuthority = governedPlanDispatch ? "local_write" : null;
+        let planTaskId = governedPlanDispatch?.planTaskId || null;
+        let requiredAuthority = governedPlanDispatch?.requiredAuthority || null;
         try {
           if (governedPlanDispatch) {
             const selected = (await projectStore.get(activeProject.id))?.tasks
@@ -1076,7 +1078,9 @@ async function runInteractiveFirstmate() {
         const projectIdForTask = activeProject.id;
         const projectNameForTask = activeProject.name;
         const plannedTask = planTaskId
-          ? (await projectStore.get(projectIdForTask))?.tasks.find(({ id }) => id === planTaskId)
+          ? await claimPlannedTaskForDispatch({
+              projectStore, projectId: projectIdForTask, planTaskId, requiredAuthority,
+            })
           : null;
         const projectForTask = planTaskId ? await projectStore.get(projectIdForTask) : null;
         activeProject = await projectStore.get(activeProject.id);

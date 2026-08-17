@@ -282,6 +282,8 @@ test("governed project advancement selects its target before dispatch", async ()
   assert.match(source, /selectProject: async \(projectId\)/u);
   assert.match(source, /plannedTaskDispatcher\.retryBlocked/u);
   assert.match(source, /Retry returned before a durable task was created/u);
+  assert.match(source, /governedDispatch\?\.planTaskId/u);
+  assert.match(source, /claimPlannedTaskForDispatch/u);
 });
 
 function fixture() {

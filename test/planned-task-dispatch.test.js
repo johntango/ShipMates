@@ -5,7 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { ProjectStore } from "../src/projects/project-store.js";
-import { PlannedTaskDispatcher } from "../src/workflows/planned-task-dispatch.js";
+import {
+  claimPlannedTaskForDispatch,
+  PlannedTaskDispatcher,
+} from "../src/workflows/planned-task-dispatch.js";
 
 test("selects, claims, dispatches, and returns one durable task", async () => {
   const { store, project } = await fixture();
@@ -13,7 +16,11 @@ test("selects, claims, dispatches, and returns one durable task", async () => {
   const dispatcher = new PlannedTaskDispatcher({
     projectStore: store,
     selectProject: async (id) => { selected.push(id); return store.activate(id); },
-    dispatchRequest: async () => {
+    dispatchRequest: async (_message, governed) => {
+      assert.deepEqual(governed, {
+        projectId: project.id, planTaskId: "build", requiredAuthority: "local_write",
+      });
+      assert.equal((await store.get(project.id)).tasks[0].status, "claimed");
       await store.attachTask({
         projectId: project.id, planTaskId: "build", taskId: "task-durable", title: "Build",
       });
@@ -27,6 +34,74 @@ test("selects, claims, dispatches, and returns one durable task", async () => {
   assert.equal(result.status, "dispatched");
   assert.equal(result.task.taskId, "task-durable");
   assert.deepEqual(selected, [project.id]);
+});
+
+test("approval automatically claims and dispatches a short-id initial task", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "planned-approval-dispatch-"));
+  const store = new ProjectStore({ rootDir });
+  let project = await store.create({
+    name: "DemoTest0", repo: "owner/demo", repoPath: "/repo/demo", baseSha: "abc123",
+  });
+  project = await store.savePlan({
+    projectId: project.id, objective: "Build bouncing balls",
+    tasks: [{ id: "ui", title: "Build page", description: "Add bouncing balls", dependsOn: [] }],
+  });
+  project = await store.approve(project.id);
+  let launches = 0;
+  const dispatcher = new PlannedTaskDispatcher({
+    projectStore: store,
+    selectProject: (id) => store.activate(id),
+    dispatchRequest: async (_message, governed) => {
+      launches += 1;
+      assert.deepEqual(governed, {
+        projectId: project.id, planTaskId: "ui", requiredAuthority: "local_write",
+      });
+      assert.equal((await store.get(project.id)).tasks[0].status, "claimed");
+      await store.attachTask({
+        projectId: project.id, planTaskId: "ui", taskId: "task-ui", title: "Build page",
+      });
+      await store.recordLaunchReceipt({
+        projectId: project.id, planTaskId: "ui", taskId: "task-ui",
+        receipt: { kind: "process", pid: 4321 },
+      });
+    },
+  });
+
+  const result = await dispatcher.dispatchNext({ projectId: project.id });
+
+  assert.equal(launches, 1);
+  assert.equal(result.status, "dispatched");
+  assert.equal(result.task.taskId, "task-ui");
+});
+
+test("a conversational implementation decision claims its approved ready plan task", async () => {
+  const { store, project } = await fixture();
+
+  const task = await claimPlannedTaskForDispatch({
+    projectStore: store, projectId: project.id, planTaskId: "build",
+    requiredAuthority: "local_write",
+  });
+
+  assert.equal(task.status, "claimed");
+  assert.equal((await store.get(project.id)).tasks[0].status, "claimed");
+});
+
+test("a conversational implementation decision cannot claim before plan approval", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "planned-unapproved-dispatch-"));
+  const store = new ProjectStore({ rootDir });
+  let project = await store.create({
+    name: "Demo", repo: "owner/demo", repoPath: "/repo/demo", baseSha: "abc123",
+  });
+  project = await store.savePlan({
+    projectId: project.id, objective: "Build it",
+    tasks: [{ id: "ui", title: "Build", description: "Build it", dependsOn: [] }],
+  });
+
+  await assert.rejects(() => claimPlannedTaskForDispatch({
+    projectStore: store, projectId: project.id, planTaskId: "ui",
+    requiredAuthority: "local_write",
+  }), /must be approved/u);
+  assert.equal((await store.get(project.id)).tasks[0].status, "planned");
 });
 
 test("blocks a claimed task when dispatch returns without durable attachment", async () => {

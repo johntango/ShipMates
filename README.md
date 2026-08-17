@@ -214,6 +214,11 @@ Implementer can be dispatched. A successful dispatch also requires a durable
 task attachment and launch receipt. Missing launch identity is recorded as a
 blocker instead of leaving work indefinitely described as dispatched.
 
+After the human approves a saved plan, Firstmate automatically claims and
+dispatches its first dependency-ready task. Plan task IDs and claim mechanics
+remain internal governance state; they are not an additional command or
+approval the human must provide.
+
 Plan tasks move through `planned`, `claimed`, `dispatched`, `blocked`, and
 `completed` states. Retries are retained as attempts under the original plan
 row, so task history is not lost or duplicated. Pausing a project prevents new
