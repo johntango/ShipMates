@@ -90,7 +90,10 @@ import {
   claimPlannedTaskForDispatch,
   PlannedTaskDispatcher,
 } from "../src/workflows/planned-task-dispatch.js";
-import { createFirstmateProjectExecutionBackends } from "../src/workflows/project-execution-backends.js";
+import {
+  appendFirstmateDiagnostic,
+  createFirstmateProjectExecutionBackends,
+} from "../src/workflows/project-execution-backends.js";
 import { verifyGovernedExecutionEnvelope } from "../src/workflows/governed-execution.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
 import { LocalDeliveryWorkflow } from "../src/workflows/local-delivery.js";
@@ -1201,7 +1204,7 @@ async function runInteractiveFirstmate() {
         }
         console.error(`Firstmate is starting “${taskName}” in ${projectNameForTask}.`);
         const child = await executionBackends.dispatch({
-          project: projectForTask,
+          project: projectForTask, planTaskId,
           taskId, requestId, context, instruction, projectParent,
           validationProfile: isTerminalMilestone ? "full" : "fast",
           demoMode: projectForTask?.demoMode === true,
@@ -1263,6 +1266,10 @@ async function runInteractiveFirstmate() {
               setImmediate(() => void advanceProject(projectIdForTask, { reason: "task completed" }));
             }
           } catch (error) {
+            await appendFirstmateDiagnostic(
+              path.join(interactiveStore.rootDir, "tasks", taskId, "review.stderr.log"),
+              `${error.stack || `${error.name}: ${error.message}`}\n`,
+            ).catch(() => {});
             console.error(`Could not create the review for “${taskName}” in ${projectNameForTask} (${error.name}).`);
           }
         });

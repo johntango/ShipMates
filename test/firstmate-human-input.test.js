@@ -14,6 +14,12 @@ test("surfaces validation and push approval gates in the Firstmate terminal", as
   assert.match(source, /console\.error\(humanInputRequired/u);
 });
 
+test("passes the governed plan-task binding to the standard execution backend", async () => {
+  const source = await readFile(path.resolve("scripts/firstmate.js"), "utf8");
+  assert.match(source, /executionBackends\.dispatch\(\{\s*project: projectForTask, planTaskId,/u);
+  assert.match(source, /review\.stderr\.log/u);
+});
+
 test("approval command validates, delivers, reconciles, and advances dependent work", async () => {
   const { handleValidationApproval } = await import(
     "../src/cli/firstmate-validation-approval.js"

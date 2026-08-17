@@ -1,4 +1,5 @@
-import { appendFile } from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 
 import { writeGovernedExecutionEnvelope } from "./governed-execution.js";
 
@@ -30,7 +31,7 @@ export function createFirstmateProjectExecutionBackends({
   hasProjectPane,
   environment = process.env,
   writeEnvelope = writeGovernedExecutionEnvelope,
-  appendDiagnostic = appendFile,
+  appendDiagnostic = appendFirstmateDiagnostic,
 } = {}) {
   if (typeof spawnProcess !== "function" || typeof hasProjectPane !== "function") {
     throw new TypeError("Firstmate execution backends require spawnProcess and hasProjectPane");
@@ -50,6 +51,9 @@ export function createFirstmateProjectExecutionBackends({
     },
     standard: async ({ project, planTaskId, taskId, requestId, context, instruction, projectParent,
       validationProfile, demoMode, authorizedAuthority }) => {
+      if (authorizedAuthority === "local_write" && (!project || !planTaskId)) {
+        throw new Error("Governed local-write dispatch requires a project and planned task");
+      }
       const envelopePath = authorizedAuthority === "local_write" && project && planTaskId
         ? await writeEnvelope({
             stateRoot,
@@ -87,4 +91,9 @@ export function createFirstmateProjectExecutionBackends({
       return child;
     },
   });
+}
+
+export async function appendFirstmateDiagnostic(filePath, chunk, options = { mode: 0o600 }) {
+  await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  await appendFile(filePath, chunk, options);
 }
