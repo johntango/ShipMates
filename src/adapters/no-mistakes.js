@@ -7,7 +7,7 @@ import {
   readlink,
   symlink,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -30,10 +30,41 @@ export const FAST_LOCAL_SKIP_STEPS = Object.freeze([
 ]);
 
 export const PINNED_NO_MISTAKES_DARWIN_ARM64 = Object.freeze({
-  version: "v1.41.1",
-  sourceCommit: "4a692bd336c37e9ac36761ee82e558865402abba",
-  binarySha256: "12a72f3aee65f74961c85c43071a731cb224e2684f997aa47cdc76b76fb2022b",
+  version: "v1.48.0",
+  sourceCommit: "2ac37698d441b4318867179e567a9f9dadb345fb",
+  binarySha256: "ae9b455177bc38e9ab45e853f61f2172a5760105ea552cf3dceb55b3c9f39ad3",
 });
+
+export async function resolvePinnedNoMistakesBinary({
+  explicitPath = null,
+  pin = PINNED_NO_MISTAKES_DARWIN_ARM64,
+  candidatePaths = [
+    path.join(homedir(), ".local", "bin", "no-mistakes"),
+    path.join(homedir(), ".no-mistakes", "bin", "no-mistakes"),
+    path.join(tmpdir(), `shipmates-no-mistakes-${pin.version}`, "no-mistakes"),
+  ],
+  binaryReader = readFile,
+} = {}) {
+  validatePin(pin);
+  const candidates = explicitPath ? [explicitPath] : candidatePaths;
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    let bytes;
+    try {
+      bytes = await binaryReader(resolved);
+    } catch (cause) {
+      if (cause?.code === "ENOENT") continue;
+      throw new NoMistakesGateError("Could not inspect a no-mistakes binary candidate", { cause });
+    }
+    if (digest(bytes) === pin.binarySha256) return resolved;
+    if (explicitPath) {
+      throw new NoMistakesGateError("NO_MISTAKES_BIN does not match the pinned binary digest");
+    }
+  }
+  throw new NoMistakesGateError(
+    `Pinned no-mistakes ${pin.version} is not installed in a supported location`,
+  );
+}
 
 const allSteps = Object.freeze([
   "intent",

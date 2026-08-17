@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   NoMistakesGateError,
   NoMistakesLocalGate,
+  resolvePinnedNoMistakesBinary,
 } from "../adapters/no-mistakes.js";
 import { LocalDeliveryWorkflow } from "../workflows/local-delivery.js";
 import {
@@ -15,8 +16,7 @@ export async function handleValidationApproval(message, {
   projectStore,
   orchestrator,
   advanceProject,
-  binaryPath = process.env.NO_MISTAKES_BIN ||
-    "/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes",
+  binaryPath = null,
   createGate = (options) => new NoMistakesLocalGate(options),
   createValidationWorkflow = (options) => new LocalValidationWorkflow(options),
   createDeliveryWorkflow = (options) => new LocalDeliveryWorkflow(options),
@@ -27,6 +27,10 @@ export async function handleValidationApproval(message, {
     /^approve validation for task ([a-z0-9][a-z0-9._-]{2,63})$/iu,
   );
   if (!match) return null;
+
+  binaryPath ||= await resolvePinnedNoMistakesBinary({
+    explicitPath: process.env.NO_MISTAKES_BIN || null,
+  });
 
   const taskId = match[1].toLowerCase();
   const snapshot = await store.getSnapshot(taskId);

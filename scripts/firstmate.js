@@ -20,6 +20,7 @@ import { ControlledGitCommitAdapter } from "../src/adapters/git-commit.js";
 import {
   FAST_LOCAL_SKIP_STEPS,
   NoMistakesLocalGate,
+  resolvePinnedNoMistakesBinary,
 } from "../src/adapters/no-mistakes.js";
 import { FirstmateCodexConversation } from "../src/adapters/firstmate-codex.js";
 import { TreehouseWorktreeManager } from "../src/adapters/treehouse.js";
@@ -213,8 +214,9 @@ if (!classifyOnly) {
   if (result.classification.requiredAuthority === "local_write") {
     let gate = null;
     if (!demoMode) {
-      const binaryPath = process.env.NO_MISTAKES_BIN ||
-        "/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes";
+      const binaryPath = await resolvePinnedNoMistakesBinary({
+        explicitPath: process.env.NO_MISTAKES_BIN || null,
+      });
       gate = new NoMistakesLocalGate({
         binaryPath,
         stateRoot: path.join(rootDir, "no-mistakes"),

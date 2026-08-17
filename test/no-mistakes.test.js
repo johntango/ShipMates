@@ -9,6 +9,7 @@ import {
   NoMistakesLocalGate,
   NoMistakesOutputError,
   parseAxiOutput,
+  resolvePinnedNoMistakesBinary,
 } from "../src/adapters/no-mistakes.js";
 
 const HEAD = "a".repeat(40);
@@ -22,6 +23,30 @@ const PIN = Object.freeze({
 const PIN_OPTIONS = Object.freeze({
   binaryReader: async () => BINARY,
   pin: PIN,
+});
+
+test("resolves only an installed binary matching the immutable pin", async () => {
+  const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+  const reads = [];
+  const resolved = await resolvePinnedNoMistakesBinary({
+    pin: PIN,
+    candidatePaths: ["/missing/no-mistakes", "/wrong/no-mistakes", "/pinned/no-mistakes"],
+    binaryReader: async (candidate) => {
+      reads.push(candidate);
+      if (candidate === "/missing/no-mistakes") throw missing;
+      return candidate === "/pinned/no-mistakes" ? BINARY : Buffer.from("wrong");
+    },
+  });
+  assert.equal(resolved, "/pinned/no-mistakes");
+  assert.deepEqual(reads, ["/missing/no-mistakes", "/wrong/no-mistakes", "/pinned/no-mistakes"]);
+});
+
+test("rejects an explicit binary that does not match the pin", async () => {
+  await assert.rejects(() => resolvePinnedNoMistakesBinary({
+    explicitPath: "/custom/no-mistakes",
+    pin: PIN,
+    binaryReader: async () => Buffer.from("wrong"),
+  }), /does not match the pinned binary digest/u);
 });
 
 test("keeps the validation profile separate from immutable binary pin evidence", () => {
