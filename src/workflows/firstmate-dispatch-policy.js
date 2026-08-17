@@ -2,7 +2,12 @@ import { execFileSync } from "node:child_process";
 
 export function authorizeFirstmateDispatch({ requiredAuthority, project, plannedTask = null }) {
   if (requiredAuthority === "read_only") {
-    return { mode: "read_only", trackProjectAttempt: false };
+    if (plannedTask && (!project || project.status !== "approved" || plannedTask.status !== "claimed")) {
+      throw new FirstmateDispatchPolicyError(
+        "Planned read-only dispatch requires an approved project plan and governed claimed task",
+      );
+    }
+    return { mode: "read_only", trackProjectAttempt: Boolean(plannedTask) };
   }
   if (requiredAuthority === "local_write") {
     if (!project || project.status !== "approved" || !plannedTask || plannedTask.status !== "claimed") {

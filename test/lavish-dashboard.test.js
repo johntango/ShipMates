@@ -26,10 +26,10 @@ test("renders a readable task dashboard with exact implementation files", () => 
   assert.match(html, /src="dashboard-actions\.js"/u);
 });
 
-test("describes dashboard actions as queued until Firstmate replies", () => {
+test("describes dashboard actions as sent so status does not appear queued forever", () => {
   assert.match(
     renderDashboardActionsScript(),
-    /queued\. Firstmate will reply in Conversation/u,
+    /sent\. Check Conversation for Firstmate's reply/u,
   );
 });
 

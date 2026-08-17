@@ -77,6 +77,42 @@ test("approval automatically claims and dispatches a short-id initial task", asy
   assert.equal(result.task.taskId, "task-ui");
 });
 
+test("approved read-only plan task launches once with its tracked authority", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "planned-read-only-dispatch-"));
+  const store = new ProjectStore({ rootDir });
+  let project = await store.create({
+    name: "DemoTest0", repo: "owner/demo", repoPath: "/repo/demo", baseSha: "abc123",
+  });
+  project = await store.savePlan({
+    projectId: project.id, objective: "Inspect before building",
+    tasks: [{ id: "inspect", title: "Inspect", description: "Read the repository",
+      requiredAuthority: "read_only", dependsOn: [] }],
+  });
+  project = await store.approve(project.id);
+  let launches = 0;
+  const dispatcher = new PlannedTaskDispatcher({
+    projectStore: store,
+    selectProject: (id) => store.activate(id),
+    dispatchRequest: async (instruction, governed) => {
+      launches += 1;
+      assert.match(instruction, /^Inspect planned task inspect/u);
+      assert.equal(governed.requiredAuthority, "read_only");
+      await store.attachTask({
+        projectId: project.id, planTaskId: "inspect", taskId: "task-inspect", title: "Inspect",
+      });
+      await store.recordLaunchReceipt({
+        projectId: project.id, planTaskId: "inspect", taskId: "task-inspect",
+        receipt: { kind: "process", pid: 2468 },
+      });
+    },
+  });
+  const result = await dispatcher.dispatchNext({ projectId: project.id });
+  assert.equal(launches, 1);
+  assert.equal(result.status, "dispatched");
+  assert.equal(result.task.requiredAuthority, "read_only");
+  assert.equal(result.task.attempts[0].launchReceipt.pid, 2468);
+});
+
 test("ordinary explicit plan approval resumes and dispatches the initial task", async () => {
   const rootDir = await mkdtemp(path.join(tmpdir(), "planned-natural-approval-dispatch-"));
   const store = new ProjectStore({ rootDir });

@@ -62,6 +62,19 @@ test("authorizes durably tracked read-only inspection without project approval",
   assert.equal(events[0].value.kind, "firstmate-intake");
 });
 
+test("tracks an approved claimed read-only plan task as a governed project attempt", () => {
+  assert.deepEqual(authorizeFirstmateDispatch({
+    requiredAuthority: "read_only",
+    project: { ...planningProject(), status: "approved" },
+    plannedTask: { id: "inspect", status: "claimed" },
+  }), { mode: "read_only", trackProjectAttempt: true });
+  assert.throws(() => authorizeFirstmateDispatch({
+    requiredAuthority: "read_only",
+    project: planningProject(),
+    plannedTask: { id: "inspect", status: "claimed" },
+  }), /Planned read-only dispatch requires an approved project plan/u);
+});
+
 test("preserves the approved-plan requirement for implementation work", () => {
   assert.throws(() => authorizeFirstmateDispatch({
     requiredAuthority: "local_write", project: planningProject(), plannedTask: null,

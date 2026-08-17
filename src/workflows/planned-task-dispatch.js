@@ -23,8 +23,10 @@ export class PlannedTaskDispatcher {
 
   async #dispatchClaimed({ projectId, task }) {
     const project = await this.selectProject(projectId);
+    const requiredAuthority = task.requiredAuthority === "read_only" ? "read_only" : "local_write";
     const instruction =
-      `Implement planned task ${task.id} for ${project.name}: ${task.title}. ${task.description} ` +
+      `${requiredAuthority === "read_only" ? "Inspect" : "Implement"} planned task ${task.id} ` +
+      `for ${project.name}: ${task.title}. ${task.description} ` +
       `This request is bound to plan task id ${task.id}.`;
     try {
       await this.dispatchRequest(
@@ -32,7 +34,7 @@ export class PlannedTaskDispatcher {
         {
           projectId,
           planTaskId: task.id,
-          requiredAuthority: "local_write",
+          requiredAuthority,
           instruction,
         },
       );

@@ -16,7 +16,8 @@ Choose exactly one action:
   planTaskId is null. Set requiredAuthority to read_only for inspection or local_write for implementation.
   External-write and destructive requests must not be dispatched. Do not split one request into duplicate work.
 - plan: the human supplied a broader project objective that needs multiple dependent tasks. Return
-  a useful project plan of up to 12 tasks. Use stable short ids and dependsOn ids. Do not dispatch it yet.
+  a useful project plan of up to 12 tasks. Use stable short ids and dependsOn ids. Set each task's
+  requiredAuthority to read_only for inspection or local_write for implementation. Do not dispatch it yet.
 The response is what the human sees. Do not expose internal JSON, schemas, or authority labels.`;
 
 export class FirstmateCodexConversation {
@@ -100,6 +101,10 @@ function validateDecision(value) {
   }
   if (value.action === "plan" && (typeof value.objective !== "string" || !value.objective.trim() || value.tasks.length === 0)) {
     throw new Error("Firstmate plan requires an objective and tasks");
+  }
+  if (value.action === "plan" && value.tasks.some(({ requiredAuthority }) =>
+    !new Set(["read_only", "local_write"]).has(requiredAuthority))) {
+    throw new Error("Each Firstmate plan task requires read-only or local-write authority");
   }
   return value;
 }

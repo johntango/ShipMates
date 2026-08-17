@@ -53,6 +53,11 @@ the Implementer must inspect before editing. Independent Scouts remain the
 execution path for read-only work and remain available where a workflow
 explicitly requests separate preflight perspectives.
 
+Each planned task records whether it is a read-only inspection or a local
+implementation. Approved read-only plan items are claimed and launch as tracked
+Scout attempts without acquiring a write-capable Treehouse lease. Local-write
+items retain the approved-plan and isolated-worktree requirements.
+
 ## Status and reconciliation
 
 The task ledger is authoritative execution state. Project task status is a

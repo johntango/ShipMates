@@ -20,7 +20,10 @@ test("continues one durable conversational Codex thread", async () => {
       planTaskId: null,
       requiredAuthority: null,
       objective: calls.length === 1 ? "Build ShipMates" : null,
-      tasks: calls.length === 1 ? [{ id: "one", title: "Foundation", description: "Build it", dependsOn: [] }] : [],
+      tasks: calls.length === 1 ? [{
+        id: "one", title: "Foundation", description: "Build it",
+        requiredAuthority: "local_write", dependsOn: [],
+      }] : [],
     }));
     return { exitCode: 0 };
   };

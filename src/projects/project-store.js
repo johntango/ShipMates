@@ -271,8 +271,9 @@ export class ProjectStore {
       project.status = "archived";
       project.archivedAt = receipt.archivedAt;
       project.archiveReceipt = structuredClone(receipt);
-      project.tasks = project.tasks.map(({ id, title, status, dependsOn }) => ({
+      project.tasks = project.tasks.map(({ id, title, status, dependsOn, requiredAuthority }) => ({
         id, title, status, dependsOn, description: "", taskId: null,
+        requiredAuthority: requiredAuthority === "read_only" ? "read_only" : "local_write",
         previousTaskIds: [], attempts: [], blockingReason: null,
       }));
       project.objective = "";
@@ -556,6 +557,7 @@ function normalizePlanTask(task, index) {
   return {
     id, title,
     description: typeof task.description === "string" ? task.description.trim() : "",
+    requiredAuthority: task.requiredAuthority === "read_only" ? "read_only" : "local_write",
     status: new Set(["planned", "ready", "claimed", "dispatched", "completed", "blocked"]).has(task.status)
       ? task.status : "planned",
     dependsOn: Array.isArray(task.dependsOn) ? task.dependsOn.filter((value) => typeof value === "string") : [],
