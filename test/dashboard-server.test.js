@@ -28,6 +28,8 @@ test("projects recent tasks and the active project without report prose leakage"
     id: "implementer", status: "reported", mode: "ship",
   }]);
   assert.equal(state.tasks[0].reconciliation.evidence.source, "dashboard");
+  assert.equal(state.tasks[0].presentation.status, "Passed");
+  assert.equal(state.tasks[0].presentation.nextAction, null);
   assert.deepEqual(state.tasks[0].taskProgress.map(({ sequence }) => sequence), [0, 1]);
 });
 
@@ -211,6 +213,8 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
   assert.match(page, /Send to Firstmate/u);
   assert.match(script, /Human input required\./u);
   assert.match(script, /task\.humanAction/u);
+  assert.match(script, /Human-readable task outcome/u);
+  assert.match(script, /Work breakdown and detailed evidence/u);
 });
 
 test("accepts bounded human messages and rejects empty or control input", () => {
