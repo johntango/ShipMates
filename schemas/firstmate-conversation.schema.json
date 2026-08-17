@@ -9,6 +9,7 @@
     "taskId": { "type": ["string", "null"] },
     "instruction": { "type": ["string", "null"] },
     "planTaskId": { "type": ["string", "null"] },
+    "requiredAuthority": { "type": ["string", "null"], "enum": ["read_only", "local_write", "external_write", "destructive", null] },
     "objective": { "type": ["string", "null"] },
     "tasks": {
       "type": "array",
@@ -26,5 +27,5 @@
       }
     }
   },
-  "required": ["response", "action", "controlType", "taskId", "instruction", "planTaskId", "objective", "tasks"]
+  "required": ["response", "action", "controlType", "taskId", "instruction", "planTaskId", "requiredAuthority", "objective", "tasks"]
 }

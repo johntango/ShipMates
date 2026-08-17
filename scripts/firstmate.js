@@ -56,6 +56,11 @@ import { runFirstmateDeliveryCli } from "../src/cli/firstmate-delivery.js";
 import { TaskStore } from "../src/storage/task-store.js";
 import { DashboardLavishReview } from "../src/dashboard/lavish-review.js";
 import { buildDashboardState, ShipMatesDashboardServer } from "../src/dashboard/server.js";
+import {
+  projectTaskPresentation,
+  renderFirstmateOneShotOutput,
+  renderTaskPresentation,
+} from "../src/projections/task-presentation.js";
 import { startDashboardWithFallback } from "../src/dashboard/start.js";
 import { ProjectStore } from "../src/projects/project-store.js";
 import { FirstmateWatchdog } from "../src/monitoring/firstmate-watchdog.js";
@@ -69,6 +74,11 @@ import {
 } from "../src/supervisor/durable-supervisor.js";
 import { FirstmateShell } from "../src/workflows/firstmate.js";
 import { FirstmateLocalExecutor } from "../src/workflows/firstmate-local-executor.js";
+import {
+  authorizeFirstmateDispatch,
+  ReadOnlyInspectionTracker,
+  verifyAuthorizedClassification,
+} from "../src/workflows/firstmate-dispatch-policy.js";
 import { prepareFirstmateLocalWrite } from "../src/workflows/firstmate-local-write.js";
 import { CodexShipWorkflow } from "../src/workflows/codex-ship.js";
 import { FirstmateCommitWorkflow } from "../src/workflows/firstmate-commit.js";
@@ -91,6 +101,9 @@ if (rawArgs[0] === "--delivery") {
 const classifyOnlyIndex = rawArgs.indexOf("--classify-only");
 const classifyOnly = classifyOnlyIndex !== -1;
 if (classifyOnly) rawArgs.splice(classifyOnlyIndex, 1);
+const jsonOutputIndex = rawArgs.indexOf("--json");
+const jsonOutput = jsonOutputIndex !== -1;
+if (jsonOutput) rawArgs.splice(jsonOutputIndex, 1);
 const demoMode = parseBoolean("SHIPMATES_DEMO_MODE", process.env.SHIPMATES_DEMO_MODE);
 
 if (rawArgs.length === 0 && !classifyOnly && process.stdin.isTTY) {
@@ -118,7 +131,7 @@ if (rawArgs.length === 0) {
   [taskId, requestId, repo, baseSha, ...messageParts] = rawArgs;
 } else {
   throw new Error(
-    "Usage: firstmate.js [--classify-only] [<task-id> <request-id> <owner/repo> <base-sha> [message...]]",
+    "Usage: firstmate.js [--classify-only] [--json] [<task-id> <request-id> <owner/repo> <base-sha> [message...]]",
   );
 }
 
@@ -149,6 +162,8 @@ const result = await shell.classify({
   baseSha,
   message,
 });
+const authorizedAuthority = process.env.SHIPMATES_AUTHORIZED_AUTHORITY || null;
+verifyAuthorizedClassification(authorizedAuthority, result.classification.requiredAuthority);
 const projectParentTaskId = process.env.SHIPMATES_PROJECT_PARENT_TASK_ID || null;
 if (projectParentTaskId) {
   const parent = await store.getSnapshot(projectParentTaskId);
@@ -348,25 +363,11 @@ if (classifyOnly) {
 }
 const finalSnapshot = execution ? await store.getSnapshot(taskId) : result.snapshot;
 
-console.log(
-  JSON.stringify(
-    {
-      taskId,
-      requestId,
-      reused: result.reused,
-      classification: result.classification,
-      usage: result.usage,
-      ledger: {
-        state: finalSnapshot.state,
-        eventsCount: finalSnapshot.eventsCount,
-        lastEventId: finalSnapshot.lastEventId,
-      },
-      execution,
-    },
-    null,
-    2,
-  ),
-);
+console.log(renderFirstmateOneShotOutput({
+  taskId, requestId, reused: result.reused,
+  classification: result.classification, usage: result.usage,
+  snapshot: finalSnapshot, execution, json: jsonOutput,
+}));
 removeTerminationCleanup();
 } catch (error) {
   await herdrObserver?.end?.({ status: "failed" });
@@ -455,6 +456,10 @@ async function runInteractiveFirstmate() {
   const orchestrator = new ProjectOrchestrator({
     taskStore: interactiveStore, projectStore,
   });
+  const readOnlyInspectionTracker = new ReadOnlyInspectionTracker({ store: interactiveStore });
+  for (const recovered of await readOnlyInspectionTracker.reconcileCompleted()) {
+    console.error(`Reconciled completed read-only inspection ${recovered.snapshot.id}; no duplicate worker was launched.`);
+  }
   const projectArchiver = new ProjectArchiveWorkflow({
     projectStore, taskStore: interactiveStore, stateRoot: interactiveStore.rootDir,
   });
@@ -886,12 +891,19 @@ async function runInteractiveFirstmate() {
         }
         if (controlIntent?.action === "show_status") {
           const snapshot = await interactiveStore.getSnapshot(controlIntent.taskId);
-          console.log(`“${controlIntent.context.taskName}” in ${controlIntent.context.projectName} is ${snapshot.state.replaceAll("_", " ")}.`);
+          console.log(renderTaskPresentation(projectTaskPresentation(snapshot), {
+            subject: `“${controlIntent.context.taskName}” in ${controlIntent.context.projectName}`,
+          }));
           return;
         }
         if (controlIntent?.action === "show_evidence") {
           const inspected = await orchestrator.inspectTask(controlIntent.taskId);
-          console.log(`${controlIntent.context.projectName} — ${controlIntent.context.taskName}: ${inspected.recovery.category}; ${inspected.recovery.reason}. Recommended action: ${inspected.recovery.action}. Last activity: ${inspected.snapshot.lastEventAt}.`);
+          console.log(renderTaskPresentation(projectTaskPresentation(inspected.snapshot, {
+            reconciliation: inspected.recovery,
+          }), {
+            subject: `${controlIntent.context.projectName} — ${controlIntent.context.taskName}`,
+            detail: true,
+          }));
           return;
         }
         if (controlIntent?.action === "reconcile_task") {
@@ -961,6 +973,7 @@ async function runInteractiveFirstmate() {
         }
         let instruction = message;
         let planTaskId = governedPlanDispatch?.[1] || null;
+        let requiredAuthority = governedPlanDispatch ? "local_write" : null;
         try {
           if (governedPlanDispatch) {
             const selected = (await projectStore.get(activeProject.id))?.tasks
@@ -1015,6 +1028,7 @@ async function runInteractiveFirstmate() {
           }
           instruction = decision.instruction;
           planTaskId = decision.planTaskId;
+          requiredAuthority = decision.requiredAuthority;
           }
         } catch (error) {
           if (isExplicitProjectPlanningRequest(message)) {
@@ -1022,6 +1036,7 @@ async function runInteractiveFirstmate() {
             return;
           }
           console.error(`Conversational Firstmate unavailable (${error.name}); using the governed dispatcher directly.`);
+          return;
         }
         // Persistent projects carry dependency continuity in their dedicated
         // branch/worktree. Completed plan items may outlive their historical
@@ -1060,7 +1075,10 @@ async function runInteractiveFirstmate() {
           console.error("Firstmate refused dispatch because the selected project no longer exists.");
           return;
         }
-        if (!planTaskId && activeProject.tasks.length > 0) {
+        const dispatchPolicy = authorizeFirstmateDispatch({
+          requiredAuthority, project: activeProject, plannedTask,
+        });
+        if (dispatchPolicy.mode === "implementation" && !planTaskId && activeProject.tasks.length > 0) {
           console.error("Firstmate refused to create unplanned work beside a saved project plan. Amend the plan or identify the exact planned task; no worker was dispatched.");
           return;
         }
@@ -1072,16 +1090,12 @@ async function runInteractiveFirstmate() {
           console.error(`“${plannedTask.title}” is already ${plannedTask.status}; Firstmate will not create a duplicate. Resume its existing task instead.`);
           return;
         }
-        if (planTaskId && (activeProject.status !== "approved" || plannedTask.status !== "claimed")) {
-          console.error("Firstmate refused planned-task dispatch without a durable approved plan and governed claim.");
-          return;
-        }
         const isTerminalMilestone = plannedTask
           ? !projectForTask.tasks.some(({ dependsOn }) => dependsOn.includes(plannedTask.id))
           : true;
         const taskName = plannedTask?.title || instruction.split(/[.!?\n]/u)[0].trim().slice(0, 120) || "Unplanned work";
-        console.error(`Firstmate is starting “${taskName}” in ${projectNameForTask}.`);
         if (plannedTask && projectForTask.executionPolicy?.mode === "persistent_project") {
+          console.error(`Firstmate is starting “${taskName}” in ${projectNameForTask}.`);
           await orchestrator.attachAttempt({
             projectId: projectIdForTask, taskId, title: instruction.slice(0, 160), planTaskId,
           });
@@ -1125,29 +1139,47 @@ async function runInteractiveFirstmate() {
           console.error(`${projectNameForTask} — ${taskName} was dispatched to one Implementer with no scouts; Firstmate is listening.`);
           return;
         }
-        await orchestrator.attachAttempt({
-          projectId: projectIdForTask,
-          taskId,
-          title: instruction.slice(0, 160),
-          planTaskId,
-        });
+        if (dispatchPolicy.trackProjectAttempt) {
+          await orchestrator.attachAttempt({
+            projectId: projectIdForTask,
+            taskId,
+            title: instruction.slice(0, 160),
+            planTaskId,
+          });
+        } else {
+          await readOnlyInspectionTracker.prepare({
+            taskId, requestId, repo: context.repo, baseSha: context.baseSha,
+            project: activeProject,
+          });
+        }
+        console.error(`Firstmate is starting “${taskName}” in ${projectNameForTask}.`);
         const child = executionBackends.dispatch({
           project: projectForTask,
           taskId, requestId, context, instruction, projectParent,
           validationProfile: isTerminalMilestone ? "full" : "fast",
           demoMode: projectForTask?.demoMode === true,
+          authorizedAuthority: requiredAuthority,
         });
-        await projectStore.recordLaunchReceipt({
-          projectId: projectIdForTask, planTaskId, taskId,
-          receipt: launchReceipt(child),
-        });
+        if (dispatchPolicy.trackProjectAttempt) {
+          await projectStore.recordLaunchReceipt({
+            projectId: projectIdForTask, planTaskId, taskId,
+            receipt: launchReceipt(child),
+          });
+        } else {
+          await readOnlyInspectionTracker.recordReceipt({
+            taskId, requestId, receipt: launchReceipt(child),
+          });
+        }
         latestTaskId = taskId;
         activeRequests.set(taskId, child);
         if (projectParent) {
           console.error(`“${taskName}” is continuing ${projectNameForTask} from its validated dependency.`);
         }
-        child.once("error", (error) => {
+        child.once("error", async (error) => {
           activeRequests.delete(taskId);
+          if (!dispatchPolicy.trackProjectAttempt) {
+            await readOnlyInspectionTracker.reconcile({ taskId, requestId });
+          }
           console.error(`“${taskName}” in ${projectNameForTask} could not start (${error.name}).`);
         });
         child.once("exit", async (exitCode, signal) => {
@@ -1156,7 +1188,16 @@ async function runInteractiveFirstmate() {
             ? `“${taskName}” in ${projectNameForTask} completed.`
             : `“${taskName}” in ${projectNameForTask} failed (${signal ? `signal ${signal}` : `exit ${exitCode}`}).`);
           try {
-            const snapshot = await interactiveStore.getSnapshot(taskId);
+            let snapshot = await interactiveStore.getSnapshot(taskId);
+            if (!dispatchPolicy.trackProjectAttempt) {
+              const reconciledReadOnly = await readOnlyInspectionTracker.reconcile({
+                taskId, requestId, exitCode, signal,
+              });
+              snapshot = reconciledReadOnly.snapshot;
+              console.log(renderTaskPresentation(projectTaskPresentation(snapshot), {
+                subject: `“${taskName}”`, detail: true,
+              }));
+            }
             let plannedStatus = null;
             if (planTaskId) {
               const reconciled = await orchestrator.reconcileTask(taskId);
