@@ -39,6 +39,12 @@ export class ReadOnlyInspectionTracker {
 
   async prepare({ taskId, requestId, repo, baseSha, project }) {
     authorizeFirstmateDispatch({ requiredAuthority: "read_only", project });
+    const outstanding = await this.outstanding();
+    if (outstanding.length) {
+      throw new FirstmateDispatchPolicyError(
+        `Read-only inspection ${outstanding[0].taskId} is still outstanding; resume or reconcile it before dispatching another worker`,
+      );
+    }
     await this.store.createTask({
       taskId, kind: "firstmate-intake", repo, baseSha, actor: this.actor,
       eventId: `firstmate-${requestId}-task-created`,
@@ -95,6 +101,19 @@ export class ReadOnlyInspectionTracker {
         taskId, requestId,
         exitCode: execution.status === "inspected" ? 0 : 1,
       }));
+    }
+    return results;
+  }
+
+  async outstanding() {
+    const results = [];
+    for (const taskId of await this.store.listTaskIds()) {
+      const snapshot = await this.store.getSnapshot(taskId);
+      const intent = latestEvidence(snapshot, "read-only-dispatch-intent");
+      if (!intent?.requestId || evidenceValue(
+        snapshot, "read-only-inspection-terminal", intent.requestId,
+      )) continue;
+      results.push({ taskId, requestId: intent.requestId, snapshot });
     }
     return results;
   }

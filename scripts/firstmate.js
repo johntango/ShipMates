@@ -76,6 +76,7 @@ import { FirstmateShell } from "../src/workflows/firstmate.js";
 import { FirstmateLocalExecutor } from "../src/workflows/firstmate-local-executor.js";
 import {
   authorizeFirstmateDispatch,
+  FirstmateDispatchPolicyError,
   ReadOnlyInspectionTracker,
   verifyAuthorizedClassification,
 } from "../src/workflows/firstmate-dispatch-policy.js";
@@ -1075,9 +1076,16 @@ async function runInteractiveFirstmate() {
           console.error("Firstmate refused dispatch because the selected project no longer exists.");
           return;
         }
-        const dispatchPolicy = authorizeFirstmateDispatch({
-          requiredAuthority, project: activeProject, plannedTask,
-        });
+        let dispatchPolicy;
+        try {
+          dispatchPolicy = authorizeFirstmateDispatch({
+            requiredAuthority, project: activeProject, plannedTask,
+          });
+        } catch (error) {
+          if (!(error instanceof FirstmateDispatchPolicyError)) throw error;
+          console.error(`Firstmate refused dispatch: ${error.message}. No worker was dispatched.`);
+          return;
+        }
         if (dispatchPolicy.mode === "implementation" && !planTaskId && activeProject.tasks.length > 0) {
           console.error("Firstmate refused to create unplanned work beside a saved project plan. Amend the plan or identify the exact planned task; no worker was dispatched.");
           return;
@@ -1147,10 +1155,16 @@ async function runInteractiveFirstmate() {
             planTaskId,
           });
         } else {
-          await readOnlyInspectionTracker.prepare({
-            taskId, requestId, repo: context.repo, baseSha: context.baseSha,
-            project: activeProject,
-          });
+          try {
+            await readOnlyInspectionTracker.prepare({
+              taskId, requestId, repo: context.repo, baseSha: context.baseSha,
+              project: activeProject,
+            });
+          } catch (error) {
+            if (!(error instanceof FirstmateDispatchPolicyError)) throw error;
+            console.error(`Firstmate refused dispatch: ${error.message}. No worker was dispatched.`);
+            return;
+          }
         }
         console.error(`Firstmate is starting “${taskName}” in ${projectNameForTask}.`);
         const child = executionBackends.dispatch({

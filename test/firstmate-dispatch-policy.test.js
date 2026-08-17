@@ -29,6 +29,7 @@ test("rejects unauthorized work before any Scout can launch", () => {
 test("authorizes durably tracked read-only inspection without project approval", async () => {
   const events = [];
   const tracker = new ReadOnlyInspectionTracker({ store: {
+    async listTaskIds() { return []; },
     async createTask(value) { events.push({ kind: "task", value }); },
     async recordEvidence(value) { events.push({ kind: value.kind, value }); },
   } });
@@ -94,6 +95,26 @@ test("reconciles a completed fresh-state inspection without approval or duplicat
     "read-only-dispatch-intent", "read-only-launch-receipt",
     "firstmate-local-execution", "read-only-inspection-terminal",
   ]);
+});
+
+test("refuses a replacement while an interrupted read-only inspection is outstanding", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-read-only-lock-"));
+  const store = new TaskStore({ rootDir });
+  const tracker = new ReadOnlyInspectionTracker({ store });
+  await tracker.prepare({
+    taskId: "task-original", requestId: "request-original",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  });
+  await tracker.recordReceipt({
+    taskId: "task-original", requestId: "request-original",
+    receipt: { kind: "process", pid: 42 },
+  });
+
+  await assert.rejects(tracker.prepare({
+    taskId: "task-replacement", requestId: "request-replacement",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  }), /task-original is still outstanding/u);
+  assert.deepEqual(await store.listTaskIds(), ["task-original"]);
 });
 
 function planningProject() {
