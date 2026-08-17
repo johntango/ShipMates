@@ -179,8 +179,8 @@ export class FirstmateShell {
     let classification;
     let usage;
     try {
-      if (authorizedAuthority === "read_only") {
-        classification = authorizedReadOnlyClassification(parsed.message);
+      if (new Set(["read_only", "local_write"]).has(authorizedAuthority)) {
+        classification = authorizedClassification(parsed.message, authorizedAuthority);
         usage = normalizeUsage();
       } else {
         const result = await this.runAgent(
@@ -278,15 +278,17 @@ export class FirstmateShell {
   }
 }
 
-function authorizedReadOnlyClassification(message) {
+function authorizedClassification(message, authority) {
   const workItem = String(message).trim();
   return firstmateOutputSchema.parse({
     schemaVersion: 1,
-    summary: `Perform the authorized read-only inspection: ${workItem}`.slice(0, 2_000),
-    taskType: "review",
-    requiredAuthority: "read_only",
+    summary: `${authority === "read_only" ? "Inspect" : "Implement"} the authorized task: ${workItem}`.slice(0, 2_000),
+    taskType: authority === "read_only" ? "review" : "code_change",
+    requiredAuthority: authority,
     approvalBoundary: "none",
-    recommendedNextStep: "Run the bounded read-only inspection and report its evidence.",
+    recommendedNextStep: authority === "read_only"
+      ? "Run the bounded read-only inspection and report its evidence."
+      : "Run the bounded local implementation and validation workflow.",
     requiresHumanApproval: false,
     workItems: [workItem],
   });

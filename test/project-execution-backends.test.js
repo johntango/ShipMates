@@ -32,7 +32,7 @@ test("routes read-only work through the standard backend for persistent projects
   assert.deepEqual(calls, ["standard"]);
 });
 
-test("standard backend launches the common worker contract", () => {
+test("standard backend launches the common worker contract from a durable governed envelope", async () => {
   const calls = [];
   const child = { stdin: { end: (value) => calls.push(["stdin", value]) } };
   const router = createFirstmateProjectExecutionBackends({
@@ -41,17 +41,20 @@ test("standard backend launches the common worker contract", () => {
     persistentScript: "/persistent.js", stateRoot: "/state", workingDirectory: "/cwd",
     projectTaskRuntime: { dispatch() {} }, hasProjectPane: () => false,
     environment: {},
+    writeEnvelope: async (input) => { calls.push(["envelope", input]); return "/state/governed.json"; },
   });
-  assert.equal(router.dispatch({
-    project: {}, taskId: "task-one", requestId: "request-one",
+  assert.equal(await router.dispatch({
+    project: { id: "project-one" }, planTaskId: "build", taskId: "task-one", requestId: "request-one",
     context: { repo: "owner/repo", baseSha: "abc", repoPath: "/repo" },
     instruction: "Build it", validationProfile: "fast", demoMode: true,
     authorizedAuthority: "local_write",
   }), child);
-  assert.deepEqual(calls[0][2], ["/firstmate.js", "task-one", "request-one", "owner/repo", "abc"]);
-  assert.equal(calls[0][3].env.SHIPMATES_DEMO_MODE, "1");
-  assert.equal(calls[0][3].env.SHIPMATES_AUTHORIZED_AUTHORITY, "local_write");
-  assert.deepEqual(calls[1], ["stdin", "Build it\n"]);
+  assert.equal(calls[0][0], "envelope");
+  assert.deepEqual(calls[1][2], ["/firstmate.js", "task-one", "request-one", "owner/repo", "abc"]);
+  assert.equal(calls[1][3].env.SHIPMATES_DEMO_MODE, "1");
+  assert.equal(calls[1][3].env.SHIPMATES_AUTHORIZED_AUTHORITY, "local_write");
+  assert.equal(calls[1][3].env.SHIPMATES_GOVERNED_EXECUTION, "/state/governed.json");
+  assert.deepEqual(calls[2], ["stdin", "Build it\n"]);
 });
 
 test("persistent backend prefers the project pane and preserves the common input", async () => {

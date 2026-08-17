@@ -20,6 +20,7 @@ test("selects, claims, dispatches, and returns one durable task", async () => {
     dispatchRequest: async (_message, governed) => {
       assert.deepEqual(governed, {
         projectId: project.id, planTaskId: "build", requiredAuthority: "local_write",
+        instruction: _message,
       });
       assert.equal((await store.get(project.id)).tasks[0].status, "claimed");
       await store.attachTask({
@@ -56,6 +57,7 @@ test("approval automatically claims and dispatches a short-id initial task", asy
       launches += 1;
       assert.deepEqual(governed, {
         projectId: project.id, planTaskId: "ui", requiredAuthority: "local_write",
+        instruction: _message,
       });
       assert.equal((await store.get(project.id)).tasks[0].status, "claimed");
       await store.attachTask({

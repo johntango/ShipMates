@@ -155,6 +155,29 @@ test("limits demo execution to one scout when classification returns two work it
   assert.doesNotMatch(calls[0].prompt, /Inspect tests and regression risks/u);
 });
 
+test("runs a governed simple implementation without redundant Scout preflight", async () => {
+  const calls = [];
+  const executor = new FirstmateLocalExecutor({
+    schemaPath: "schemas/codex-worker-report.schema.json",
+    skipImplementationPreflight: true,
+    runtime: {
+      async run(input) {
+        calls.push(input);
+        return { threadId: "thread-implementer", report: report(input.taskId, input.workerId) };
+      },
+    },
+  });
+  const result = await executor.execute({
+    taskId: "task-direct", requestId: "request-direct", repoPath: "/tmp/repo",
+    message: "Build the page", classification: classification("local_write"),
+  });
+  assert.deepEqual(calls.map(({ workerId, sandbox }) => [workerId, sandbox]), [
+    ["implementer", "workspace-write"],
+  ]);
+  assert.deepEqual(result.scouts, []);
+  assert.equal(result.status, "completed");
+});
+
 test("delegates local writes to the durable implementation workflow", async () => {
   const runtimeCalls = [];
   const implementationCalls = [];

@@ -1,3 +1,7 @@
+import { appendFile } from "node:fs/promises";
+
+import { writeGovernedExecutionEnvelope } from "./governed-execution.js";
+
 export class ProjectExecutionBackendRouter {
   constructor({ standard, persistent } = {}) {
     if (typeof standard !== "function" || typeof persistent !== "function") {
@@ -25,6 +29,8 @@ export function createFirstmateProjectExecutionBackends({
   projectTaskRuntime,
   hasProjectPane,
   environment = process.env,
+  writeEnvelope = writeGovernedExecutionEnvelope,
+  appendDiagnostic = appendFile,
 } = {}) {
   if (typeof spawnProcess !== "function" || typeof hasProjectPane !== "function") {
     throw new TypeError("Firstmate execution backends require spawnProcess and hasProjectPane");
@@ -42,8 +48,18 @@ export function createFirstmateProjectExecutionBackends({
       child.stdin.end(`${instruction}\n`);
       return child;
     },
-    standard: ({ taskId, requestId, context, instruction, projectParent,
+    standard: async ({ project, planTaskId, taskId, requestId, context, instruction, projectParent,
       validationProfile, demoMode, authorizedAuthority }) => {
+      const envelopePath = authorizedAuthority === "local_write" && project && planTaskId
+        ? await writeEnvelope({
+            stateRoot,
+            envelope: {
+              schemaVersion: 1, projectId: project.id, planTaskId, taskId, requestId,
+              repo: context.repo, baseSha: context.baseSha, instruction,
+              authority: authorizedAuthority,
+            },
+          })
+        : null;
       const child = spawnProcess(processPath, [
         firstmateScript, taskId, requestId, context.repo, context.baseSha,
       ], {
@@ -55,9 +71,18 @@ export function createFirstmateProjectExecutionBackends({
           SHIPMATES_VALIDATION_PROFILE: validationProfile,
           SHIPMATES_DEMO_MODE: demoMode ? "1" : "0",
           SHIPMATES_AUTHORIZED_AUTHORITY: authorizedAuthority,
+          ...(envelopePath ? { SHIPMATES_GOVERNED_EXECUTION: envelopePath } : {}),
         },
-        stdio: ["pipe", "ignore", "inherit"],
+        stdio: ["pipe", "ignore", "pipe"],
       });
+      if (child.stderr) {
+        const diagnosticsPath = envelopePath
+          ? `${envelopePath}.stderr.log`
+          : `${stateRoot}/tasks/${taskId}/child.stderr.log`;
+        child.stderr.on("data", (chunk) => {
+          void appendDiagnostic(diagnosticsPath, chunk, { mode: 0o600 }).catch(() => {});
+        });
+      }
       child.stdin.end(`${instruction}\n`);
       return child;
     },

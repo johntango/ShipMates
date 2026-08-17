@@ -23,14 +23,17 @@ export class PlannedTaskDispatcher {
 
   async #dispatchClaimed({ projectId, task }) {
     const project = await this.selectProject(projectId);
+    const instruction =
+      `Implement planned task ${task.id} for ${project.name}: ${task.title}. ${task.description} ` +
+      `This request is bound to plan task id ${task.id}.`;
     try {
       await this.dispatchRequest(
-        `Implement planned task ${task.id} for ${project.name}: ${task.title}. ${task.description} ` +
-        `This request is bound to plan task id ${task.id}.`,
+        instruction,
         {
           projectId,
           planTaskId: task.id,
           requiredAuthority: "local_write",
+          instruction,
         },
       );
     } catch (error) {

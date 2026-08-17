@@ -88,20 +88,17 @@ test("uses the parent's bounded read-only authority without a second model class
   assert.equal(result.snapshot.state, "clarified");
 });
 
-test("does not bypass model classification for authorized implementation work", async (t) => {
+test("reuses a verified governed implementation authority without model reclassification", async (t) => {
   const store = new TaskStore({ rootDir: await temporaryState(t) });
   let calls = 0;
   const shell = new FirstmateShell({
     store,
-    runAgent: async () => {
-      calls += 1;
-      return successfulResult();
-    },
+    runAgent: async () => { calls += 1; return successfulResult(); },
     attemptIdFactory: () => "attempt-001",
   });
 
   await shell.classify(intake(), { authorizedAuthority: "local_write" });
-  assert.equal(calls, 1);
+  assert.equal(calls, 0);
 });
 
 test("returns a durable classification without repeating the model call", async (t) => {

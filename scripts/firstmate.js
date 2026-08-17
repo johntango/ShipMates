@@ -91,6 +91,7 @@ import {
   PlannedTaskDispatcher,
 } from "../src/workflows/planned-task-dispatch.js";
 import { createFirstmateProjectExecutionBackends } from "../src/workflows/project-execution-backends.js";
+import { verifyGovernedExecutionEnvelope } from "../src/workflows/governed-execution.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
 import { LocalDeliveryWorkflow } from "../src/workflows/local-delivery.js";
 import { PersistentProjectExecutor } from "../src/workflows/persistent-project-executor.js";
@@ -152,6 +153,13 @@ const tracingEnabled = parseBoolean(
 );
 const authorizedAuthority = process.env.SHIPMATES_AUTHORIZED_AUTHORITY || null;
 const store = new TaskStore({ rootDir });
+const governedEnvelope = authorizedAuthority === "local_write"
+  ? await verifyGovernedExecutionEnvelope({
+      filePath: process.env.SHIPMATES_GOVERNED_EXECUTION,
+      expected: { taskId, requestId, repo, baseSha, instruction: message, authority: authorizedAuthority },
+      projectStore: new ProjectStore({ rootDir }),
+    })
+  : null;
 herdrObserver = createHerdrObserver({ store });
 removeTerminationCleanup = installTerminationCleanup(herdrObserver);
 await herdrObserver?.firstmateStage({
@@ -167,7 +175,8 @@ const result = await shell.classify({
   repo,
   baseSha,
   message,
-}, { authorizedAuthority });
+}, { authorizedAuthority: authorizedAuthority === "read_only" || governedEnvelope
+  ? authorizedAuthority : null });
 verifyAuthorizedClassification(authorizedAuthority, result.classification.requiredAuthority);
 const projectParentTaskId = process.env.SHIPMATES_PROJECT_PARENT_TASK_ID || null;
 if (projectParentTaskId) {
@@ -269,6 +278,7 @@ if (!classifyOnly) {
     observer: herdrObserver,
     implementationWorkflow,
     scoutLimit: demoMode ? 1 : 2,
+    skipImplementationPreflight: Boolean(governedEnvelope),
   });
   execution = await executor.execute({
     taskId,
@@ -658,6 +668,11 @@ async function runInteractiveFirstmate() {
   }, async () => {
         const governedPlanDispatch = governedDispatch?.planTaskId
           ? governedDispatch : null;
+        if (governedPlanDispatch) {
+          activeProject = await projectStore.activate(governedPlanDispatch.projectId);
+          message = governedPlanDispatch.instruction || message;
+        }
+        if (!governedPlanDispatch) {
         const selection = parseProjectSelection(message, await projectStore.list());
         if (selection) {
           if (!selection.project) {
@@ -984,6 +999,7 @@ async function runInteractiveFirstmate() {
           }
           return;
         }
+        }
         let instruction = message;
         let planTaskId = governedPlanDispatch?.planTaskId || null;
         let requiredAuthority = governedPlanDispatch?.requiredAuthority || null;
@@ -1080,7 +1096,9 @@ async function runInteractiveFirstmate() {
         const projectIdForTask = activeProject.id;
         const projectNameForTask = activeProject.name;
         const plannedTask = planTaskId
-          ? await claimPlannedTaskForDispatch({
+          ? governedPlanDispatch
+            ? (await projectStore.get(projectIdForTask))?.tasks.find(({ id }) => id === planTaskId) || null
+            : await claimPlannedTaskForDispatch({
               projectStore, projectId: projectIdForTask, planTaskId, requiredAuthority,
             })
           : null;
@@ -1182,7 +1200,7 @@ async function runInteractiveFirstmate() {
           }
         }
         console.error(`Firstmate is starting “${taskName}” in ${projectNameForTask}.`);
-        const child = executionBackends.dispatch({
+        const child = await executionBackends.dispatch({
           project: projectForTask,
           taskId, requestId, context, instruction, projectParent,
           validationProfile: isTerminalMilestone ? "full" : "fast",

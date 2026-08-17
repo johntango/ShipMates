@@ -39,6 +39,20 @@ attempt, resets exactly the requested plan item, claims that item, and requires
 a new durable task ID. Dashboard, automatic, and conversational planned work
 must not reimplement this sequence.
 
+Approved standard tasks cross the process boundary through a durable typed
+governed-execution envelope. The envelope binds the project, planned task,
+durable task and request IDs, repository revision, exact instruction, and
+authority. The child verifies that binding against the approved project and
+current dispatched attempt before doing any work. It does not re-enter the
+interactive command parser or ask a second model to classify already-approved
+work. Child stderr is retained beside the envelope for diagnostics rather than
+streamed into the normal human summary.
+
+Simple governed implementation tasks start one bounded Implementer directly;
+the Implementer must inspect before editing. Independent Scouts remain the
+execution path for read-only work and remain available where a workflow
+explicitly requests separate preflight perspectives.
+
 ## Status and reconciliation
 
 The task ledger is authoritative execution state. Project task status is a
