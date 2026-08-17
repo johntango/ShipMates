@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { NoMistakesController } from "../control/no-mistakes-controller.js";
 
 export class TaskBranchWorkflow {
-  constructor({ store, manager, actor = "firstmate", idFactory = randomUUID } = {}) {
+  constructor({ store, manager, actor = "firstmate", idFactory = randomUUID,
+    noMistakesController = new NoMistakesController() } = {}) {
     if (!store || !manager ||
       typeof manager.prepareTaskBranch !== "function" ||
       typeof manager.inspectPreparedTaskBranch !== "function") {
@@ -11,10 +13,12 @@ export class TaskBranchWorkflow {
     this.manager = manager;
     this.actor = actor;
     this.idFactory = idFactory;
+    this.noMistakesController = noMistakesController;
   }
 
   async prepare({ taskId }) {
     let snapshot = await this.store.getSnapshot(taskId);
+    this.noMistakesController.assertAllowed("branch.edit", { snapshot });
     const branch = taskBranchName(snapshot.id);
     if (snapshot.worktree?.branch === branch) {
       return { snapshot, result: completedResult(snapshot), reused: true };

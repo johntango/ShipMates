@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
+import { NoMistakesController } from "../control/no-mistakes-controller.js";
 
 export class FirstmateCommitWorkflow {
   constructor({
     store, commitAdapter, actor = "firstmate", idFactory = randomUUID,
+    noMistakesController = new NoMistakesController(),
   } = {}) {
     if (!store || !commitAdapter ||
       typeof commitAdapter.create !== "function" ||
@@ -14,10 +16,12 @@ export class FirstmateCommitWorkflow {
     this.commitAdapter = commitAdapter;
     this.actor = actor;
     this.idFactory = idFactory;
+    this.noMistakesController = noMistakesController;
   }
 
   async run({ taskId, workerId = "implementer" }) {
     let snapshot = await this.store.getSnapshot(taskId);
+    this.noMistakesController.assertAllowed("branch.edit", { snapshot });
     const existing = snapshot.gitCommits.at(-1);
     if (existing) {
       if (existing.workerId !== workerId) {

@@ -130,6 +130,9 @@ import {
   renderCleanReport, renderWipeManifest, renderWipeResult, renderWorkspaceInventory,
   WorkflowWorkspaceMaintenance,
 } from "../src/workflow-run/workspace-maintenance.js";
+import { NoMistakesController } from "../src/control/no-mistakes-controller.js";
+
+new NoMistakesController().assertAllowed("fleet.mutate");
 
 const rawArgs = process.argv.slice(2);
 if (rawArgs[0] === "--delivery") {
