@@ -100,6 +100,14 @@ node --env-file=.env scripts/firstmate.js --json TASK_ID REQUEST_ID OWNER/REPO B
 The JSON form contains the classification, usage, ledger summary, and complete
 execution result. Omitting `--json` preserves the human-readable default.
 
+Interactive Firstmate may dispatch a bounded read-only inspection without plan
+approval. It records durable intent and launch identity first, restores
+monitoring after interruption, and blocks a duplicate while the prior
+inspection is outstanding. Implementation still requires an approved plan and
+a claimed planned task; external-write and destructive requests keep their
+separate approval workflows. The detailed boundary is specified in the
+[Firstmate orchestration guide](docs/firstmate-orchestration.md#authority-aware-dispatch).
+
 When Firstmate is started inside Herdr, it registers the pane as
 `ShipMates FirstMate` in Herdr's agent/task list as well as naming the pane.
 Its displayed state is `listening` while it waits for input and changes to the
