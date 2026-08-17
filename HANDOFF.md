@@ -1,4 +1,425 @@
+# Independent architecture review request: hardening ShipMates
+
+## Purpose
+
+Please provide a critical second opinion on how to make the ShipMates code
+development pipeline substantially less brittle while retaining its strong
+evidence, security, and human-approval controls.
+
+Do not assume that the remedies proposed below are correct. Challenge the
+architecture, identify unnecessary complexity, and recommend the smallest
+coherent changes that address the underlying failure modes. This is an
+architecture and workflow review, not a request to write code.
+
+The detailed historical handoff is preserved after this review packet as
+supporting context. Give greater weight to this section when history conflicts
+with it.
+
+## What ShipMates is trying to guarantee
+
+ShipMates coordinates a gated software-development lifecycle with these role
+and authority boundaries:
+
+- A human gives requirements and approvals to Firstmate.
+- Firstmate plans, delegates, reconciles evidence, and controls integration.
+- Scouts may inspect and report but may not modify code.
+- One Implementer may modify only its leased, task-bound Git worktree.
+- Implementers may not commit, push, open pull requests, merge, or change
+  GitHub settings.
+- A controlled executor owns Git commits and GitHub mutations.
+- Validation runs against an exact candidate commit with remote mutation
+  disabled unless separately authorized.
+- Process disappearance is not proof of completion and is never, by itself,
+  permission to retry.
+- Every handoff requires durable, identity-bound evidence: task identity,
+  repository, base and candidate commits, commands, results, artifacts,
+  limitations, and a next-gate recommendation.
+- After interruption, the system must reconcile durable evidence before
+  retrying an operation.
+- Existing unrelated changes and operational evidence must not be cleaned,
+  reset, overwritten, or accidentally included.
+
+These constraints are deliberate. A recommendation that merely weakens
+fail-closed controls, silently retries uncertain mutations, or trusts worker
+prose is not acceptable.
+
+## Current architecture
+
+The system presently has several durable and external state holders:
+
+- The task event ledger records execution history, transitions, operations,
+  and receipts.
+- The Project registry records plan structure, repository identity, Project
+  status, and task-attempt relationships.
+- Git repositories and refs record worktree and commit facts.
+- Treehouse manages leased task worktrees.
+- The no-mistakes pipeline performs review, repair, validation, and custody
+  transfer using its own managed repository and refs.
+- Processes and terminal panes provide transient observations only.
+- Snapshots, active-task pointers, the dashboard, and Herdr views are intended
+  to be projections, though they have sometimes behaved like independent
+  state.
+- A durable-operation protocol and reconciliation engine exist, but not every
+  lifecycle action has been migrated to one uniform protocol.
+
+Relevant implementation areas include:
+
+- `src/operations/durable-operation.js`
+- `src/reconciliation/reconciliation-engine.js`
+- `src/core/task-state.js`
+- `src/storage/task-store.js`
+- `src/projects/project-store.js`
+- `src/workflows/local-validation.js`
+- `src/workflows/local-delivery.js`
+- `src/workflows/restart-reconciliation.js`
+- `src/workflows/codex-ship.js`
+- `src/adapters/no-mistakes.js`
+- `src/cli/firstmate-control-intent.js`
+
+## Recent evidence from the DeepO project
+
+DeepO Release 1 was ultimately completed locally at commit
+`a79a35c336f6bc63418e3c21365a5422e570087c`; it was not pushed remotely. The
+software work succeeded, but coordination repeatedly stopped on handoff and
+recovery boundaries rather than on code defects.
+
+Observed incidents included:
+
+1. A valid Implementer report was rejected because ignored Python
+   `__pycache__` files existed. The mutation verifier treated every ignored
+   path as disallowed evidence, without distinguishing disposable runtime
+   artifacts from suspicious ignored source or binary content.
+2. A controlled commit request was durably recorded, then sandbox permissions
+   denied creation of Git's worktree `index.lock`. Reconciliation correctly
+   proved that no commit had occurred, but the workflow lacked a first-class,
+   safe way to replay the operation after proving the prior mutation absent.
+   Manual adapter replay was required.
+3. no-mistakes legitimately created review-fix commits. The ShipMates task
+   ledger remained bound to the original submitted commit, so the exact commit
+   under review evolved without a corresponding candidate-lineage model.
+4. no-mistakes custody recovery repeatedly failed because the receiving local
+   tracking ref was stale even though the final commit existed in the managed
+   bare repository. Manual fetch, strict fast-forward verification, and custody
+   retry were needed.
+5. The Project registry and task ledger temporarily disagreed. A task could be
+   `awaiting_human` while the Project projection still appeared dispatched or
+   completed.
+6. Natural-language commands containing exact task IDs were sometimes routed
+   as Project queries instead of deterministic task-control operations.
+7. Quiet or exited processes created operational pressure to relaunch even
+   though durable results later existed. The policy prevented duplicates, but
+   recovery was slow and manual.
+8. Treehouse capacity and completed or stale worktrees caused repeated
+   dispatch friction and manual lease cleanup.
+
+The working diagnosis is that timing exposes the failures but is not their
+root cause. More fundamental causes appear to be:
+
+- transient observations being treated as authority;
+- multiple stores owning overlapping lifecycle facts;
+- external mutation and durable recording not being atomic;
+- operations that are not uniformly idempotent or replay-safe;
+- exact-commit validation interacting poorly with validators that can repair
+  code and therefore create a new commit;
+- semantic checks being enforced at the wrong boundary; and
+- recovery logic being spread across startup, watchdogs, adapters, command
+  handlers, and one-off manual procedures.
+
+## Candidate direction under consideration
+
+We are considering the following direction, but want it independently
+critiqued:
+
+1. Make the task event ledger the sole authority for execution and operation
+   history. Derive Project status from plan structure plus task attempts rather
+   than persisting overlapping status where possible.
+2. Represent candidate evolution explicitly as an immutable lineage, for
+   example `submitted -> review_fix -> test_fix -> final_validated`, with each
+   edge carrying producer identity, parent commit, reason, evidence, and
+   validation state.
+3. Treat validation that can modify code as a candidate-producing operation,
+   not as validation of the original candidate. Require a final mutation-free
+   validation pass against the resulting exact commit before approval.
+4. Give every external operation a stable idempotency key and a durable state
+   such as `prepared`, `claimed`, `effect_observed`, `verified`, `failed`, or
+   `uncertain`. Recovery should inspect postconditions before deciding whether
+   to record completion, resume observation, or authorize a new attempt.
+5. Centralize recovery decisions in one deterministic reconciliation planner
+   used by startup, watchdogs, dashboards, and explicit commands.
+6. Make process state advisory. Durable receipts plus independently verified
+   external postconditions determine completion.
+7. Classify ignored paths through a narrow policy: known disposable artifacts
+   may be documented and removed or ignored safely, while unknown ignored
+   content remains fail-closed and visible.
+8. Make custody transfer explicitly fetch/observe the source commit, verify
+   ancestry and destination expectations, perform a strict fast-forward, and
+   record both source and destination object identities.
+9. Add an end-to-end fault-injection harness that interrupts execution before
+   and after every intent, mutation, receipt, verification, and projection
+   update.
+
+## Questions for the reviewer
+
+Please address these directly:
+
+1. Is the diagnosis correct? What deeper causes or misleading assumptions are
+   we missing?
+2. What should be the single source of truth for task, Project, candidate,
+   operation, and approval state? Which facts should be derived rather than
+   persisted?
+3. What state machines and invariants would you use? Please distinguish task
+   lifecycle, attempt lifecycle, candidate lineage, and external-operation
+   lifecycle.
+4. Should a validation pipeline be allowed to modify code? If so, how should
+   repair commits, convergence limits, evidence, and exact-HEAD revalidation be
+   modeled? If not, what practical workflow should replace it?
+5. How should crash-window recovery decide among `not_started`, `completed`,
+   `unreconciled`, `retryable_failure`, and `manual_repair_required` without
+   duplicating an external mutation?
+6. How can task and Project status be kept consistent without fragile
+   cross-file transactions?
+7. What is a safe policy for disposable ignored artifacts that does not create
+   a hiding place for unreviewed code, secrets, or large binaries?
+8. How should ref refresh and custody transfer work across a managed validation
+   repository, a task worktree, and the registered destination checkout?
+9. Which deterministic commands should replace natural-language control at
+   lifecycle gates while still allowing a conversational Firstmate interface?
+10. Which failure-injection and concurrency tests are essential before calling
+    the pipeline reliable?
+11. What is the smallest migration path that preserves existing event ledgers
+    and active projects?
+12. Which proposed controls add more complexity than reliability, and what
+    would you simplify or remove?
+
+## Requested form of the response
+
+Please return:
+
+1. A concise root-cause assessment.
+2. A target architecture and authoritative-state model.
+3. Proposed state machines and explicit invariants.
+4. Recovery algorithms or pseudocode for the important crash windows.
+5. A prioritized roadmap divided into P0, P1, and P2, with dependencies and
+   measurable acceptance criteria.
+6. A test and fault-injection matrix.
+7. A backward-compatible migration strategy.
+8. Security and authority implications.
+9. Tradeoffs, rejected alternatives, and a simpler option if the proposed
+   architecture is over-engineered.
+
+Please separate facts from inferences and identify any repository evidence you
+would need before making a firm recommendation. Optimize for reliable progress
+and understandable recovery, not merely maximal formalism.
+
+---
+
 # ShipMates Codex handoff
+
+## Current handoff — 2026-07-25
+
+This section supersedes every older "Current handoff" and resume instruction
+below. ShipMates has recently completed a real TestA project, but that exercise
+exposed systemic reliability weaknesses. The next milestone is **ShipMates
+reliability**. Do not add orchestration features until this milestone is
+complete.
+
+### Immediate resume instruction
+
+Start in `/Users/johnwilliams/MIT/Courses/ShipMates`, then:
+
+1. Read this entire 2026-07-25 section.
+2. Run `git status --short --branch` and inspect local/remote branch state.
+3. Preserve `.shipmates/` operational evidence and unrelated user changes.
+4. Confirm the current test baseline with `npm test` before editing.
+5. Begin the first reliability tranche described below.
+
+Do not blindly retry, redispatch, reset, clean, purge, or delete operational
+state. Inspect and reconcile existing evidence first.
+
+### Current verified outcome
+
+- TestA in the registered DemoTest0 Project Repository is complete. All three
+  planned tasks are recorded completed.
+- The final TestA task was delivered locally at exact validated commit
+  `a912c8dc77ea5874e97ecc410f652adb42aa505b`.
+- Validation approval and delivery recovery, harmless `.DS_Store` handling,
+  interactive request error containment, and completed-task active-context
+  cleanup were merged through ShipMates PRs #13, #14, and #15.
+- Permanent repository purge was merged through PR #11. Superseded PR #12 was
+  closed.
+- Old merged GitHub feature branches were deleted; `main` is the only intended
+  long-lived remote branch.
+- Firstmate is running in Herdr, but its current architecture remains too
+  brittle to treat successful TestA completion as proof of general reliability.
+
+### Reliability diagnosis
+
+The recurring failures share several causes:
+
+- Project state is split across the Project registry, task event ledgers,
+  snapshots, active-task pointers, Git repositories, Treehouse worktrees,
+  no-mistakes runs, Herdr panes, and live processes.
+- External actions and ledger transitions are not atomic. A process exit between
+  mutation and durable recording creates uncertain state.
+- Recovery behavior is distributed across startup, watchdog, command handlers,
+  adapters, and one-off fixes rather than owned by one reconciliation engine.
+- Natural-language classification still controls lifecycle behavior that should
+  be deterministic.
+- The Firstmate terminal process is coupled to project supervision.
+- Dashboard and Herdr projections have sometimes reflected stale process or UI
+  state instead of authoritative task state.
+- Unit coverage is broad, but lifecycle interruption, shutdown, timer,
+  concurrency, and cross-system tests remain insufficient.
+
+Three concrete watchdog defects are still expected at the start of this
+milestone unless a newer commit has already fixed them:
+
+1. `watchdog.inspect()` can reject outside the guarded blocks and terminate
+   Firstmate through an unhandled interval promise.
+2. The watchdog interval is cleared only after normal loop completion and can
+   leak after abnormal terminal or request-loop failure.
+3. Invalid `SHIPMATES_MONITOR_SECONDS` input can become `NaN` and create an
+   effectively hot timer.
+
+The adjacent concurrency defect must be fixed at the same time: `setInterval`
+can begin another reconciliation audit while the previous audit is still
+running.
+
+### Reliability contract
+
+ShipMates must guarantee all of the following:
+
+- A task is dispatched at most once unless an explicit retry creates a new
+  attempt.
+- Killing or restarting Firstmate never loses proven completed work.
+- Repeating a control or recovery command is safe and idempotent.
+- Every blocked state gives the exact reason and a concrete recovery action.
+- Every `awaiting human` state emits an explicit question or exact approval
+  command.
+- Completed tasks never reappear as active.
+- Delivery always targets the registered Project Repository and lands the exact
+  validated commit.
+- Herdr and dashboard state are derived from authoritative durable state.
+- Closing the Firstmate terminal does not destroy durable supervision.
+- Uncertain external actions are observed and reconciled before repetition.
+
+### First implementation tranche
+
+Implement these as small, separately reviewable vertical changes:
+
+1. **Watchdog and shutdown hardening**
+   - Replace overlapping `setInterval` execution with a serialized scheduler
+     that schedules the next audit only after the current audit finishes.
+   - Catch reconciliation, stale terminalization, and inspection failures
+     independently, plus attach a final scheduled-task rejection handler.
+   - Keep scheduler ownership outside the interactive-loop success path and
+     cancel it from `finally`.
+   - Parse the monitor setting as a finite positive number and otherwise use the
+     documented 15-second default, retaining the five-second minimum.
+   - Test startup inspection failure, periodic inspection failure, abnormal
+     loop exit, invalid configuration, shutdown, and slow non-overlapping
+     audits.
+
+2. **Read-only system doctor**
+   - Add `shipmates doctor` with project/task filters and structured output.
+   - Observe Project registry, task ledger, processes, worktrees, Git heads,
+     validation runs, and registered destination repositories without mutation.
+   - Report invariant violations, uncertainty, stale projections, and the exact
+     recommended recovery operation.
+   - Keep `doctor` read-only. A later explicit `reconcile` command may perform
+     only independently proven safe, idempotent repairs.
+
+3. **State-ownership specification and invariant checker**
+   - Task event ledger owns task execution history and operation evidence.
+   - Project registry owns plan structure, repository identity, task-attempt
+     relationships, and Project status.
+   - External systems own only facts such as process existence, Git HEAD,
+     worktree leases, no-mistakes status, and GitHub state.
+   - Snapshots, active pointers, dashboard data, and Herdr metadata are derived
+     projections, not independent authority.
+   - Document every persisted field, schema version, migration, and invariant.
+
+4. **Lifecycle failure-harness skeleton**
+   - Exercise register → plan → approve → dispatch → report → commit → validate
+     → approve → deliver → complete in a disposable repository.
+   - Add injectable termination points before and after each durable intent and
+     external action.
+   - Prove restart completion without duplicate workers, commits, validation
+     runs, deliveries, or task attempts.
+
+Each tranche must include focused tests, the full supported `npm test` suite,
+documentation, no-mistakes validation, and CI before merge.
+
+### Architectural sequence after the first tranche
+
+1. **Central reconciliation engine** — observe actual state, compare it with
+   authoritative state, and produce one deterministic decision such as
+   `no_action`, `record_observed_completion`, `resume_existing_validation`,
+   `retry_delivery`, `mark_worker_lost`, `return_verified_lease`,
+   `request_human_approval`, or `require_manual_repair`. Startup, monitoring,
+   dashboard actions, and Firstmate commands must use this same engine.
+2. **Uniform crash-safe operation protocol** — every external operation records
+   durable intent, stable idempotency key, exact target, preconditions, claim,
+   receipt/observation, verification, and terminal result. Apply it to worker
+   launch, worktree lease/return, branch preparation, commit, no-mistakes,
+   delivery, push, PR, merge, branch cleanup, archive, and purge.
+3. **Deterministic Firstmate control plane** — natural language may select a
+   typed command, but model prose must not decide lifecycle transitions.
+   Commands include project create/approve/advance, task inspect/reconcile,
+   validation approve, delivery retry, archive, and purge. Refusals must name
+   the failed invariant and next action.
+4. **Durable supervisor separation** — move reconciliation, process observation,
+   advancement, scheduling, and projections into a durable supervisor. Treat
+   the Firstmate pane as a reconnectable conversational client.
+5. **Derived observability** — Herdr and dashboard show authoritative state,
+   live observations, exact blockers, recovery actions, validation commit, and
+   delivery destination. Remove persisted UI-only active state.
+6. **Lifecycle simplification and migration** — separate lifecycle state from
+   operation state, represent retries as attempts, define terminal states and
+   owners, migrate live records, then remove obsolete compatibility fields.
+
+### Required failure coverage
+
+The lifecycle suite must eventually terminate and restart at every boundary,
+including worker launch, commit, validation start/pass/approval, local delivery,
+task completion, and Project completion. It must also cover stale PIDs, missing
+panes, invalid configuration, `.DS_Store`, real dirty checkout changes, moved
+Git heads, missing/corrupt snapshots, duplicate commands, slow monitors,
+network failure, and terminal validation records whose original intent is no
+longer present in the latest projection.
+
+### Reliability milestone completion criteria
+
+The milestone is complete only when:
+
+- `shipmates doctor` reports a clean system after every normal Project.
+- Termination at every tested lifecycle boundary resumes to correct completion.
+- Repeated recovery commands cause no duplicate external mutation.
+- No completed task is restored as active.
+- No human-waiting state lacks an explicit prompt.
+- No monitor overlaps or survives shutdown.
+- Dashboard and Herdr converge automatically to authoritative state.
+- Delivery reaches the registered checkout at the exact validated commit.
+- Firstmate resolves every recoverable blocker through deterministic commands.
+- Unrecoverable conditions stop safely and state the exact human action needed.
+
+### Delivery strategy
+
+Avoid a large rewrite. Prefer this PR sequence:
+
+1. watchdog and shutdown hardening;
+2. read-only doctor;
+3. state-ownership specification and invariant checker;
+4. unified reconciliation planner;
+5. validation and delivery migration;
+6. worker and worktree migration;
+7. deterministic Firstmate command router;
+8. durable supervisor separation;
+9. removal of obsolete projections and compatibility fields.
+
+Do not declare the workflow reliable merely because the unit suite passes. The
+decisive evidence is repeatable end-to-end recovery under injected interruption
+and uncertain external state.
 
 ## Current handoff — 2026-07-17
 
