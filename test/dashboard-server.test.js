@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
 
 import {
   buildDashboardState,
@@ -211,10 +212,36 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
   assert.match(page, /option value="light"/u);
   assert.match(page, /option value="dark"/u);
   assert.match(page, /Send to Firstmate/u);
-  assert.match(script, /Human input required\./u);
-  assert.match(script, /task\.humanAction/u);
-  assert.match(script, /Human-readable task outcome/u);
-  assert.match(script, /Work breakdown and detailed evidence/u);
+  const elements = new Map();
+  const element = (selector) => {
+    if (!elements.has(selector)) elements.set(selector, {
+      value: "system", dataset: {}, className: "", textContent: "", innerHTML: "",
+      disabled: false, placeholder: "", addEventListener() {}, querySelector() { return element(`${selector} button`); },
+    });
+    return elements.get(selector);
+  };
+  const presentation = {
+    status: "Passed", nextAction: null, why: "All checks passed",
+    workBreakdown: { agents: [], tasks: [], tests: [], decisions: [] },
+    evidence: { ledger: { evidenceCount: 2 }, metrics: { tokens: null, validationDurationMs: null } },
+  };
+  vm.runInNewContext(script, {
+    document: {
+      documentElement: element("html"), querySelector: element,
+      querySelectorAll: () => [],
+    },
+    window: { SHIPMATES_REVIEW_STATE: {
+      generatedAt: "2026-07-15T12:00:00Z", watchdog: {}, projects: [],
+      tasks: [{ summary: "Inspection", state: "complete", authority: "read_only",
+        presentation, workers: [], files: [], taskProgress: [], humanAction: "review task-1" }],
+    } },
+    localStorage: { getItem: () => "system", setItem() {} },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    Date, Set, Number, encodeURIComponent,
+  });
+  assert.match(element("#tasks").innerHTML, /Human-readable task outcome/u);
+  assert.match(element("#tasks").innerHTML, /Work breakdown and detailed evidence/u);
+  assert.match(element("#tasks").innerHTML, /Human input required\./u);
 });
 
 test("accepts bounded human messages and rejects empty or control input", () => {

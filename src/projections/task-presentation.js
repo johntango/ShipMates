@@ -13,12 +13,13 @@ export function projectTaskPresentation(snapshot, {
   ].filter(Boolean);
   const failedValidation = validation && validation.passed === false &&
     validation.gate?.status !== "awaiting_approval";
-  const safeFailure = failures.some((failure) => safeBlocker.test(failure));
-  const unsafeFailure = failures.some((failure) => !safeBlocker.test(failure));
-  const safelyBlocked = safeFailure || new Set(["awaiting_human", "recovery_required", "blocked"])
+  const safeFailures = failures.filter((failure) => safeBlocker.test(failure));
+  const unsafeFailures = failures.filter((failure) => !safeBlocker.test(failure));
+  const safelyBlocked = safeFailures.length > 0 || new Set(["awaiting_human", "recovery_required", "blocked"])
     .has(snapshot.state);
-  const explicitlyFailed = !safeFailure && (snapshot.state === "failed" || execution?.status === "failed" || failedValidation ||
-    unsafeFailure || readOnlyTerminal?.status === "failed");
+  const explicitlyFailed = unsafeFailures.length > 0 || failedValidation ||
+    readOnlyTerminal?.status === "failed" ||
+    (safeFailures.length === 0 && (snapshot.state === "failed" || execution?.status === "failed"));
   const passed = snapshot.state === "complete" || validation?.passed === true ||
     readOnlyTerminal?.status === "completed" ||
     new Set(["inspected", "completed", "demo_complete"]).has(execution?.status) ||
@@ -28,7 +29,11 @@ export function projectTaskPresentation(snapshot, {
   const status = explicitlyFailed ? "Failed" : safelyBlocked ? "Blocked safely" :
     passed ? "Passed" : "Blocked safely";
   const nextAction = humanAction || nextActionFor({ status, snapshot, reconciliation });
-  const why = whyFor({ status, snapshot, validation, failures, reconciliation });
+  const why = whyFor({
+    status, snapshot, validation,
+    failures: explicitlyFailed ? [...unsafeFailures, ...safeFailures] : failures,
+    reconciliation,
+  });
   const metrics = availableMetrics(snapshot, validation);
 
   return {

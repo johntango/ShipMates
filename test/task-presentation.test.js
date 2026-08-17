@@ -98,6 +98,20 @@ test("reports genuine validation failures without inventing metrics", () => {
   assert.match(renderTaskPresentation(presentation, { detail: true }), /Metrics: unavailable\./u);
 });
 
+test("reports substantive failure even when a safe blocker is also present", () => {
+  const presentation = projectTaskPresentation({
+    id: "task-mixed", state: "failed", evidence: [], validationRuns: [],
+    workers: [{
+      id: "scout", status: "failed", failure: { message: "Sandbox permission denied" },
+    }, {
+      id: "implementer", status: "failed", failure: { message: "Tests corrupted the output" },
+    }],
+  });
+
+  assert.equal(presentation.status, "Failed");
+  assert.match(presentation.why, /Tests corrupted the output/u);
+});
+
 test("presents durable read-only terminal evidence as passed after restart", () => {
   const presentation = projectTaskPresentation({
     id: "task-recovered", state: "clarified", workers: [], validationRuns: [],

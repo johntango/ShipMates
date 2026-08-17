@@ -4,6 +4,29 @@ Firstmate keeps one durable task lifecycle while allowing different execution
 backends and policies. The interactive shell accepts input and reports results;
 workflow modules own state changes and recovery decisions.
 
+## Authority-aware dispatch
+
+Conversational dispatch carries one explicit authority classification. A
+bounded `read_only` inspection needs no plan approval and always uses the
+standard worker backend, including when a persistent project is selected. It
+does not create a project-plan attempt.
+
+Before launch, Firstmate records a durable inspection task and dispatch intent
+under the global read-only dispatch lock. It records the exact process receipt
+after launch and refuses another read-only inspection while an earlier intent
+has no terminal evidence. On restart, Firstmate reconciles that intent against
+durable execution evidence and the identity-bound live-process receipt. A live
+worker is monitored rather than relaunched; a stopped worker is terminalized so
+an explicit retry can create a new request. Process disappearance alone never
+claims successful inspection.
+
+`local_write` dispatch remains restricted to an approved project and its
+governed, claimed plan item. `external_write`, `destructive`, missing, and
+unrecognized authority classifications are refused at this boundary and must
+use their separate approval workflows. The child worker verifies that its
+classification matches the authority Firstmate authorized, so a read-only
+request cannot be reclassified into implementation after launch.
+
 ## Planned dispatch
 
 `PlannedTaskDispatcher` is the only planned-task dispatch boundary. It selects
@@ -52,6 +75,8 @@ Standard tasks launch the ordinary Firstmate worker process. Persistent projects
 launch through their Project Agent pane when available, otherwise through the
 persistent worker process. Backend selection does not change planned-task
 claiming, durable attachment, status reconciliation, or progress semantics.
+Read-only inspections always use the standard backend and the durable tracking
+contract above rather than a persistent project worktree.
 
 ## Dashboard acknowledgement
 
