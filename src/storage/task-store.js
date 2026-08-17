@@ -851,42 +851,7 @@ export class TaskStore {
     const taskDir = this.#taskDir(taskId);
     await mkdir(taskDir, { recursive: true, mode: 0o700 });
     const lockPath = path.join(taskDir, "write.lock");
-    return this.#withFileLock(lockPath, taskId, operation);
-  }
-
-  async #withFileLock(lockPath, lockId, operation) {
-    await mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 });
-    const startedAt = Date.now();
-    let handle;
-
-    while (!handle) {
-      try {
-        handle = await open(lockPath, "wx", 0o600);
-      } catch (error) {
-        if (error.code !== "EEXIST") {
-          throw error;
-        }
-        if (Date.now() - startedAt >= this.lockTimeoutMs) {
-          throw new TaskStoreError(`Timed out waiting for task lock: ${lockId}`);
-        }
-        await delay(this.lockRetryMs);
-      }
-    }
-
-    try {
-      await handle.writeFile(
-        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
-      );
-      await handle.sync();
-      return await operation();
-    } finally {
-      await handle.close();
-      await unlink(lockPath).catch((error) => {
-        if (error.code !== "ENOENT") {
-          throw error;
-        }
-      });
-    }
+    return this.#withLeaseLock(lockPath, taskId, operation);
   }
 
   async #withLeaseLock(lockPath, lockId, operation) {

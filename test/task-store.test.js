@@ -130,18 +130,37 @@ test("fails closed on corrupt JSONL", async (t) => {
   );
 });
 
-test("times out instead of stealing an existing lock", async (t) => {
+test("times out instead of stealing a live task lease", async (t) => {
   const rootDir = await temporaryState(t);
-  const taskDir = path.join(rootDir, "tasks", "ledger-test-001");
-  await mkdir(taskDir, { recursive: true });
-  await writeFile(path.join(taskDir, "write.lock"), "held\n", "utf8");
+  const claimsDir = path.join(rootDir, "tasks", "ledger-test-001", "write.lock.claims");
+  await mkdir(claimsDir, { recursive: true });
+  await writeFile(path.join(claimsDir, "live.json"), JSON.stringify({
+    pid: process.pid, ownerIdentity: "current-process",
+  }), "utf8");
   const store = new TaskStore({
     rootDir,
     lockTimeoutMs: 30,
     lockRetryMs: 5,
+    processIdentity: (pid) => pid === process.pid ? "current-process" : null,
   });
 
   await assert.rejects(createTask(store), TaskStoreError);
+});
+
+test("recovers a task ledger after an interrupted write lease", async (t) => {
+  const rootDir = await temporaryState(t);
+  const claimsDir = path.join(rootDir, "tasks", "ledger-test-001", "write.lock.claims");
+  await mkdir(claimsDir, { recursive: true });
+  await writeFile(path.join(claimsDir, ".pending-interrupted"), "", "utf8");
+  await writeFile(path.join(claimsDir, "stale.json"), JSON.stringify({
+    pid: 42, ownerIdentity: "stopped-process",
+  }), "utf8");
+  const store = new TaskStore({
+    rootDir, processIdentity: (pid) => pid === process.pid ? "current-process" : null,
+  });
+
+  const snapshot = await createTask(store);
+  assert.equal(snapshot.id, "ledger-test-001");
 });
 
 test("recovers an exclusive lock whose process identity is stale", async (t) => {
