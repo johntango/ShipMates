@@ -27,11 +27,14 @@ archive: treehouse-v2.0.0-darwin-arm64.tar.gz
 sha256:  66022f36eb0c79d6f242025f266b782ac947b3a2817005f13425cbd18874f1f9
 ```
 
-The binary was downloaded to `/private/tmp` and was not added to this repository.
-Production installation and upgrade policy remain a later decision.
-When `TREEHOUSE_BIN` is unset, the adapter uses that pinned development binary
-if it still exists and otherwise falls back to resolving `treehouse` from
-`PATH`. An explicit `TREEHOUSE_BIN` always takes precedence.
+The verified runtime is installed outside the repository at
+`~/.local/share/shipmates/runtimes/treehouse/v2.0.0/treehouse`. ShipMates checks
+the extracted binary's pinned SHA-256
+`f1c766f5427d132565d1d0499eb788d498031d8f301014940de31933465d924b`
+before Firstmate grants it worktree
+authority. `TREEHOUSE_BIN` may override discovery only when the supplied binary
+matches that same digest. The legacy `/private/tmp/treehouse-v2.0.0/treehouse`
+location remains a compatible fallback when it contains the identical binary.
 
 ## Git compatibility preflight
 

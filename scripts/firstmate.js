@@ -23,7 +23,10 @@ import {
   resolvePinnedNoMistakesBinary,
 } from "../src/adapters/no-mistakes.js";
 import { FirstmateCodexConversation } from "../src/adapters/firstmate-codex.js";
-import { TreehouseWorktreeManager } from "../src/adapters/treehouse.js";
+import {
+  resolvePinnedTreehouseBinary,
+  TreehouseWorktreeManager,
+} from "../src/adapters/treehouse.js";
 import {
   createFirstmateId,
   discoverFirstmateContext,
@@ -244,7 +247,10 @@ if (!classifyOnly) {
       });
       await gate.verifyPin();
     }
-    const manager = new TreehouseWorktreeManager();
+    const treehouseBinary = await resolvePinnedTreehouseBinary({
+      explicitPath: process.env.TREEHOUSE_BIN || null,
+    });
+    const manager = new TreehouseWorktreeManager({ binary: treehouseBinary });
     const prepared = await prepareFirstmateLocalWrite({
       store,
       manager,
@@ -716,7 +722,11 @@ async function runInteractiveFirstmate() {
             const workflow = new CodexShipWorkflow({
               store: interactiveStore,
               runtime: new CodexWorkerRuntime(),
-              worktreeManager: new TreehouseWorktreeManager(),
+              worktreeManager: new TreehouseWorktreeManager({
+                binary: await resolvePinnedTreehouseBinary({
+                  explicitPath: process.env.TREEHOUSE_BIN || null,
+                }),
+              }),
               schemaPath: fileURLToPath(new URL("../schemas/codex-worker-report.schema.json", import.meta.url)),
               actor: "firstmate",
             });
