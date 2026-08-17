@@ -38,5 +38,6 @@ function runAdd(...operands) {
   return spawnSync(process.execPath, ["scripts/add.js", ...operands], {
     cwd: new URL("..", import.meta.url),
     encoding: "utf8",
+    env: { ...process.env, FORCE_COLOR: "1" },
   });
 }
