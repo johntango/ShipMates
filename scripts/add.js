@@ -11,7 +11,9 @@ if (operands.length !== 2) {
   const numbers = operands.map(Number);
 
   try {
-    console.log(add(numbers[0], numbers[1]));
+    const result = add(numbers[0], numbers[1]);
+    if (process.stdout.isTTY) console.log(result);
+    else process.stdout.write(`${result}\n`);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;
