@@ -131,7 +131,7 @@ export class FirstmateShell {
     this.attemptIdFactory = attemptIdFactory;
   }
 
-  async classify(input) {
+  async classify(input, { authorizedAuthority = null } = {}) {
     const parsed = firstmateInputSchema.parse(input);
     validateTaskId(parsed.taskId);
     let snapshot = await this.#ensureTask(parsed);
@@ -179,19 +179,24 @@ export class FirstmateShell {
     let classification;
     let usage;
     try {
-      const result = await this.runAgent(
-        this.agent,
-        buildModelInput(parsed),
-        {
-          maxTurns: 1,
-          tracingDisabled: !this.tracingEnabled,
-          traceIncludeSensitiveData: false,
-          workflowName: "ShipMates Firstmate intake",
-          groupId: parsed.taskId,
-        },
-      );
-      classification = firstmateOutputSchema.parse(result.finalOutput);
-      usage = normalizeUsage(result.state?.usage);
+      if (authorizedAuthority === "read_only") {
+        classification = authorizedReadOnlyClassification(parsed.message);
+        usage = normalizeUsage();
+      } else {
+        const result = await this.runAgent(
+          this.agent,
+          buildModelInput(parsed),
+          {
+            maxTurns: 1,
+            tracingDisabled: !this.tracingEnabled,
+            traceIncludeSensitiveData: false,
+            workflowName: "ShipMates Firstmate intake",
+            groupId: parsed.taskId,
+          },
+        );
+        classification = firstmateOutputSchema.parse(result.finalOutput);
+        usage = normalizeUsage(result.state?.usage);
+      }
     } catch (cause) {
       await this.store.recordFirstmateFailure({
         taskId: parsed.taskId,
@@ -271,6 +276,20 @@ export class FirstmateShell {
       eventId: `firstmate-${requestId}-clarified`,
     });
   }
+}
+
+function authorizedReadOnlyClassification(message) {
+  const workItem = String(message).trim();
+  return firstmateOutputSchema.parse({
+    schemaVersion: 1,
+    summary: `Perform the authorized read-only inspection: ${workItem}`.slice(0, 2_000),
+    taskType: "review",
+    requiredAuthority: "read_only",
+    approvalBoundary: "none",
+    recommendedNextStep: "Run the bounded read-only inspection and report its evidence.",
+    requiresHumanApproval: false,
+    workItems: [workItem],
+  });
 }
 
 export class FirstmateShellError extends Error {

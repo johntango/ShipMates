@@ -149,6 +149,7 @@ const tracingEnabled = parseBoolean(
   "SHIPMATES_FIRSTMATE_TRACING",
   process.env.SHIPMATES_FIRSTMATE_TRACING,
 );
+const authorizedAuthority = process.env.SHIPMATES_AUTHORIZED_AUTHORITY || null;
 const store = new TaskStore({ rootDir });
 herdrObserver = createHerdrObserver({ store });
 removeTerminationCleanup = installTerminationCleanup(herdrObserver);
@@ -165,8 +166,7 @@ const result = await shell.classify({
   repo,
   baseSha,
   message,
-});
-const authorizedAuthority = process.env.SHIPMATES_AUTHORIZED_AUTHORITY || null;
+}, { authorizedAuthority });
 verifyAuthorizedClassification(authorizedAuthority, result.classification.requiredAuthority);
 const projectParentTaskId = process.env.SHIPMATES_PROJECT_PARENT_TASK_ID || null;
 if (projectParentTaskId) {
