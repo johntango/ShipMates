@@ -458,8 +458,16 @@ async function runInteractiveFirstmate() {
     taskStore: interactiveStore, projectStore,
   });
   const readOnlyInspectionTracker = new ReadOnlyInspectionTracker({ store: interactiveStore });
-  for (const recovered of await readOnlyInspectionTracker.reconcileCompleted()) {
-    console.error(`Reconciled completed read-only inspection ${recovered.snapshot.id}; no duplicate worker was launched.`);
+  for (const recovered of await readOnlyInspectionTracker.reconcileInterrupted()) {
+    if (recovered.live) {
+      console.error(`Restored monitoring for read-only inspection ${recovered.taskId}; no duplicate worker was launched.`);
+      readOnlyInspectionTracker.monitorRecovered({
+        ...recovered,
+        onTerminal: ({ snapshot }) => console.error(`Reconciled interrupted read-only inspection ${snapshot.id}; an explicit retry is now available.`),
+      });
+    } else {
+      console.error(`Reconciled interrupted read-only inspection ${recovered.snapshot.id}; an explicit retry is now available.`);
+    }
   }
   const projectArchiver = new ProjectArchiveWorkflow({
     projectStore, taskStore: interactiveStore, stateRoot: interactiveStore.rootDir,

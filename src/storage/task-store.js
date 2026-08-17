@@ -771,6 +771,13 @@ export class TaskStore {
       .sort();
   }
 
+  async withExclusiveLock(lockId, operation) {
+    if (!/^[a-z0-9][a-z0-9._-]{2,63}$/u.test(lockId) || typeof operation !== "function") {
+      throw new TypeError("Exclusive lock requires a valid lock id and operation");
+    }
+    return this.#withFileLock(path.join(this.rootDir, "locks", `${lockId}.lock`), lockId, operation);
+  }
+
   async #append(taskId, event, { requireAbsent = false } = {}) {
     validateTaskId(taskId);
     return this.#withLock(taskId, async () => {
@@ -840,6 +847,11 @@ export class TaskStore {
     const taskDir = this.#taskDir(taskId);
     await mkdir(taskDir, { recursive: true, mode: 0o700 });
     const lockPath = path.join(taskDir, "write.lock");
+    return this.#withFileLock(lockPath, taskId, operation);
+  }
+
+  async #withFileLock(lockPath, lockId, operation) {
+    await mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 });
     const startedAt = Date.now();
     let handle;
 
@@ -851,7 +863,7 @@ export class TaskStore {
           throw error;
         }
         if (Date.now() - startedAt >= this.lockTimeoutMs) {
-          throw new TaskStoreError(`Timed out waiting for task lock: ${taskId}`);
+          throw new TaskStoreError(`Timed out waiting for task lock: ${lockId}`);
         }
         await delay(this.lockRetryMs);
       }

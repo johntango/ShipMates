@@ -30,6 +30,7 @@ test("authorizes durably tracked read-only inspection without project approval",
   const events = [];
   const tracker = new ReadOnlyInspectionTracker({ store: {
     async listTaskIds() { return []; },
+    async withExclusiveLock(_lockId, operation) { return operation(); },
     async createTask(value) { events.push({ kind: "task", value }); },
     async recordEvidence(value) { events.push({ kind: value.kind, value }); },
   } });
@@ -85,10 +86,10 @@ test("reconciles a completed fresh-state inspection without approval or duplicat
     eventId: "worker-completed",
   });
 
-  const recovered = await new ReadOnlyInspectionTracker({ store }).reconcileCompleted();
+  const recovered = await new ReadOnlyInspectionTracker({ store }).reconcileInterrupted();
   assert.equal(recovered.length, 1);
   assert.equal(recovered[0].terminal.status, "completed");
-  assert.equal((await tracker.reconcileCompleted()).length, 0);
+  assert.equal((await tracker.reconcileInterrupted()).length, 0);
   const snapshot = await store.getSnapshot(input.taskId);
   assert.equal(snapshot.state, "proposed");
   assert.deepEqual(snapshot.evidence.map(({ kind }) => kind), [
@@ -115,6 +116,40 @@ test("refuses a replacement while an interrupted read-only inspection is outstan
     repo: "owner/repo", baseSha: "abc123", project: planningProject(),
   }), /task-original is still outstanding/u);
   assert.deepEqual(await store.listTaskIds(), ["task-original"]);
+});
+
+test("atomically permits only one concurrent read-only inspection", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-read-only-race-"));
+  const store = new TaskStore({ rootDir });
+  const tracker = new ReadOnlyInspectionTracker({ store });
+  const attempts = ["one", "two"].map((suffix) => tracker.prepare({
+    taskId: `task-${suffix}`, requestId: `request-${suffix}`,
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  }));
+  const results = await Promise.allSettled(attempts);
+  assert.deepEqual(results.map(({ status }) => status).sort(), ["fulfilled", "rejected"]);
+  assert.equal((await store.listTaskIds()).length, 1);
+});
+
+test("terminates a missing interrupted worker and permits retry", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-read-only-retry-"));
+  const store = new TaskStore({ rootDir });
+  const tracker = new ReadOnlyInspectionTracker({ store, isReceiptLive: () => false });
+  await tracker.prepare({
+    taskId: "task-stopped", requestId: "request-stopped",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  });
+  await tracker.recordReceipt({
+    taskId: "task-stopped", requestId: "request-stopped",
+    receipt: { kind: "process", pid: 42 },
+  });
+  const reconciled = await tracker.reconcileInterrupted();
+  assert.equal(reconciled[0].terminal.status, "failed");
+  await tracker.prepare({
+    taskId: "task-retry", requestId: "request-retry",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  });
+  assert.deepEqual(await store.listTaskIds(), ["task-retry", "task-stopped"]);
 });
 
 function planningProject() {

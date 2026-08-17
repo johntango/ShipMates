@@ -31,28 +31,31 @@ export class FirstmateDispatchPolicyError extends Error {
 }
 
 export class ReadOnlyInspectionTracker {
-  constructor({ store, actor = "firstmate" } = {}) {
+  constructor({ store, actor = "firstmate", isReceiptLive = defaultReceiptLiveness } = {}) {
     if (!store) throw new TypeError("ReadOnlyInspectionTracker requires a task store");
     this.store = store;
     this.actor = actor;
+    this.isReceiptLive = isReceiptLive;
   }
 
   async prepare({ taskId, requestId, repo, baseSha, project }) {
     authorizeFirstmateDispatch({ requiredAuthority: "read_only", project });
-    const outstanding = await this.outstanding();
-    if (outstanding.length) {
-      throw new FirstmateDispatchPolicyError(
-        `Read-only inspection ${outstanding[0].taskId} is still outstanding; resume or reconcile it before dispatching another worker`,
-      );
-    }
-    await this.store.createTask({
-      taskId, kind: "firstmate-intake", repo, baseSha, actor: this.actor,
-      eventId: `firstmate-${requestId}-task-created`,
-    });
-    await this.store.recordEvidence({
-      taskId, actor: this.actor, kind: "read-only-dispatch-intent",
-      value: JSON.stringify({ requestId, authority: "read_only" }),
-      eventId: `firstmate-${requestId}-read-only-dispatch-intent`,
+    await this.store.withExclusiveLock("firstmate-read-only-dispatch", async () => {
+      const outstanding = await this.outstanding();
+      if (outstanding.length) {
+        throw new FirstmateDispatchPolicyError(
+          `Read-only inspection ${outstanding[0].taskId} is still outstanding; Firstmate is monitoring it before allowing a retry`,
+        );
+      }
+      await this.store.createTask({
+        taskId, kind: "firstmate-intake", repo, baseSha, actor: this.actor,
+        eventId: `firstmate-${requestId}-task-created`,
+      });
+      await this.store.recordEvidence({
+        taskId, actor: this.actor, kind: "read-only-dispatch-intent",
+        value: JSON.stringify({ requestId, authority: "read_only" }),
+        eventId: `firstmate-${requestId}-read-only-dispatch-intent`,
+      });
     });
   }
 
@@ -87,22 +90,40 @@ export class ReadOnlyInspectionTracker {
     return { snapshot: reconciled, terminal, recovered: false };
   }
 
-  async reconcileCompleted() {
-    const results = [];
-    for (const taskId of await this.store.listTaskIds()) {
+  async reconcileInterrupted() {
+    return this.store.withExclusiveLock("firstmate-read-only-dispatch", async () => {
+      const results = [];
+      for (const item of await this.outstanding()) {
+        const execution = evidenceValue(item.snapshot, "firstmate-local-execution", item.requestId);
+        const receipt = evidenceValue(item.snapshot, "read-only-launch-receipt", item.requestId);
+        if (!execution && receipt && await this.isReceiptLive(receipt)) {
+          results.push({ ...item, receipt, live: true });
+          continue;
+        }
+        results.push({ ...await this.reconcile({
+          taskId: item.taskId, requestId: item.requestId,
+          exitCode: execution?.status === "inspected" ? 0 : 1,
+        }), live: false });
+      }
+      return results;
+    });
+  }
+
+  monitorRecovered({ taskId, requestId, receipt, intervalMs = 1_000, onTerminal = () => {} }) {
+    const poll = async () => {
+      if (await this.isReceiptLive(receipt)) {
+        const timer = setTimeout(() => void poll(), intervalMs);
+        timer.unref?.();
+        return;
+      }
       const snapshot = await this.store.getSnapshot(taskId);
-      const intent = latestEvidence(snapshot, "read-only-dispatch-intent");
-      if (!intent) continue;
-      const requestId = intent.requestId;
-      if (!requestId || evidenceValue(snapshot, "read-only-inspection-terminal", requestId)) continue;
       const execution = evidenceValue(snapshot, "firstmate-local-execution", requestId);
-      if (!execution) continue;
-      results.push(await this.reconcile({
-        taskId, requestId,
-        exitCode: execution.status === "inspected" ? 0 : 1,
-      }));
-    }
-    return results;
+      const result = await this.reconcile({
+        taskId, requestId, exitCode: execution?.status === "inspected" ? 0 : 1,
+      });
+      await onTerminal(result);
+    };
+    void poll();
   }
 
   async outstanding() {
@@ -116,6 +137,18 @@ export class ReadOnlyInspectionTracker {
       results.push({ taskId, requestId: intent.requestId, snapshot });
     }
     return results;
+  }
+}
+
+function defaultReceiptLiveness(receipt) {
+  if (receipt?.kind !== "process" || !Number.isSafeInteger(receipt.pid) || receipt.pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(receipt.pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
   }
 }
 
