@@ -40,6 +40,19 @@ test("records ledger completion only when the project registry is stale", () => 
     "no_action");
 });
 
+test("completes a planned read-only inspection without granting write authority", () => {
+  const snapshot = base({
+    state: "clarified",
+    evidence: [{
+      kind: "firstmate-local-execution",
+      value: JSON.stringify({ status: "inspected", implementation: null }),
+    }],
+  });
+  assert.equal(engine.plan({ snapshot, projectTask: { status: "dispatched" } }).decision,
+    "record_observed_completion");
+  assert.equal(engine.plan({ snapshot }).decision, "no_action");
+});
+
 test("does not treat intermediate workflow milestones as task completion", () => {
   const snapshots = [
     base({ state: "validating", validationRuns: [{ passed: true }] }),

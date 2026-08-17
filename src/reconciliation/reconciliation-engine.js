@@ -32,6 +32,12 @@ export class ReconciliationEngine {
         : result("no_action", recovery.reason, true, context);
     }
 
+    if (recovery.category === "read_only_inspected") {
+      return projectTask
+        ? result("record_observed_completion", recovery.reason, true, context)
+        : result("no_action", recovery.reason, true, context);
+    }
+
     if (recovery.category === "validation_approval_required") {
       return result("request_human_approval", recovery.reason, true, context);
     }

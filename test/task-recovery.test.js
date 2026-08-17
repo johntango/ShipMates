@@ -76,3 +76,16 @@ test("classifies failed FirstMate intake before worker dispatch as terminally bl
   assert.equal(recovery.safeToAutomate, false);
   assert.match(recovery.reason, /connection failed/iu);
 });
+
+test("classifies a completed bounded inspection as safe observed completion", () => {
+  const recovery = classifyTaskRecovery({
+    id: "task-inspection", state: "clarified", workers: [], validationRuns: [],
+    validationRequests: [], evidence: [{
+      kind: "firstmate-local-execution",
+      value: JSON.stringify({ status: "inspected", scouts: [{ status: "completed" }], implementation: null }),
+    }],
+  });
+  assert.equal(recovery.category, "read_only_inspected");
+  assert.equal(recovery.action, "record_observed_completion");
+  assert.equal(recovery.safeToAutomate, true);
+});

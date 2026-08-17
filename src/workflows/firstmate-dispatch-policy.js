@@ -18,7 +18,9 @@ export function authorizeFirstmateDispatch({ requiredAuthority, project, planned
 }
 
 export function verifyAuthorizedClassification(authorizedAuthority, classifiedAuthority) {
-  if (authorizedAuthority && classifiedAuthority !== authorizedAuthority) {
+  const safeNarrowing = authorizedAuthority === "local_write" &&
+    classifiedAuthority === "read_only";
+  if (authorizedAuthority && classifiedAuthority !== authorizedAuthority && !safeNarrowing) {
     throw new FirstmateDispatchPolicyError(
       `Firstmate refused dispatch because authorized ${authorizedAuthority} work was classified as ${classifiedAuthority}`,
     );

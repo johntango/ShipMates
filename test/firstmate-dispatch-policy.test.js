@@ -29,6 +29,14 @@ test("rejects unauthorized work before any Scout can launch", () => {
   assert.equal(launches, 0);
 });
 
+test("allows a local-write plan item to narrow to read-only but never escalate", () => {
+  assert.doesNotThrow(() => verifyAuthorizedClassification("local_write", "read_only"));
+  assert.throws(() => verifyAuthorizedClassification("local_write", "external_write"),
+    /authorized local_write work was classified as external_write/u);
+  assert.throws(() => verifyAuthorizedClassification("read_only", "local_write"),
+    /authorized read_only work was classified as local_write/u);
+});
+
 test("authorizes durably tracked read-only inspection without project approval", async () => {
   const events = [];
   const tracker = new ReadOnlyInspectionTracker({ store: {
