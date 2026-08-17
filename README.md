@@ -73,6 +73,33 @@ for multiline terminal input. Use `/cancel` to discard that input. `/exit`,
 workers are allowed to finish, so exiting the prompt is not equivalent to
 terminating active tasks.
 
+### Firstmate output and evidence
+
+Normal interactive and one-shot output leads with a concise human summary:
+`Passed`, `Blocked safely`, or `Failed`, followed by the required next action
+and a short explanation. Complete evidence remains in the durable task ledger.
+At the interactive Firstmate prompt, retrieve its structured work breakdown,
+logs, artifacts, and available metrics with:
+
+```text
+show task evidence for TASK_ID
+```
+
+For a one-shot request, place `--json` before the optional task arguments to
+emit the complete machine-readable record on stdout instead of the concise
+summary:
+
+```sh
+printf '%s\n' 'Inspect the current repository without modifying files.' |
+  node --env-file=.env scripts/firstmate.js --json
+
+node --env-file=.env scripts/firstmate.js --json TASK_ID REQUEST_ID OWNER/REPO BASE_SHA \
+  'Inspect the current repository without modifying files.'
+```
+
+The JSON form contains the classification, usage, ledger summary, and complete
+execution result. Omitting `--json` preserves the human-readable default.
+
 When Firstmate is started inside Herdr, it registers the pane as
 `ShipMates FirstMate` in Herdr's agent/task list as well as naming the pane.
 Its displayed state is `listening` while it waits for input and changes to the

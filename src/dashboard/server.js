@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
 import { projectOperationalState } from "../projections/operational-state.js";
+import { projectTaskPresentation } from "../projections/task-presentation.js";
 
 export class ShipMatesDashboardServer {
   constructor({
@@ -253,6 +254,13 @@ function projectTask(snapshot, activeProjectTaskId, reconciliationEngine, durabl
     .filter(Boolean)
     .sort((left, right) => left.sequence - right.sequence)
     .slice(-20);
+  const reconciliation = reconciliationEngine.plan({
+    snapshot, projectTask: durableProjectTask, source: "dashboard",
+  });
+  const humanAction = snapshot.state === "awaiting_human" &&
+    validation?.gate?.status === "awaiting_approval"
+    ? `approve validation for task ${snapshot.id}`
+    : null;
   return {
     id: snapshot.id,
     activeProject: snapshot.id === activeProjectTaskId,
@@ -261,9 +269,7 @@ function projectTask(snapshot, activeProjectTaskId, reconciliationEngine, durabl
     authority: classification?.requiredAuthority || "unknown",
     updatedAt: snapshot.lastEventAt,
     workspacePath: snapshot.worktree?.worktreePath || null,
-    reconciliation: reconciliationEngine.plan({
-      snapshot, projectTask: durableProjectTask, source: "dashboard",
-    }),
+    reconciliation,
     operational: projectOperationalState({
       snapshot, projectTask: durableProjectTask, reconciliationEngine, source: "dashboard",
     }),
@@ -281,10 +287,8 @@ function projectTask(snapshot, activeProjectTaskId, reconciliationEngine, durabl
       passed: validation.passed,
       outcome: validation.outcome,
     } : null,
-    humanAction: snapshot.state === "awaiting_human" &&
-      validation?.gate?.status === "awaiting_approval"
-      ? `approve validation for task ${snapshot.id}`
-      : null,
+    humanAction,
+    presentation: projectTaskPresentation(snapshot, { reconciliation, humanAction }),
     taskProgress,
   };
 }
