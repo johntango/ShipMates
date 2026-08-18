@@ -117,6 +117,61 @@ test("feature-flag conversation gives one plan approval and leaks no ids", async
   assert.equal((await store.list()).length, 1);
 });
 
+test("queues an early natural approval until the short plan is durable", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-early-approval-"));
+  const store = new WorkflowRunStore({ rootDir: root, idFactory: () => "early" });
+  let finishPlanning;
+  const plannerWait = new Promise((resolve) => { finishPlanning = resolve; });
+  let launches = 0;
+  const controller = new WorkflowRunController({
+    store,
+    worker: {
+      observe: async () => null,
+      launch: async () => { launches += 1; return { receipt: {}, completed: {
+        workspacePath: "/isolated/worktree", headSha: HEAD,
+        report: { status: "completed", files: ["index.html"] },
+      } }; },
+    },
+    validator: {
+      observe: async () => null,
+      start: async ({ headSha }) => ({ status: "passed", headSha, report: { outcome: "passed" } }),
+    },
+  });
+  const conversation = new SimpleWorkflowConversation({
+    store, controller,
+    context: async () => ({ repoPath: "/repo", baseSha: "0".repeat(40) }),
+    planner: async () => plannerWait,
+  });
+  const planning = conversation.handle("Build a bouncing-balls page");
+  const early = await conversation.handle("I approve the plan");
+  assert.match(early, /still preparing.*approval is queued/iu);
+  assert.equal((await store.list()).length, 0);
+  finishPlanning({
+    action: "plan", response: "Plan ready", requiredAuthority: null,
+    tasks: [
+      { title: "Inspect the web entry point", requiredAuthority: "read_only" },
+      { title: "Build the page", requiredAuthority: "local_write" },
+    ],
+  });
+  const completed = await planning;
+  assert.match(completed, /approval.*applied/iu);
+  assert.match(completed, /Outcome: Passed/u);
+  assert.equal(launches, 1);
+  assert.equal((await store.list())[0].phase, "completed");
+});
+
+test("explains safely when approval arrives before any request", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-no-plan-"));
+  const store = new WorkflowRunStore({ rootDir: root });
+  const conversation = new SimpleWorkflowConversation({
+    store,
+    controller: {},
+    context: async () => ({ repoPath: "/repo", baseSha: "0".repeat(40) }),
+    planner: async () => { throw new Error("unused"); },
+  });
+  assert.match(await conversation.handle("I approve the plan"), /No plan is ready.*Send the development request/iu);
+});
+
 function runFixture() {
   return {
     id: "workflow-test", repoPath: "/repo", baseHeadSha: "0".repeat(40),

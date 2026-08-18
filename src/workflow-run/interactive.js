@@ -9,21 +9,38 @@ export class SimpleWorkflowConversation {
     this.controller = controller;
     this.planner = planner;
     this.context = context;
+    this.planningPromise = null;
+    this.approvalQueued = false;
   }
 
   async handle(message) {
-    const active = (await this.store.list()).find(({ phase }) =>
-      !new Set(["completed", "blocked"]).has(phase));
     if (isApproval(message)) {
+      if (this.planningPromise) {
+        this.approvalQueued = true;
+        return "Firstmate is still preparing the short plan. Your approval is queued and will apply only after that plan is durably saved.";
+      }
+      const active = await this.#active();
       if (!active || active.phase !== "awaiting_approval") {
-        return "There is no short plan awaiting approval.";
+        return "No plan is ready for approval yet. Send the development request first; Firstmate will show the short plan when it is durably saved.";
       }
       return renderWorkflowRun(await this.controller.approve(active.id));
     }
     if (isStatus(message)) {
+      if (this.planningPromise) return "Firstmate is still preparing and saving the short plan.";
+      const active = await this.#active();
       if (!active) return "No simple local workflow is active.";
       return renderWorkflowRun(await this.controller.advance(active.id));
     }
+    if (this.planningPromise) {
+      return "Firstmate is still preparing the current short plan. No second request was started.";
+    }
+    this.planningPromise = this.#prepare(message);
+    try { return await this.planningPromise; }
+    finally { this.planningPromise = null; this.approvalQueued = false; }
+  }
+
+  async #prepare(message) {
+    const active = await this.#active();
     if (active) {
       return `${renderWorkflowRun(await this.controller.advance(active.id))}\nFinish or resolve this workflow before starting another.`;
     }
@@ -39,12 +56,27 @@ export class SimpleWorkflowConversation {
       request: message, plan, repoPath: repository.repoPath,
       baseHeadSha: repository.baseSha, authority: "local_write",
     });
-    return [
+    const lines = [
       "Proposed plan:",
       plan,
-      "No files have changed. Reply “I approve the plan” to start one isolated Implementer.",
-      renderWorkflowRun(run),
-    ].join("\n");
+    ];
+    if (this.approvalQueued) {
+      lines.push(
+        "The approval you sent while planning was in progress has now been applied to this saved plan.",
+        renderWorkflowRun(await this.controller.approve(run.id)),
+      );
+    } else {
+      lines.push(
+        "No files have changed. Reply “I approve the plan” to start one isolated Implementer.",
+        renderWorkflowRun(run),
+      );
+    }
+    return lines.join("\n");
+  }
+
+  async #active() {
+    return (await this.store.list()).find(({ phase }) =>
+      !new Set(["completed", "blocked"]).has(phase));
   }
 }
 
@@ -59,7 +91,9 @@ function isStatus(value) {
 function isLocalImplementation(decision) {
   if (decision.action === "dispatch") return decision.requiredAuthority === "local_write";
   return decision.action === "plan" && decision.tasks.length > 0 &&
-    decision.tasks.every(({ requiredAuthority }) => requiredAuthority === "local_write");
+    decision.tasks.some(({ requiredAuthority }) => requiredAuthority === "local_write") &&
+    decision.tasks.every(({ requiredAuthority }) =>
+      new Set(["read_only", "local_write"]).has(requiredAuthority));
 }
 
 function shortPlan(decision) {
