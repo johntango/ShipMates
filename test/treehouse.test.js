@@ -102,6 +102,30 @@ test("parses Treehouse status into structured lease records", async () => {
   ]);
 });
 
+test("ignores verified Treehouse process-detail continuation lines", async () => {
+  const manager = new TreehouseWorktreeManager({
+    homeDirectory: "/tmp/treehouse-home",
+    executeFile: async () => ({
+      stdout: "1 leased ~/.treehouse/repo/1/repo  (held by task-001)\n" +
+        "                   zsh (63745)\n" +
+        "2 available ~/.treehouse/repo/2/repo\n",
+      stderr: "",
+    }),
+  });
+  const entries = await manager.list({ repoPath: "/repos/practice" });
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].leaseHolder, "task-001");
+  assert.equal(entries[1].state, "available");
+});
+
+test("continues to reject malformed Treehouse worktree rows", async () => {
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async () => ({ stdout: "1 leased\n", stderr: "" }),
+  });
+  await assert.rejects(manager.list({ repoPath: "/repos/practice" }),
+    /Could not parse Treehouse status line/u);
+});
+
 test("requires an exact task holder when reconciling a lease", async () => {
   const manager = new TreehouseWorktreeManager({
     executeFile: async () => ({

@@ -168,11 +168,11 @@ export class TreehouseWorktreeManager {
     if (status.trim() === "") {
       return [];
     }
-    return status.split(/\r?\n/u).map((line) =>
-      parseStatusLine(line, {
+    return status.split(/\r?\n/u)
+      .filter((line) => !isProcessDetailLine(line))
+      .map((line) => parseStatusLine(line, {
         homeDirectory: this.homeDirectory,
-      }),
-    );
+      }));
   }
 
   async findWorktree({ repoPath, worktreePath }) {
@@ -531,6 +531,10 @@ function parseStatusLine(line, { homeDirectory }) {
     worktreePath: path.resolve(expandedPath),
     leaseHolder: leaseHolder || null,
   });
+}
+
+function isProcessDetailLine(line) {
+  return !/^\s*\d+\s/u.test(line) && /^\s{2,}\S(?:.*\S)? \(\d+\)\s*$/u.test(line);
 }
 
 function assertAbsolutePath(label, value) {

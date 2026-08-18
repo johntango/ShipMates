@@ -102,6 +102,7 @@ import {
 import {
   appendFirstmateDiagnostic,
   createFirstmateProjectExecutionBackends,
+  reconcileEarlyGovernedChildFailure,
 } from "../src/workflows/project-execution-backends.js";
 import { verifyGovernedExecutionEnvelope } from "../src/workflows/governed-execution.js";
 import { LocalValidationWorkflow } from "../src/workflows/local-validation.js";
@@ -1269,6 +1270,14 @@ async function runInteractiveFirstmate() {
           activeRequests.delete(taskId);
           try {
             let snapshot = await interactiveStore.getSnapshot(taskId);
+            if (dispatchPolicy.trackProjectAttempt && planTaskId && exitCode !== 0) {
+              const earlyFailure = await reconcileEarlyGovernedChildFailure({
+                store: interactiveStore, projectStore,
+                projectId: projectIdForTask, planTaskId, taskId, exitCode, signal,
+                cause: child.shipmatesFailureCause || null,
+              });
+              if (earlyFailure) snapshot = earlyFailure.snapshot;
+            }
             const stoppedSafely = new Set(["blocked", "recovery_required"]).has(snapshot.state);
             console.error(exitCode === 0
               ? `“${taskName}” in ${projectNameForTask} completed.`

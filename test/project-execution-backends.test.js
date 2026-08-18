@@ -8,6 +8,7 @@ import {
   appendFirstmateDiagnostic,
   createFirstmateProjectExecutionBackends,
   ProjectExecutionBackendRouter,
+  reconcileEarlyGovernedChildFailure,
 } from "../src/workflows/project-execution-backends.js";
 
 test("routes standard and persistent projects through one dispatch contract", async () => {
@@ -128,4 +129,45 @@ test("persistent backend falls back to the persistent worker process", () => {
   assert.deepEqual(calls[0][2], ["/persistent.js", "project-one", "build", "abc"]);
   assert.equal(calls[0][3].env.SHIPMATES_STATE_DIR, "/state");
   assert.deepEqual(calls[1], ["stdin", "Build it\n"]);
+});
+
+test("projects a pre-preparation governed child exit as blocked safely", async () => {
+  const transitions = [];
+  const updates = [];
+  const snapshot = { id: "task-one", state: "clarified", worktree: null, workers: [] };
+  const result = await reconcileEarlyGovernedChildFailure({
+    store: {
+      getSnapshot: async () => snapshot,
+      transition: async (input) => {
+        transitions.push(input);
+        return { ...snapshot, state: input.to };
+      },
+    },
+    projectStore: { updateTaskStatus: async (input) => updates.push(input) },
+    projectId: "project-one", planTaskId: "build", taskId: "task-one", exitCode: 1,
+    cause: "TreehouseAdapterError: Could not parse Treehouse status output",
+  });
+  assert.equal(result.snapshot.state, "blocked");
+  assert.equal(transitions[0].from, "clarified");
+  assert.equal(transitions[0].to, "blocked");
+  assert.deepEqual(updates[0], {
+    projectId: "project-one", planTaskId: "build", status: "blocked",
+    blockingReason: "TreehouseAdapterError: Could not parse Treehouse status output",
+  });
+});
+
+test("preserves an early exit with workspace evidence for normal reconciliation", async () => {
+  let transitioned = false;
+  const result = await reconcileEarlyGovernedChildFailure({
+    store: {
+      getSnapshot: async () => ({
+        state: "preparing", worktree: { status: "lease_requested" }, workers: [],
+      }),
+      transition: async () => { transitioned = true; },
+    },
+    projectStore: { updateTaskStatus: async () => {} },
+    projectId: "project-one", planTaskId: "build", taskId: "task-one", exitCode: 1,
+  });
+  assert.equal(result, null);
+  assert.equal(transitioned, false);
 });
