@@ -368,6 +368,13 @@ export class TaskStore {
     });
   }
 
+  async requestValidationApproval({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(), taskId,
+      type: "validation.approval.requested", at, actor, data: request,
+    });
+  }
+
   async recordRecoveryAudit({ taskId, actor, report, eventId, at }) {
     return this.#append(taskId, {
       id: eventId || this.idFactory(),

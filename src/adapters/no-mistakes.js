@@ -223,7 +223,17 @@ export class NoMistakesLocalGate {
     };
   }
 
-  async respond({ taskId, worktreePath, expectedHeadSha, intent, action }) {
+  async observe({ taskId, worktreePath, expectedHeadSha, intent, runId }) {
+    return this.respond({
+      taskId, worktreePath, expectedHeadSha, intent,
+      action: "approve", expectedRunId: runId, observeOnly: true,
+    });
+  }
+
+  async respond({
+    taskId, worktreePath, expectedHeadSha, intent, action,
+    expectedRunId = null, observeOnly = false,
+  }) {
     requireNonEmpty(taskId, "taskId");
     requireNonEmpty(intent, "intent");
     if (!new Set(["approve", "skip"]).has(action)) {
@@ -251,11 +261,20 @@ export class NoMistakesLocalGate {
     };
     let result = await this.runner(this.binaryPath, args, options);
     let parsed = parseAxiOutput(result.stdout);
+    if (expectedRunId && parsed.runId !== expectedRunId) {
+      throw new NoMistakesGateError("Pinned validator status does not match the approved run");
+    }
     if (parsed.outcome === null) {
+      if (observeOnly) {
+        throw new NoMistakesGateError("Approved validator run is not terminal");
+      }
       args = ["axi", "respond", "--action", action];
       await this.runner(this.binaryPath, args, options);
       result = await this.runner(this.binaryPath, ["axi", "status"], options);
       parsed = parseAxiOutput(result.stdout);
+      if (expectedRunId && parsed.runId !== expectedRunId) {
+        throw new NoMistakesGateError("Pinned validator response switched runs");
+      }
     }
     const completedAt = this.clock().toISOString();
     const after = await this.#inspect(workingDirectory);

@@ -164,6 +164,10 @@ function nextActionFor({ status, snapshot, reconciliation }) {
   if (reconciliation?.action && reconciliation.action !== "no_action") {
     return sentence(reconciliation.action.replaceAll("_", " "));
   }
+  if (snapshot.state === "awaiting_human" &&
+    snapshot.validationApprovalRequests?.at(-1)?.status === "requested") {
+    return "Reconcile the recorded validator response; do not approve or rerun validation again.";
+  }
   if (snapshot.state === "awaiting_human") return "Review the recorded decision and provide the exact requested approval.";
   if (status === "Failed") return "Inspect the failing test or worker evidence, then request a focused repair.";
   if (new Set(["running", "preparing", "awaiting_worker", "validating"]).has(snapshot.state)) {
@@ -179,6 +183,10 @@ function whyFor({ status, snapshot, validation, failures, reconciliation }) {
     return "All assigned read-only agents completed without reporting a mutation or failure.";
   }
   if (failures.length > 0) return sentence(failures[0]);
+  if (validation?.gate?.status === "awaiting_approval" &&
+    snapshot.validationApprovalRequests?.at(-1)?.status === "requested") {
+    return "The approval was recorded, but its validator result has not yet been reconciled into the task ledger.";
+  }
   if (validation?.gate?.status === "awaiting_approval") {
     return `Validation paused at ${validation.gate.step || "an approval gate"}; no unsafe continuation occurred.`;
   }

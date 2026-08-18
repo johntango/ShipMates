@@ -258,7 +258,8 @@ function projectTask(snapshot, activeProjectTaskId, reconciliationEngine, durabl
     snapshot, projectTask: durableProjectTask, source: "dashboard",
   });
   const humanAction = snapshot.state === "awaiting_human" &&
-    validation?.gate?.status === "awaiting_approval"
+    validation?.gate?.status === "awaiting_approval" &&
+    snapshot.validationApprovalRequests?.at(-1)?.status !== "requested"
     ? `approve validation for task ${snapshot.id}`
     : null;
   return {

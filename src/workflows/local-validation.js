@@ -192,7 +192,30 @@ export class LocalValidationWorkflow {
         "Validation approval does not match the exact recorded approval gate and intent",
       );
     }
-    const report = await this.gate.respond({
+    const approval = snapshot.validationApprovalRequests?.at(-1);
+    const operationId = "validation-approval-v1";
+    if (!approval) {
+      snapshot = await this.store.requestValidationApproval({
+        taskId, actor: this.actor,
+        request: {
+          operationId, runId: prior.runId,
+          headSha: prior.finalHeadSha,
+          intentSha256,
+        },
+        eventId: `${taskId}:validation:${prior.runId}:approval-requested:v1`,
+      });
+    } else if (approval.operationId !== operationId || approval.runId !== prior.runId ||
+      approval.headSha !== prior.finalHeadSha || approval.intentSha256 !== intentSha256) {
+      throw new LocalValidationRecoveryRequiredError(
+        "Durable validation approval intent does not match the active gate",
+      );
+    }
+    const report = approval?.status === "requested"
+      ? await this.gate.observe({
+        taskId, worktreePath: snapshot.worktree.worktreePath,
+        expectedHeadSha: snapshot.worktree.headSha, intent, runId: prior.runId,
+      })
+      : await this.gate.respond({
       taskId,
       worktreePath: snapshot.worktree.worktreePath,
       expectedHeadSha: snapshot.worktree.headSha,
@@ -213,6 +236,10 @@ export class LocalValidationWorkflow {
       this.store, snapshot, this.actor, taskId, prior.runId,
     );
     return { snapshot, report, reused: false };
+  }
+
+  async reconcileApproval({ taskId, intent }) {
+    return this.approve({ taskId, intent });
   }
 }
 

@@ -103,6 +103,7 @@ export function replayTaskEvents(events) {
     branchCleanupApprovals: [],
     branchCleanups: [],
     validationRequests: [],
+    validationApprovalRequests: [],
     validationRuns: [],
     recoveryAudits: [],
     firstmateRuns: [],
@@ -695,6 +696,34 @@ function applyEvent(snapshot, event, index) {
       };
       request.passed = true;
       request.reconciledEventId = event.id;
+      const approval = snapshot.validationApprovalRequests.at(-1);
+      if (approval && approval.runId === runId && approval.status === "requested") {
+        approval.status = "completed";
+        approval.completedEventId = event.id;
+      }
+      break;
+    }
+
+    case "validation.approval.requested": {
+      requireCreated(snapshot, event);
+      const { operationId, runId, headSha, intentSha256 } = event.data;
+      requireIdentifier("Validation approval operation ID", operationId);
+      requireNonEmpty("Validation approval run ID", runId);
+      requireFullSha("Validation approval head SHA", headSha);
+      requireSha256("Validation approval intent digest", intentSha256);
+      const validation = snapshot.validationRuns.at(-1);
+      if (snapshot.state !== "awaiting_human" ||
+        validation?.gate?.status !== "awaiting_approval" ||
+        validation.runId !== runId || validation.finalHeadSha !== headSha ||
+        validation.intentSha256 !== intentSha256) {
+        throw new TaskStateError("Validation approval intent does not match the active exact-head gate");
+      }
+      if (snapshot.validationApprovalRequests.some(({ operationId: id }) => id === operationId)) {
+        throw new TaskStateError(`Validation approval operation already exists: ${operationId}`);
+      }
+      snapshot.validationApprovalRequests.push({
+        ...event.data, status: "requested", requestEventId: event.id,
+      });
       break;
     }
 

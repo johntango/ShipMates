@@ -92,6 +92,7 @@ export function renderLavishReadOnlyAction(snapshot, action, context = {}) {
   }
   if (action.decision === "review_validation") {
     const validation = snapshot.validationRuns?.at(-1);
+    if (pendingValidationApproval(snapshot)) return pendingValidationApprovalMessage();
     return validation
       ? `Selected: review validation. Validation ${validation.passed ? "passed" : "did not pass"} (${validation.outcome || "unknown outcome"}).`
       : `Selected: review validation. ${renderMissingValidation(snapshot, subject)}`;
@@ -107,11 +108,20 @@ export function renderLavishReadOnlyAction(snapshot, action, context = {}) {
   }
   if (action.action === "show_validation") {
     const validation = snapshot.validationRuns?.at(-1);
+    if (pendingValidationApproval(snapshot)) return pendingValidationApprovalMessage();
     return validation
       ? `Validation ${validation.passed ? "passed" : "did not pass"} (${validation.outcome || "unknown outcome"}).`
       : renderMissingValidation(snapshot, subject);
   }
   throw new TypeError("Unsupported Lavish action");
+}
+
+function pendingValidationApproval(snapshot) {
+  return snapshot.validationApprovalRequests?.at(-1)?.status === "requested";
+}
+
+function pendingValidationApprovalMessage() {
+  return "Validation approval is recorded and safely awaiting exact-run ledger reconciliation; do not approve or rerun validation again.";
 }
 
 function renderMissingValidation(snapshot, subject) {

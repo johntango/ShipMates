@@ -202,6 +202,69 @@ test("finishes approval after terminal reconciliation was already recorded", asy
   assert.equal(responses, 0);
 });
 
+test("records approval intent before the external response and recovers by observing the same run", async () => {
+  const store = new MemoryStore();
+  const intent = "Validate locally";
+  const gated = {
+    ...validationReport(),
+    intentSha256: "unused",
+    initialHeadSha: "a".repeat(40),
+    finalHeadSha: "a".repeat(40),
+    gate: { step: "test", status: "awaiting_approval" },
+  };
+  let responses = 0;
+  let observations = 0;
+  const gate = {
+    pinEvidence,
+    async run() { return gated; },
+    async respond() {
+      responses += 1;
+      throw new Error("process interrupted after validator accepted approval");
+    },
+    async observe(input) {
+      observations += 1;
+      assert.equal(input.runId, gated.runId);
+      assert.equal(input.expectedHeadSha, "a".repeat(40));
+      return { ...gated, gate: null, passed: true };
+    },
+  };
+  const workflow = new LocalValidationWorkflow({ store, gate });
+  await workflow.run({ taskId: "validation-001", intent });
+  store.snapshot.validationRuns[0].intentSha256 =
+    store.snapshot.validationRequests[0].intentSha256;
+
+  await assert.rejects(workflow.approve({ taskId: "validation-001", intent }), /interrupted/u);
+  assert.equal(store.snapshot.validationApprovalRequests[0].status, "requested");
+
+  const recovered = await workflow.reconcileApproval({ taskId: "validation-001", intent });
+  assert.equal(recovered.report.passed, true);
+  assert.equal(recovered.snapshot.state, "ready_to_merge");
+  assert.equal(responses, 1);
+  assert.equal(observations, 1);
+  assert.equal(store.snapshot.validationApprovalRequests[0].status, "completed");
+});
+
+test("fails closed when approval recovery observes another validator run", async () => {
+  const store = new MemoryStore();
+  const intent = "Validate locally";
+  const gated = {
+    ...validationReport(), intentSha256: "unused",
+    initialHeadSha: "a".repeat(40), finalHeadSha: "a".repeat(40),
+    gate: { step: "test", status: "awaiting_approval" },
+  };
+  const workflow = new LocalValidationWorkflow({ store, gate: {
+    pinEvidence, async run() { return gated; },
+    async respond() { throw new Error("interrupted"); },
+    async observe() { return { ...gated, runId: "wrong-run", gate: null, passed: true }; },
+  } });
+  await workflow.run({ taskId: "validation-001", intent });
+  store.snapshot.validationRuns[0].intentSha256 = store.snapshot.validationRequests[0].intentSha256;
+  await assert.rejects(workflow.approve({ taskId: "validation-001", intent }), /interrupted/u);
+  await assert.rejects(workflow.reconcileApproval({ taskId: "validation-001", intent }),
+    /same run/u);
+  assert.equal(store.snapshot.state, "awaiting_human");
+});
+
 class MemoryStore {
   constructor() {
     this.records = [];
@@ -211,6 +274,7 @@ class MemoryStore {
     this.snapshot = {
       state: "validating",
       validationRequests: [],
+      validationApprovalRequests: [],
       validationRuns: [],
       worktree: {
         status: "leased",
@@ -245,6 +309,15 @@ class MemoryStore {
     };
     this.snapshot.validationRequests[0].passed = true;
     this.snapshot.validationRequests[0].reconciledEventId = record.eventId;
+    const approval = this.snapshot.validationApprovalRequests.at(-1);
+    if (approval) approval.status = "completed";
+    return this.snapshot;
+  }
+
+  async requestValidationApproval(record) {
+    this.snapshot.validationApprovalRequests.push({
+      ...record.request, status: "requested", requestEventId: record.eventId,
+    });
     return this.snapshot;
   }
 

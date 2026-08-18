@@ -1404,6 +1404,21 @@ async function runInteractiveFirstmate() {
       throw error;
     }
     });
+  for (const taskId of await interactiveStore.listTaskIds()) {
+    try {
+      const snapshot = await interactiveStore.getSnapshot(taskId);
+      if (snapshot.validationApprovalRequests?.at(-1)?.status !== "requested") continue;
+      const recovered = await handleValidationApproval(
+        `approve validation for task ${taskId}`,
+        { store: interactiveStore, projectStore, orchestrator, advanceProject },
+      );
+      if (recovered) {
+        console.error(`Reconciled the previously approved exact validation run for ${taskId}; validation was not rerun.`);
+      }
+    } catch (error) {
+      console.error(`Validation approval recovery blocked safely for ${taskId} (${error.message}).`);
+    }
+  }
   const dashboardServer = new ShipMatesDashboardServer({
     store: interactiveStore,
     projectContext,
