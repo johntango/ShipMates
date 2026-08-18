@@ -264,7 +264,7 @@ export class NoMistakesLocalGate {
     if (expectedRunId && parsed.runId !== expectedRunId) {
       throw new NoMistakesGateError("Pinned validator status does not match the approved run");
     }
-    if (parsed.outcome === null) {
+    if (parsed.outcome === null && parsed.gate !== null) {
       if (observeOnly) {
         throw new NoMistakesGateError("Approved validator run is not terminal");
       }
@@ -526,7 +526,8 @@ export function parseAxiOutput(stdout) {
   }
   const outcome = topLevel.get("outcome") || null;
   const gate = lines.includes("gate:") ? parseGate(lines) : null;
-  if (!outcome && !gate) {
+  const runStatus = requiredField(runFields, "status");
+  if (!outcome && !gate && runStatus !== "running") {
     throw new NoMistakesOutputError("axi output has neither outcome nor approval gate");
   }
   if (outcome && !new Set(["passed", "blocked", "failed", "cancelled"]).has(outcome)) {
@@ -535,7 +536,7 @@ export function parseAxiOutput(stdout) {
   return {
     runId: requiredField(runFields, "id"),
     branch: requiredField(runFields, "branch"),
-    runStatus: requiredField(runFields, "status"),
+    runStatus,
     head: shortSha(requiredField(runFields, "head")),
     findings: parseFindingsCount(requiredField(runFields, "findings")),
     steps,

@@ -168,7 +168,9 @@ test("one high-level validation decision reconciles the pinned run without rerun
         decisions += 1;
         assert.equal(validatorRunId, "validator-pinned");
         assert.equal(decision, "approve");
-        return { status: "passed", headSha, report: { outcome: "passed" } };
+        return decisions === 1
+          ? { status: "running", headSha, validatorRunId, report: { runStatus: "running" } }
+          : { status: "passed", headSha, report: { outcome: "passed" } };
       },
     },
   });
@@ -176,10 +178,12 @@ test("one high-level validation decision reconciles the pinned run without rerun
   assert.equal(awaiting.phase, "awaiting_validation_decision");
   assert.equal(projectWorkflowRun(awaiting).nextAction,
     "Review the validation concern, then approve validation or stop.");
-  const completed = await controller.approveValidation(run.id);
+  const validating = await controller.approveValidation(run.id);
+  assert.equal(validating.phase, "validating");
+  const completed = await controller.advance(run.id);
   assert.equal(completed.phase, "completed");
   assert.equal(starts, 1);
-  assert.equal(decisions, 1);
+  assert.equal(decisions, 2);
   assert.equal((await store.events(run.id)).filter(({ type }) =>
     type === "validation.review_approved").length, 1);
 });

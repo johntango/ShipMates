@@ -288,6 +288,45 @@ test("approves the existing gate and returns its terminal passing result", async
     ["axi", "respond", "--action", "approve"]);
 });
 
+test("observes a pinned validator still running after approval without responding twice", async () => {
+  const calls = [];
+  let statusReads = 0;
+  const base = fakeRunner({ output: passingOutput(), calls });
+  const runner = async (command, args, options) => {
+    if (args.join(" ") === "axi status") {
+      calls.push({ command, args, options });
+      statusReads += 1;
+      return { exitCode: 0, stdout: statusReads === 1 ? gateOutput() : runningOutput(), stderr: "" };
+    }
+    if (args.join(" ") === "axi respond --action approve") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    return base(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes", runner,
+    clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  const first = await gate.respond({
+    taskId: "validation-001", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate locally", action: "approve",
+    expectedRunId: "run-local-2",
+  });
+  assert.equal(first.runStatus, "running");
+  assert.equal(first.outcome, null);
+  assert.equal(first.gate, null);
+
+  const second = await gate.respond({
+    taskId: "validation-001", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate locally", action: "approve",
+    expectedRunId: "run-local-2",
+  });
+  assert.equal(second.runStatus, "running");
+  assert.equal(calls.filter(({ args }) => args.join(" ") === "axi respond --action approve").length, 1);
+});
+
 test("rejects malformed output and a remote-capable step that ran", async () => {
   assert.throws(() => parseAxiOutput("outcome: passed\n"), NoMistakesOutputError);
   const output = passingOutput().replace(
@@ -453,4 +492,12 @@ gate:
   status: awaiting_approval
   findings: "1 blocking"
 `;
+}
+
+function runningOutput() {
+  return gateOutput()
+    .replace("    review,awaiting_approval,1,2", "    review,completed,1,2")
+    .replace("    test,pending,0,0", "    test,completed,0,3")
+    .replace("    lint,pending,0,0", "    lint,running,0,4")
+    .replace(/gate:\n[\s\S]*$/u, "");
 }

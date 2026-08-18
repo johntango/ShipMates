@@ -110,7 +110,7 @@ export class WorkflowRunValidatorAdapter {
       throw new WorkflowRunAdapterError("Validation decision authority does not match the current workflow");
     }
     const existing = await readJson(path.join(directory, "validation-result.json"));
-    if (existing && existing.status !== "awaiting_decision") return existing;
+    if (existing && !new Set(["awaiting_decision", "running"]).has(existing.status)) return existing;
     if (existing?.validatorRunId !== validatorRunId || existing?.headSha !== headSha) {
       throw new WorkflowRunAdapterError("Validation decision does not match the pinned validator review");
     }
@@ -175,6 +175,10 @@ function validationResult(report, headSha) {
       },
       report,
     };
+  }
+  if (report.runId && report.runStatus === "running" && report.gate === null &&
+    report.outcome === null) {
+    return { status: "running", headSha, validatorRunId: report.runId, report };
   }
   throw new WorkflowRunAdapterError("Validator outcome is not terminal and unambiguous");
 }

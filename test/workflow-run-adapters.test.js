@@ -102,7 +102,11 @@ test("validator adapter responds only to its pinned exact-head review run", asyn
       assert.equal(expectedRunId, "run-pinned");
       assert.equal(expectedHeadSha, HEAD);
       assert.equal(action, "approve");
-      return {
+      return responses === 1 ? {
+        initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
+        runId: "run-pinned", runStatus: "running", outcome: null,
+        passed: false, gate: null,
+      } : {
         initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
         runId: "run-pinned", outcome: "passed", passed: true, gate: null,
       };
@@ -114,15 +118,19 @@ test("validator adapter responds only to its pinned exact-head review run", asyn
   assert.equal(awaiting.status, "awaiting_decision");
   assert.equal(awaiting.validatorRunId, "run-pinned");
   assert.equal(awaiting.review.summary, "Browser evidence is unavailable.");
+  const running = await adapter.decide({
+    ...input, validatorRunId: "run-pinned", decision: "approve",
+  });
+  assert.equal(running.status, "running");
   const passed = await adapter.decide({
     ...input, validatorRunId: "run-pinned", decision: "approve",
   });
   assert.equal(passed.status, "passed");
-  assert.equal(responses, 1);
+  assert.equal(responses, 2);
   assert.equal((await adapter.decide({
     ...input, validatorRunId: "run-pinned", decision: "approve",
   })).status, "passed");
-  assert.equal(responses, 1);
+  assert.equal(responses, 2);
 });
 
 test("feature-flag conversation gives one plan approval and leaks no ids", async () => {
