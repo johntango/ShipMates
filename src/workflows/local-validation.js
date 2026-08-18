@@ -210,18 +210,20 @@ export class LocalValidationWorkflow {
         "Durable validation approval intent does not match the active gate",
       );
     }
-    const report = approval?.status === "requested"
-      ? await this.gate.observe({
-        taskId, worktreePath: snapshot.worktree.worktreePath,
-        expectedHeadSha: snapshot.worktree.headSha, intent, runId: prior.runId,
-      })
-      : await this.gate.respond({
-      taskId,
-      worktreePath: snapshot.worktree.worktreePath,
-      expectedHeadSha: snapshot.worktree.headSha,
-      intent,
-      action: "approve",
+    let report = await this.gate.observe({
+      taskId, worktreePath: snapshot.worktree.worktreePath,
+      expectedHeadSha: snapshot.worktree.headSha, intent, runId: prior.runId,
     });
+    if (report.runId === prior.runId && report.passed !== true &&
+      report.gate?.status === "awaiting_approval") {
+      report = await this.gate.respond({
+        taskId,
+        worktreePath: snapshot.worktree.worktreePath,
+        expectedHeadSha: snapshot.worktree.headSha,
+        intent,
+        action: "approve",
+      });
+    }
     if (report.runId !== prior.runId || report.passed !== true) {
       throw new LocalValidationRecoveryRequiredError(
         "Approved validation did not return a terminal passing result for the same run",

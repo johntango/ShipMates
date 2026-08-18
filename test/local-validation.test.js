@@ -153,6 +153,7 @@ test("approves and reconciles the exact existing validation gate", async () => {
     gate: {
       pinEvidence,
       async run() { return gated; },
+      async observe() { return gated; },
       async respond() { return { ...gated, gate: null, passed: true }; },
     },
   });
@@ -163,6 +164,47 @@ test("approves and reconciles the exact existing validation gate", async () => {
   assert.equal(result.report.passed, true);
   assert.equal(result.snapshot.state, "ready_to_merge");
   assert.equal(store.reconciliations.length, 1);
+});
+
+test("reconciles a validator approval completed outside Firstmate without responding again", async () => {
+  const store = new MemoryStore();
+  const intent = "Validate locally";
+  const gated = {
+    ...validationReport(),
+    intentSha256: "unused",
+    initialHeadSha: "a".repeat(40),
+    finalHeadSha: "a".repeat(40),
+    gate: { step: "test", status: "awaiting_approval" },
+  };
+  let responses = 0;
+  let observations = 0;
+  const workflow = new LocalValidationWorkflow({
+    store,
+    gate: {
+      pinEvidence,
+      async run() { return gated; },
+      async observe(input) {
+        observations += 1;
+        assert.equal(input.runId, gated.runId);
+        return { ...gated, gate: null, passed: true };
+      },
+      async respond() {
+        responses += 1;
+        throw new Error("completed validator run must not receive another response");
+      },
+    },
+  });
+  await workflow.run({ taskId: "validation-001", intent });
+  store.snapshot.validationRuns[0].intentSha256 =
+    store.snapshot.validationRequests[0].intentSha256;
+
+  const result = await workflow.approve({ taskId: "validation-001", intent });
+
+  assert.equal(result.report.passed, true);
+  assert.equal(result.snapshot.state, "ready_to_merge");
+  assert.equal(observations, 1);
+  assert.equal(responses, 0);
+  assert.equal(store.snapshot.validationApprovalRequests[0].status, "completed");
 });
 
 test("finishes approval after terminal reconciliation was already recorded", async () => {
@@ -225,7 +267,9 @@ test("records approval intent before the external response and recovers by obser
       observations += 1;
       assert.equal(input.runId, gated.runId);
       assert.equal(input.expectedHeadSha, "a".repeat(40));
-      return { ...gated, gate: null, passed: true };
+      return observations === 1
+        ? gated
+        : { ...gated, gate: null, passed: true };
     },
   };
   const workflow = new LocalValidationWorkflow({ store, gate });
@@ -240,7 +284,7 @@ test("records approval intent before the external response and recovers by obser
   assert.equal(recovered.report.passed, true);
   assert.equal(recovered.snapshot.state, "ready_to_merge");
   assert.equal(responses, 1);
-  assert.equal(observations, 1);
+  assert.equal(observations, 2);
   assert.equal(store.snapshot.validationApprovalRequests[0].status, "completed");
 });
 
@@ -252,10 +296,16 @@ test("fails closed when approval recovery observes another validator run", async
     initialHeadSha: "a".repeat(40), finalHeadSha: "a".repeat(40),
     gate: { step: "test", status: "awaiting_approval" },
   };
+  let observations = 0;
   const workflow = new LocalValidationWorkflow({ store, gate: {
     pinEvidence, async run() { return gated; },
     async respond() { throw new Error("interrupted"); },
-    async observe() { return { ...gated, runId: "wrong-run", gate: null, passed: true }; },
+    async observe() {
+      observations += 1;
+      return observations === 1
+        ? gated
+        : { ...gated, runId: "wrong-run", gate: null, passed: true };
+    },
   } });
   await workflow.run({ taskId: "validation-001", intent });
   store.snapshot.validationRuns[0].intentSha256 = store.snapshot.validationRequests[0].intentSha256;
