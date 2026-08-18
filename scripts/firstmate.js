@@ -9,7 +9,11 @@ import {
   HerdrExecutionObserver,
   HerdrFirstmateSession,
 } from "../src/adapters/herdr-execution.js";
-import { HerdrPaneClient, HerdrPanePool } from "../src/adapters/herdr-pane.js";
+import {
+  discoverFirstmateHerdrPane,
+  HerdrPaneClient,
+  HerdrPanePool,
+} from "../src/adapters/herdr-pane.js";
 import { HerdrProjectAgentObserver } from "../src/adapters/herdr-project-agent.js";
 import { HerdrRepositoryPurgeObserver } from "../src/adapters/herdr-repository-purge.js";
 import { HerdrProjectTaskRuntime } from "../src/adapters/herdr-project-task.js";
@@ -38,6 +42,7 @@ import {
   isFirstmateProjectContinuation,
   renderLavishReadOnlyAction,
   renderTaskArtifactSummary,
+  projectRevisionParent,
   resolveArtifactFollowUpSnapshot,
   resolveLavishReviewFile,
   taskArtifactSummary,
@@ -500,6 +505,11 @@ async function runInteractiveFirstmate() {
     projectStore, stateRoot: interactiveStore.rootDir,
   });
   const projectAgentClient = new HerdrPaneClient();
+  const currentHerdrPaneId = process.env.HERDR_PANE_ID ||
+    await discoverFirstmateHerdrPane({
+      client: projectAgentClient,
+      repoPath: process.cwd(),
+    }).catch(() => null);
   const repositoryPurger = new RepositoryPurgeWorkflow({
     projectStore,
     taskStore: interactiveStore,
@@ -514,7 +524,7 @@ async function runInteractiveFirstmate() {
   });
   const firstmateHerdrSession = new HerdrFirstmateSession({
     client: projectAgentClient,
-    paneId: process.env.HERDR_PANE_ID,
+    paneId: currentHerdrPaneId,
     onWarning: (message) => console.error(message),
   });
   const projectAgentObserver = new HerdrProjectAgentObserver({
@@ -534,6 +544,10 @@ async function runInteractiveFirstmate() {
     persistentScript: fileURLToPath(new URL("./persistent-project-task.js", import.meta.url)),
     stateRoot: interactiveStore.rootDir,
     workingDirectory: process.cwd(),
+    environment: {
+      ...process.env,
+      ...(currentHerdrPaneId ? { HERDR_PANE_ID: currentHerdrPaneId } : {}),
+    },
     projectTaskRuntime,
     hasProjectPane: (projectId) => Boolean(projectAgentObserver.paneIdFor(projectId)),
   });
@@ -1091,15 +1105,13 @@ async function runInteractiveFirstmate() {
         let projectParent = dependencyTaskId
           ? await readExistingTaskSnapshot(interactiveStore, dependencyTaskId)
           : null;
+        projectParent = projectRevisionParent(projectParent);
         if (!persistentProject && !projectParent && isFirstmateProjectContinuation(instruction)) {
-          projectParent = await resolveArtifactFollowUpSnapshot({
+          projectParent = projectRevisionParent(await resolveArtifactFollowUpSnapshot({
             store: interactiveStore,
             preferredTaskId: activeProjectTaskId,
             activeTaskIds: [...activeRequests.keys()],
-          });
-          if (projectParent && !taskArtifactSummary(projectParent).ready) {
-            projectParent = null;
-          }
+          }));
         }
         const context = await discoverFirstmateContext({
           cwd: projectParent?.worktree?.worktreePath || activeProject.repoPath,

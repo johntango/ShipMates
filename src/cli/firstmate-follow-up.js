@@ -64,6 +64,13 @@ export function taskArtifactSummary(snapshot) {
   };
 }
 
+export function projectRevisionParent(snapshot) {
+  const worktreePath = snapshot?.worktree?.worktreePath;
+  const headSha = snapshot?.worktree?.headSha;
+  return taskArtifactSummary(snapshot).ready && typeof worktreePath === "string" &&
+    typeof headSha === "string" ? snapshot : null;
+}
+
 export function renderTaskArtifactSummary(summary, context = {}) {
   const subject = humanTaskSubject(context);
   if (!summary.ready) {

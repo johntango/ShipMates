@@ -4,12 +4,31 @@ import test from "node:test";
 import {
   isFirstmateTaskFollowUp,
   isFirstmateProjectContinuation,
+  projectRevisionParent,
   renderLavishReadOnlyAction,
   renderTaskArtifactSummary,
   resolveArtifactFollowUpSnapshot,
   resolveLavishReviewFile,
   taskArtifactSummary,
 } from "../src/cli/firstmate-follow-up.js";
+
+test("does not treat a completed read-only dependency as a revision parent", () => {
+  const inspection = {
+    id: "task-inspect",
+    state: "clarified",
+    worktree: null,
+    evidence: [{ kind: "firstmate-local-execution", value: '{"status":"inspected"}' }],
+  };
+  assert.equal(projectRevisionParent(inspection), null);
+
+  const implementation = {
+    id: "task-build",
+    state: "validating",
+    worktree: { worktreePath: "/treehouse/build", headSha: "abc123" },
+    workers: [{ id: "implementer", report: { files: ["index.html"] } }],
+  };
+  assert.equal(projectRevisionParent(implementation), implementation);
+});
 
 test("recognizes artifact follow-ups without treating new build requests as follow-ups", () => {
   assert.equal(isFirstmateTaskFollowUp("display the files"), true);

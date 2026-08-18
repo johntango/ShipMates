@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  discoverFirstmateHerdrPane,
   HerdrPanePool,
   HerdrPaneWorkerProcessError,
   HerdrPaneWorkerLauncher,
@@ -23,6 +24,39 @@ const scouts = [
   { workerId: "scout-left", brief: "Inspect exported functions" },
   { workerId: "scout-right", brief: "Inspect the test coverage" },
 ];
+
+test("discovers the unique Herder pane running First Mate when no pane env is set", async () => {
+  const client = {
+    async list() {
+      return [
+        { paneId: "w1:p1", cwd: "/repo" },
+        { paneId: "w1:p2", cwd: "/repo" },
+        { paneId: "w1:p3", cwd: "/other" },
+      ];
+    },
+    async processInfo(paneId) {
+      return {
+        paneId,
+        foregroundProcesses: paneId === "w1:p2"
+          ? [{ cwd: "/repo", argv: ["node", "scripts/firstmate.js"] }]
+          : [{ cwd: "/repo", argv: ["zsh"] }],
+      };
+    },
+  };
+  assert.equal(await discoverFirstmateHerdrPane({ client, repoPath: "/repo" }), "w1:p2");
+});
+
+test("fails closed when Herder pane discovery is ambiguous", async () => {
+  const client = {
+    async list() {
+      return [{ paneId: "w1:p1", cwd: "/repo" }, { paneId: "w1:p2", cwd: "/repo" }];
+    },
+    async processInfo(paneId) {
+      return { paneId, foregroundProcesses: [{ cwd: "/repo", argv: ["node", "scripts/firstmate.js"] }] };
+    },
+  };
+  assert.equal(await discoverFirstmateHerdrPane({ client, repoPath: "/repo" }), null);
+});
 
 test("runs exactly two scouts concurrently in distinct verified panes", async (t) => {
   const store = await runningLeasedTask(t);

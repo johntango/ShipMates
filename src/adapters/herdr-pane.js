@@ -176,6 +176,29 @@ export class HerdrPaneClient {
   }
 }
 
+export async function discoverFirstmateHerdrPane({ client, repoPath }) {
+  if (!client || typeof client.list !== "function" || typeof client.processInfo !== "function") {
+    throw new TypeError("Herdr pane discovery requires a readable client");
+  }
+  const expectedCwd = path.resolve(repoPath);
+  const matches = [];
+  for (const pane of await client.list()) {
+    if (path.resolve(pane.cwd) !== expectedCwd) continue;
+    let info;
+    try {
+      info = await client.processInfo(pane.paneId);
+    } catch {
+      continue;
+    }
+    if (info.foregroundProcesses.some((process) =>
+      path.resolve(process.cwd) === expectedCwd &&
+      process.argv.some((argument) => /(?:^|\/)scripts\/firstmate\.js$/u.test(argument)))) {
+      matches.push(pane.paneId);
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
 export class HerdrPanePool {
   constructor({ client, store, currentPaneId = process.env.HERDR_PANE_ID } = {}) {
     if (!client || !store || typeof store.listTaskIds !== "function") {
