@@ -72,6 +72,36 @@ test("records an exact independently verified workspace mutation", async (t) => 
   assert.equal(runs, 1);
 });
 
+test("records the exact Herder pane in the durable dispatch receipt before execution", async (t) => {
+  const store = await runningTask(t);
+  const manager = new FakeWorktreeManager();
+  const workflow = new CodexShipWorkflow({
+    store,
+    worktreeManager: manager,
+    schemaPath: "schemas/codex-worker-report.schema.json",
+    runtime: {
+      paneIdFor(workerId) {
+        assert.equal(workerId, "implementer");
+        return "w1:p2";
+      },
+      async run(input) {
+        const dispatched = await store.getSnapshot(taskId);
+        assert.equal(dispatched.state, "awaiting_worker");
+        assert.equal(dispatched.workers[0].status, "dispatch_requested");
+        assert.equal(dispatched.workers[0].paneId, "w1:p2");
+        manager.mutate(["src/watch.js", "test/watch.test.js"]);
+        return completedResult();
+      },
+      async loadCompleted() { throw new Error("must not reconcile a normal run"); },
+    },
+  });
+
+  const result = await workflow.run({ taskId, brief });
+
+  assert.equal(result.worker.paneId, "w1:p2");
+  assert.equal(result.worker.status, "reported");
+});
+
 test("reconciles completed artifacts without dispatching the worker again", async (t) => {
   const store = await runningTask(t);
   const manager = new FakeWorktreeManager();

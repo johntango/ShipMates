@@ -65,7 +65,13 @@ export class FirstmateLocalExecutor {
     let implementation = null;
     let status = "inspected";
     try {
-      await this.observer?.begin?.({ taskId, repoPath, workerCount: workItems.length });
+      const implementationOnly = classification.requiredAuthority === "local_write" &&
+        workItems.length === 0;
+      await this.observer?.begin?.({
+        taskId,
+        repoPath,
+        workerCount: implementationOnly ? 1 : workItems.length,
+      });
       scouts = await Promise.all(workItems.map((workItem, index) =>
         this.#runWorker({
           taskId,

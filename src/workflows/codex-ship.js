@@ -55,6 +55,7 @@ export class CodexShipWorkflow {
       sandbox: "workspace-write",
       brief,
       briefSha256,
+      paneId: this.runtime.paneIdFor?.(workerId) || null,
       eventId: operationId(taskId, workerId, "dispatch"),
     });
     snapshot = await this.#enterAwaitingWorker(snapshot, workerId);

@@ -79,6 +79,10 @@ export class HerdrCodexWorkerRuntime {
     return this.runtime.loadCompleted(input);
   }
 
+  paneIdFor(workerId) {
+    return this.observer.paneIdFor?.(workerId) || null;
+  }
+
   async #waitForTerminal({ terminalPath, paneId, input }) {
     const deadline = Date.now() + this.timeoutMs;
     while (Date.now() <= deadline) {

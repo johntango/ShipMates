@@ -116,10 +116,14 @@ request. Status reports use a fresh source for every Firstmate process, so an
 ordinary restart cannot be rejected by Herdr as stale.
 
 Scouts, Implementers, and persistent Project Agents run visibly in their
-assigned Herdr panes. When the pinned no-mistakes gate starts, ShipMates opens a
-dedicated `ShipMates no-mistakes: <task>` pane and attaches no-mistakes' native
-TUI to the exact validation run. The pane shows live pipeline steps, agent log
-output, findings, and approval state. Herdr's task dashboard summarizes the
+assigned Herdr panes. An approved implementation that does not need a Scout
+preflight still reserves one distinct Implementer pane before durable dispatch;
+the dispatch receipt records that pane ID. If Herdr is unavailable, the same
+bounded worker may run without pane visibility, but visibility never authorizes,
+duplicates, or blocks execution. When the pinned no-mistakes gate starts,
+ShipMates opens a dedicated `ShipMates no-mistakes: <task>` pane and attaches
+no-mistakes' native TUI to the exact validation run. The pane shows live
+pipeline steps, agent log output, findings, and approval state. Herdr's task dashboard summarizes the
 same run with its current stage (`reviewing`, `testing`, `linting`, and so on),
 elapsed time, attention-needed state, and terminal `passed` or `failed` result;
 select the task to open the detailed pane. The pane waits for a non-terminal
