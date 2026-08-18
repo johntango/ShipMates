@@ -180,6 +180,7 @@ test("allows an explicit compatible Git directory for Treehouse subprocesses", a
       options.env.PATH === "/compatible/git/bin:/usr/local/bin:/usr/bin"),
     true,
   );
+  assert.equal(calls.every(({ options }) => options.env.TREEHOUSE_NO_UPDATE_CHECK === "1"), true);
 });
 
 test("prepares a local-only demo repository without contacting origin", async () => {

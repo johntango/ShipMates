@@ -7,9 +7,10 @@ const execFileAsync = promisify(execFile);
 const shellNames = new Set(["sh", "bash", "zsh", "fish"]);
 
 export class HerdrPaneClient {
-  constructor({ command = "herdr", env = process.env } = {}) {
+  constructor({ command = "herdr", env = process.env, executeFile = execFileAsync } = {}) {
     this.command = command;
     this.env = env;
+    this.executeFile = executeFile;
   }
 
   async list() {
@@ -54,7 +55,7 @@ export class HerdrPaneClient {
     requirePaneId(paneId);
     requiredString(command, "pane command");
     try {
-      await execFileAsync(this.command, ["pane", "run", paneId, command], {
+      await this.executeFile(this.command, ["pane", "run", paneId, command], {
         env: this.env,
         maxBuffer: 1024 * 1024,
       });
@@ -119,8 +120,9 @@ export class HerdrPaneClient {
     if (appliesToSource) args.push("--applies-to-source", appliesToSource);
     if (displayAgent) args.push("--display-agent", displayAgent);
     else if (clearDisplayAgent) args.push("--clear-display-agent");
-    if (customStatus) args.push("--custom-status", customStatus);
-    else if (clearCustomStatus) args.push("--clear-custom-status");
+    // Herdr 0.8 exposes state labels and display-agent metadata, but not the
+    // older custom-status flags. Keep accepting these projection fields while
+    // representing them through state labels below.
     for (const [state, label] of Object.entries(stateLabels || {})) {
       args.push("--state-label", `${state}=${label}`);
     }
@@ -148,7 +150,7 @@ export class HerdrPaneClient {
   async #json(args) {
     let stdout;
     try {
-      ({ stdout } = await execFileAsync(this.command, args, {
+      ({ stdout } = await this.executeFile(this.command, args, {
         env: this.env,
         maxBuffer: 10 * 1024 * 1024,
       }));
@@ -166,7 +168,7 @@ export class HerdrPaneClient {
 
   async #plain(args, message) {
     try {
-      await execFileAsync(this.command, args, {
+      await this.executeFile(this.command, args, {
         env: this.env,
         maxBuffer: 1024 * 1024,
       });

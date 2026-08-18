@@ -481,7 +481,7 @@ function defaultTreehouseBinary() {
 }
 
 function withPreferredPath(environment, directory) {
-  const result = { ...environment };
+  const result = { ...environment, TREEHOUSE_NO_UPDATE_CHECK: "1" };
   const entries = String(result.PATH || "").split(path.delimiter).filter(Boolean);
   result.PATH = [directory, ...entries.filter((entry) => entry !== directory)]
     .join(path.delimiter);

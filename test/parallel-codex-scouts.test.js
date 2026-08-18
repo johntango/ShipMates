@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   discoverFirstmateHerdrPane,
+  HerdrPaneClient,
   HerdrPanePool,
   HerdrPaneWorkerProcessError,
   HerdrPaneWorkerLauncher,
@@ -56,6 +57,21 @@ test("fails closed when Herder pane discovery is ambiguous", async () => {
     },
   };
   assert.equal(await discoverFirstmateHerdrPane({ client, repoPath: "/repo" }), null);
+});
+
+test("uses Herder 0.8 metadata flags without disabling worker visibility", async () => {
+  const calls = [];
+  const client = new HerdrPaneClient({
+    executeFile: async (_file, args) => { calls.push(args); return { stdout: "" }; },
+  });
+  await client.reportMetadata({
+    paneId: "w1:p2", source: "shipmates:worker:task-1:scout-1",
+    displayAgent: "ShipMates scout-1", customStatus: "inspecting",
+    stateLabels: { working: "inspecting" },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].includes("--custom-status"), false);
+  assert.deepEqual(calls[0].slice(-2), ["--state-label", "working=inspecting"]);
 });
 
 test("runs exactly two scouts concurrently in distinct verified panes", async (t) => {

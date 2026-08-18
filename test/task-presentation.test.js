@@ -86,6 +86,19 @@ test("treats authority and environment limitations as blocked safely", () => {
   assert.match(presentation.why, /Sandbox permission denied/u);
 });
 
+test("reports exhausted safe Treehouse capacity as blocked rather than preparing", () => {
+  const presentation = projectTaskPresentation({
+    id: "task-capacity", state: "blocked", workers: [], evidence: [], validationRuns: [],
+  }, { execution: {
+    status: "failed",
+    failure: { message: "Treehouse capacity is unavailable; active and ambiguous leases were preserved" },
+  } });
+
+  assert.equal(presentation.status, "Blocked safely");
+  assert.doesNotMatch(presentation.nextAction, /Wait for the active work/u);
+  assert.match(presentation.why, /capacity is unavailable/u);
+});
+
 test("reports genuine validation failures without inventing metrics", () => {
   const presentation = projectTaskPresentation({
     id: "task-fail", state: "validating", workers: [], evidence: [],

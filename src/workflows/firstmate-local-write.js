@@ -3,6 +3,7 @@ import { TaskBranchWorkflow } from "./task-branch.js";
 
 export async function prepareFirstmateLocalWrite({
   store, manager, taskId, requestId, repoPath, actor = "firstmate", localOnly = false,
+  leaseReconciler = null,
 }) {
   if (!store || !manager) {
     throw new TypeError("Durable local-write preparation requires store and manager");
@@ -22,6 +23,24 @@ export async function prepareFirstmateLocalWrite({
     throw new FirstmateLocalWriteRecoveryRequiredError(
       `Durable local-write execution cannot resume from ${snapshot.state}; run restart reconciliation`,
     );
+  }
+  if (leaseReconciler && snapshot.worktree === null) {
+    try {
+      await leaseReconciler.ensureCapacity({ repoPath });
+    } catch (error) {
+      if (error?.name !== "TreehouseCapacityBlockedError") throw error;
+      if (snapshot.state !== "blocked") {
+        await store.transition({
+          taskId,
+          from: snapshot.state,
+          to: "blocked",
+          actor,
+          reason: error.message,
+          eventId: `firstmate-${requestId}-treehouse-capacity-blocked`,
+        });
+      }
+      throw error;
+    }
   }
   snapshot = await new TreehouseLedgerWorkflow({ store, manager, actor }).acquire({
     taskId,

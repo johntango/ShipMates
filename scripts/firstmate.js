@@ -90,6 +90,7 @@ import {
   verifyAuthorizedClassification,
 } from "../src/workflows/firstmate-dispatch-policy.js";
 import { prepareFirstmateLocalWrite } from "../src/workflows/firstmate-local-write.js";
+import { TreehouseLeaseReconciler } from "../src/workflows/treehouse-lease-reconciler.js";
 import { CodexShipWorkflow } from "../src/workflows/codex-ship.js";
 import { FirstmateCommitWorkflow } from "../src/workflows/firstmate-commit.js";
 import { completeFirstmateDemoTask } from "../src/workflows/firstmate-demo-completion.js";
@@ -256,6 +257,16 @@ if (!classifyOnly) {
       explicitPath: process.env.TREEHOUSE_BIN || null,
     });
     const manager = new TreehouseWorktreeManager({ binary: treehouseBinary });
+    const durableDefaultRoot = path.join(repoPath, ".shipmates");
+    const reconciliationStores = [store];
+    if (path.resolve(durableDefaultRoot) !== path.resolve(rootDir)) {
+      reconciliationStores.push(new TaskStore({ rootDir: durableDefaultRoot }));
+    }
+    const leaseReconciler = demoMode ? null : new TreehouseLeaseReconciler({
+      stores: reconciliationStores,
+      manager,
+    });
+    await leaseReconciler?.reconcileEligible({ repoPath });
     const prepared = await prepareFirstmateLocalWrite({
       store,
       manager,
@@ -263,6 +274,7 @@ if (!classifyOnly) {
       requestId,
       repoPath,
       localOnly: demoMode,
+      leaseReconciler,
     });
     repoPath = prepared.worktree.worktreePath;
     implementationWorkflow = new CodexShipWorkflow({
