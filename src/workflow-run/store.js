@@ -5,11 +5,12 @@ import path from "node:path";
 import { reduceWorkflowRun, WorkflowRunError } from "./reducer.js";
 
 export class WorkflowRunStore {
-  constructor({ rootDir, clock = () => new Date(), idFactory = randomUUID } = {}) {
+  constructor({ rootDir, clock = () => new Date(), idFactory = randomUUID, onEvent = null } = {}) {
     if (!rootDir) throw new TypeError("WorkflowRunStore requires rootDir");
     this.rootDir = path.resolve(rootDir);
     this.clock = clock;
     this.idFactory = idFactory;
+    this.onEvent = typeof onEvent === "function" ? onEvent : null;
   }
 
   async create({ request, plan, repoPath, baseHeadSha, authority = "local_write" }) {
@@ -18,7 +19,9 @@ export class WorkflowRunStore {
       request, plan, repoPath: path.resolve(repoPath), baseHeadSha, authority,
     }, "created");
     await this.#write(runId, [event], { exclusive: true });
-    return reduceWorkflowRun([event]);
+    const run = reduceWorkflowRun([event]);
+    await this.#notify(event, run);
+    return run;
   }
 
   async append(runId, type, data, key) {
@@ -30,7 +33,9 @@ export class WorkflowRunStore {
       const next = [...events, event];
       reduceWorkflowRun(next);
       await this.#write(runId, next);
-      return reduceWorkflowRun(next);
+      const run = reduceWorkflowRun(next);
+      await this.#notify(event, run);
+      return run;
     });
   }
 
@@ -61,6 +66,11 @@ export class WorkflowRunStore {
 
   event(runId, type, data, key = this.idFactory()) {
     return { id: `${runId}:${key}`, runId, type, at: this.clock().toISOString(), data };
+  }
+
+  async #notify(event, run) {
+    try { await this.onEvent?.(event, run); }
+    catch { /* Progress visibility must never affect durable workflow state. */ }
   }
 
   async #write(runId, events, { exclusive = false } = {}) {

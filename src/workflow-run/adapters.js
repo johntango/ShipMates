@@ -7,7 +7,7 @@ import { FAST_LOCAL_SKIP_STEPS, NoMistakesLocalGate } from "../adapters/no-mista
 
 export class WorkflowRunWorkerAdapter {
   constructor({ stateRoot, workerScript, processPath = process.execPath, spawnProcess = spawn,
-    environment = process.env, isProcessAlive = defaultIsProcessAlive } = {}) {
+    environment = process.env, isProcessAlive = defaultIsProcessAlive, observer = null } = {}) {
     if (!stateRoot || !workerScript) throw new TypeError("WorkflowRunWorkerAdapter requires stateRoot and workerScript");
     this.stateRoot = path.resolve(stateRoot);
     this.workerScript = path.resolve(workerScript);
@@ -15,6 +15,7 @@ export class WorkflowRunWorkerAdapter {
     this.spawnProcess = spawnProcess;
     this.environment = environment;
     this.isProcessAlive = isProcessAlive;
+    this.observer = observer;
   }
 
   async launch({ operationId, run }) {
@@ -33,6 +34,12 @@ export class WorkflowRunWorkerAdapter {
     });
     const receipt = { pid: child.pid, operationId, startedAt: new Date().toISOString() };
     await writeAtomic(path.join(directory, "receipt.json"), receipt);
+    if (typeof this.observer?.started === "function") {
+      void Promise.resolve().then(() => this.observer.started({
+        operationId, runId: run.id, repoPath: run.repoPath,
+        operationDirectory: directory,
+      })).catch(() => {});
+    }
     return { receipt };
   }
 

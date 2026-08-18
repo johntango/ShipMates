@@ -18,6 +18,7 @@ import { HerdrProjectAgentObserver } from "../src/adapters/herdr-project-agent.j
 import { HerdrRepositoryPurgeObserver } from "../src/adapters/herdr-repository-purge.js";
 import { HerdrProjectTaskRuntime } from "../src/adapters/herdr-project-task.js";
 import { HerdrNoMistakesObserver } from "../src/adapters/herdr-no-mistakes.js";
+import { HerdrWorkflowRunObserver } from "../src/adapters/herdr-workflow-run.js";
 import { LavishTaskDashboard } from "../src/adapters/lavish-dashboard.js";
 import { LavishSessionManager } from "../src/adapters/lavish-session.js";
 import { ControlledGitCommitAdapter } from "../src/adapters/git-commit.js";
@@ -120,6 +121,7 @@ import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { WorkflowRunWorkerAdapter, WorkflowRunValidatorAdapter } from "../src/workflow-run/adapters.js";
 import { SimpleWorkflowConversation } from "../src/workflow-run/interactive.js";
 import { renderWorkflowRun } from "../src/workflow-run/projection.js";
+import { workflowProgressMessage } from "../src/workflow-run/progress.js";
 
 const rawArgs = process.argv.slice(2);
 if (rawArgs[0] === "--delivery") {
@@ -491,7 +493,6 @@ async function runInteractiveFirstmate() {
   const activeRequests = new Map();
   const advancingProjects = new Set();
   const announcedProjectCompletions = new Map();
-  const announcedWorkflowRuns = new Set();
   const pendingArtifactReports = new Set();
   const interactiveStore = new TaskStore({
     rootDir: path.resolve(
@@ -499,7 +500,13 @@ async function runInteractiveFirstmate() {
     ),
   });
   const simpleWorkflowStore = workflowRunEnabled()
-    ? new WorkflowRunStore({ rootDir: interactiveStore.rootDir })
+    ? new WorkflowRunStore({
+        rootDir: interactiveStore.rootDir,
+        onEvent: (event) => {
+          const message = workflowProgressMessage(event);
+          if (message) console.log(message);
+        },
+      })
     : null;
   const interactiveDashboard = new LavishTaskDashboard({
     stateRoot: interactiveStore.rootDir,
@@ -641,9 +648,24 @@ async function runInteractiveFirstmate() {
       worker: new WorkflowRunWorkerAdapter({
         stateRoot: interactiveStore.rootDir,
         workerScript: fileURLToPath(new URL("./workflow-run-worker.js", import.meta.url)),
+        observer: new HerdrWorkflowRunObserver({
+          client: projectAgentClient,
+          currentPaneId: currentHerdrPaneId,
+          watcherScript: fileURLToPath(new URL("./workflow-run-pane.js", import.meta.url)),
+          onWarning: (message) => console.error(message),
+        }),
       }),
       validator: WorkflowRunValidatorAdapter.localOnly({
         stateRoot: interactiveStore.rootDir, binaryPath: validatorBinary,
+        gateOptions: {
+          observer: detachedObserver(new HerdrNoMistakesObserver({
+            client: projectAgentClient,
+            currentPaneId: currentHerdrPaneId,
+            watcherScript: fileURLToPath(new URL("./no-mistakes-pane.js", import.meta.url)),
+            onWarning: (message) => console.error(message),
+            displayTaskId: false,
+          })),
+        },
       }),
     });
     simpleWorkflowConversation = new SimpleWorkflowConversation({
@@ -1545,12 +1567,7 @@ async function runInteractiveFirstmate() {
     if (simpleWorkflowController) {
       for (const run of await simpleWorkflowStore.list()) {
         if (!new Set(["awaiting_approval", "completed", "blocked"]).has(run.phase)) {
-          const advanced = await simpleWorkflowController.advance(run.id);
-          if (new Set(["completed", "blocked"]).has(advanced.phase) &&
-            !announcedWorkflowRuns.has(advanced.id)) {
-            announcedWorkflowRuns.add(advanced.id);
-            console.log(renderWorkflowRun(advanced));
-          }
+          await simpleWorkflowController.advance(run.id);
         }
       }
     }
@@ -1633,4 +1650,13 @@ async function runInteractiveFirstmate() {
   console.error(activeRequests.size === 0
     ? "Firstmate stopped."
     : `Firstmate stopped listening; ${activeRequests.size} dispatched task${activeRequests.size === 1 ? "" : "s"} still running.`);
+}
+
+function detachedObserver(observer) {
+  return {
+    started(input) {
+      void Promise.resolve(observer.started(input)).catch(() => {});
+      return null;
+    },
+  };
 }

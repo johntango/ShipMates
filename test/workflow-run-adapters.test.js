@@ -41,6 +41,20 @@ test("production worker bridge launches once and adopts a durable clean result",
   assert.equal((await restarted.observe({ operationId: OPERATION })).completed.headSha, HEAD);
 });
 
+test("worker launch does not wait for or depend on Herdr visibility", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-visibility-"));
+  let observed = false;
+  const adapter = new WorkflowRunWorkerAdapter({
+    stateRoot: root, workerScript: "/scripts/worker.js",
+    spawnProcess: () => ({ pid: 4321 }),
+    observer: { started: async () => { observed = true; throw new Error("Herdr offline"); } },
+  });
+
+  assert.equal((await adapter.launch({ operationId: OPERATION, run: runFixture() })).receipt.pid, 4321);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(observed, true);
+});
+
 test("validator bridge confines no-mistakes to one isolated exact head", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-"));
   let input;
