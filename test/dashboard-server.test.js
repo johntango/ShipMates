@@ -11,6 +11,7 @@ import {
   ShipMatesDashboardServer,
   validateDashboardCommand,
   validateProjectAction,
+  validateWorkflowIntent,
 } from "../src/dashboard/server.js";
 
 test("projects recent tasks and the active project without report prose leakage", async () => {
@@ -32,6 +33,32 @@ test("projects recent tasks and the active project without report prose leakage"
   assert.equal(state.tasks[0].presentation.status, "Passed");
   assert.equal(state.tasks[0].presentation.nextAction, null);
   assert.deepEqual(state.tasks[0].taskProgress.map(({ sequence }) => sequence), [0, 1]);
+});
+
+test("projects simple workflows without exposing diagnostic identifiers", async () => {
+  const { store, projectContext } = fixture();
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { list: async () => [{
+      id: "workflow-secret", phase: "awaiting_approval", request: "Build a page",
+      plan: "Build and validate it", updatedAt: "2026-08-18T12:00:00.000Z",
+    }] },
+  });
+  assert.deepEqual(state.workflowRuns, [{
+    phase: "awaiting_approval", request: "Build a page", plan: "Build and validate it",
+    updatedAt: "2026-08-18T12:00:00.000Z",
+    presentation: {
+      outcome: "Blocked safely", nextAction: "Approve the short plan to begin local work.",
+      why: "No files will change until you approve.", phase: "awaiting_approval",
+    },
+  }]);
+  assert.doesNotMatch(JSON.stringify(state.workflowRuns), /workflow-secret/u);
+});
+
+test("simple workflow dashboard accepts high-level intents only", () => {
+  assert.deepEqual(validateWorkflowIntent({ intent: "approve", runId: "ignored" }), { intent: "approve" });
+  assert.deepEqual(validateWorkflowIntent({ intent: "status" }), { intent: "status" });
+  assert.throws(() => validateWorkflowIntent({ intent: "dispatch", taskId: "task-1" }), /Invalid/u);
 });
 
 test("projects project plans and binds planned items to durable tasks", async () => {

@@ -114,6 +114,8 @@ import { PersistentProjectExecutor } from "../src/workflows/persistent-project-e
 import { ProjectArchiveWorkflow } from "../src/workflows/project-archive.js";
 import { RepositoryDeleteWorkflow } from "../src/workflows/repository-delete.js";
 import { RepositoryPurgeWorkflow } from "../src/workflows/repository-purge.js";
+import { workflowRunEnabled } from "../src/workflow-run/feature.js";
+import { WorkflowRunStore } from "../src/workflow-run/store.js";
 
 const rawArgs = process.argv.slice(2);
 if (rawArgs[0] === "--delivery") {
@@ -491,6 +493,9 @@ async function runInteractiveFirstmate() {
       process.env.SHIPMATES_STATE_DIR || path.join(process.cwd(), ".shipmates"),
     ),
   });
+  const simpleWorkflowStore = workflowRunEnabled()
+    ? new WorkflowRunStore({ rootDir: interactiveStore.rootDir })
+    : null;
   const interactiveDashboard = new LavishTaskDashboard({
     stateRoot: interactiveStore.rootDir,
   });
@@ -1436,6 +1441,7 @@ async function runInteractiveFirstmate() {
     projectContext,
     projectStore,
     watchdog,
+    workflowRunStore: simpleWorkflowStore,
     onCommand: dispatchRequest,
     onProjectAction: handleProjectAction,
     port: Number(process.env.SHIPMATES_DASHBOARD_PORT || 4390),
@@ -1470,6 +1476,9 @@ async function runInteractiveFirstmate() {
     console.error(`ShipMates dashboard unavailable (${error.code || error.name}: ${error.message}).`);
   }
   console.error("Firstmate ready. Enter a request, or /exit to stop.");
+  if (simpleWorkflowStore) {
+    console.error("Experimental simple WorkflowRun projections are enabled; legacy execution remains available during Stage 1.");
+  }
   const selectedBeforeAdvance = activeProject?.id;
   for (const project of await projectStore.list()) {
     if (project.status === "approved" &&
