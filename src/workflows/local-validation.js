@@ -232,7 +232,6 @@ export class LocalValidationWorkflow {
     snapshot = await this.store.reconcileLocalValidation({
       taskId, actor: this.actor, report, runId: prior.runId,
       eventId: `${taskId}:validation:${prior.runId}:reconciled:v1`,
-      at: report.completedAt,
     });
     snapshot = await transitionApprovedValidation(
       this.store, snapshot, this.actor, taskId, prior.runId,
@@ -285,7 +284,6 @@ export class LocalValidationWorkflow {
     snapshot = await this.store.reconcileLocalValidation({
       taskId, actor: this.actor, report, runId: prior.runId,
       eventId: `${taskId}:validation:${prior.runId}:reconciled:v1`,
-      at: report.completedAt,
     });
     snapshot = await transitionApprovedValidation(
       this.store, snapshot, this.actor, taskId, prior.runId,

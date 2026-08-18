@@ -164,6 +164,7 @@ test("approves and reconciles the exact existing validation gate", async () => {
   assert.equal(result.report.passed, true);
   assert.equal(result.snapshot.state, "ready_to_merge");
   assert.equal(store.reconciliations.length, 1);
+  assert.equal(store.reconciliations[0].at, undefined);
 });
 
 test("reconciles a validator approval completed outside Firstmate without responding again", async () => {
@@ -240,6 +241,7 @@ test("supervisor adopts only an exact externally completed approval without resp
   assert.equal(result.reconciled, true);
   assert.equal(result.snapshot.state, "ready_to_merge");
   assert.equal(responses, 0);
+  assert.equal(store.reconciliations[0].at, undefined);
 });
 
 test("supervisor leaves an open external approval gate awaiting human", async () => {
