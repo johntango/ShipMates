@@ -142,6 +142,48 @@ test("adapter failures stop safely without exposing raw diagnostics", async () =
   assert.doesNotMatch(blocked.blocker, /secret path/u);
 });
 
+test("one high-level validation decision reconciles the pinned run without rerunning", async () => {
+  const { store, run } = await createRun();
+  let starts = 0;
+  let decisions = 0;
+  const controller = new WorkflowRunController({
+    store,
+    worker: {
+      observe: async () => null,
+      launch: async () => ({ receipt: {}, completed: {
+        workspacePath: "/tmp/review-work", headSha: HEAD,
+        report: { status: "completed" },
+      } }),
+    },
+    validator: {
+      observe: async () => null,
+      start: async ({ headSha }) => {
+        starts += 1;
+        return {
+          status: "awaiting_decision", headSha, validatorRunId: "validator-pinned",
+          review: { summary: "Browser evidence is unavailable." },
+        };
+      },
+      decide: async ({ headSha, validatorRunId, decision }) => {
+        decisions += 1;
+        assert.equal(validatorRunId, "validator-pinned");
+        assert.equal(decision, "approve");
+        return { status: "passed", headSha, report: { outcome: "passed" } };
+      },
+    },
+  });
+  const awaiting = await controller.approve(run.id);
+  assert.equal(awaiting.phase, "awaiting_validation_decision");
+  assert.equal(projectWorkflowRun(awaiting).nextAction,
+    "Review the validation concern, then approve validation or stop.");
+  const completed = await controller.approveValidation(run.id);
+  assert.equal(completed.phase, "completed");
+  assert.equal(starts, 1);
+  assert.equal(decisions, 1);
+  assert.equal((await store.events(run.id)).filter(({ type }) =>
+    type === "validation.review_approved").length, 1);
+});
+
 async function createRun() {
   const rootDir = await mkdtemp(path.join(tmpdir(), "workflow-run-"));
   const store = new WorkflowRunStore({ rootDir, idFactory: () => "test" });

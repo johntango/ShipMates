@@ -361,7 +361,7 @@ export function validateProjectAction(value) {
 }
 
 export function validateWorkflowIntent(value) {
-  if (!value || !new Set(["approve", "status"]).has(value.intent)) {
+  if (!value || !new Set(["approve", "approve_validation", "status"]).has(value.intent)) {
     throw new DashboardCommandError("Invalid workflow intent");
   }
   return Object.freeze({ intent: value.intent });

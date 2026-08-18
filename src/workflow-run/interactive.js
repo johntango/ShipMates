@@ -14,6 +14,13 @@ export class SimpleWorkflowConversation {
   }
 
   async handle(message) {
+    if (isValidationApproval(message)) {
+      const active = await this.#active();
+      if (!active || active.phase !== "awaiting_validation_decision") {
+        return "No validation concern is awaiting approval.";
+      }
+      return renderWorkflowRun(await this.controller.approveValidation(active.id));
+    }
     if (isApproval(message)) {
       if (this.planningPromise) {
         this.approvalQueued = true;
@@ -82,6 +89,10 @@ export class SimpleWorkflowConversation {
 
 function isApproval(value) {
   return /^\s*(?:i\s+)?approve(?:\s+(?:the\s+)?plan)?[.!]?\s*$/iu.test(value);
+}
+
+function isValidationApproval(value) {
+  return /^\s*(?:i\s+)?approve\s+(?:the\s+)?validation(?:\s+(?:risk|warning|concern))?[.!]?\s*$/iu.test(value);
 }
 
 function isStatus(value) {

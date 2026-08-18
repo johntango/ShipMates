@@ -87,6 +87,44 @@ test("validator mismatch and ambiguous outcomes fail closed", async () => {
   assert.match(validationContract("Build"), /Do not.*publish/u);
 });
 
+test("validator adapter responds only to its pinned exact-head review run", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-review-"));
+  let responses = 0;
+  const gate = {
+    run: async () => ({
+      initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
+      runId: "run-pinned", outcome: null, passed: false,
+      gate: { status: "awaiting_approval" },
+      findings: [{ description: "Browser evidence is unavailable." }],
+    }),
+    respond: async ({ expectedRunId, expectedHeadSha, action }) => {
+      responses += 1;
+      assert.equal(expectedRunId, "run-pinned");
+      assert.equal(expectedHeadSha, HEAD);
+      assert.equal(action, "approve");
+      return {
+        initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
+        runId: "run-pinned", outcome: "passed", passed: true, gate: null,
+      };
+    },
+  };
+  const adapter = new WorkflowRunValidatorAdapter({ stateRoot: root, gate });
+  const input = { operationId: OPERATION, workspacePath: "/isolated/worktree", headSha: HEAD, intent: "Build" };
+  const awaiting = await adapter.start(input);
+  assert.equal(awaiting.status, "awaiting_decision");
+  assert.equal(awaiting.validatorRunId, "run-pinned");
+  assert.equal(awaiting.review.summary, "Browser evidence is unavailable.");
+  const passed = await adapter.decide({
+    ...input, validatorRunId: "run-pinned", decision: "approve",
+  });
+  assert.equal(passed.status, "passed");
+  assert.equal(responses, 1);
+  assert.equal((await adapter.decide({
+    ...input, validatorRunId: "run-pinned", decision: "approve",
+  })).status, "passed");
+  assert.equal(responses, 1);
+});
+
 test("feature-flag conversation gives one plan approval and leaks no ids", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "workflow-interactive-"));
   const store = new WorkflowRunStore({ rootDir: root, idFactory: () => "internal-secret" });

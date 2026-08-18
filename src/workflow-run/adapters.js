@@ -100,6 +100,35 @@ export class WorkflowRunValidatorAdapter {
     }
     return readJson(path.join(directory, "validation-result.json"));
   }
+
+  async decide({ operationId, workspacePath, headSha, intent, validatorRunId, decision }) {
+    if (decision !== "approve") throw new WorkflowRunAdapterError("Unsupported validation decision");
+    const directory = operationDirectory(this.stateRoot, operationId);
+    const request = await readJson(path.join(directory, "validation-request.json"));
+    const expected = validationRequest({ operationId, workspacePath, headSha, intent });
+    if (!request || JSON.stringify(request) !== JSON.stringify(expected)) {
+      throw new WorkflowRunAdapterError("Validation decision authority does not match the current workflow");
+    }
+    const existing = await readJson(path.join(directory, "validation-result.json"));
+    if (existing && existing.status !== "awaiting_decision") return existing;
+    if (existing?.validatorRunId !== validatorRunId || existing?.headSha !== headSha) {
+      throw new WorkflowRunAdapterError("Validation decision does not match the pinned validator review");
+    }
+    const report = await this.gate.respond({
+      taskId: `workflow-${operationId}`,
+      worktreePath: request.workspacePath,
+      expectedHeadSha: request.headSha,
+      intent: request.validationContract,
+      action: "approve",
+      expectedRunId: validatorRunId,
+    });
+    const result = validationResult(report, request.headSha);
+    if (result.status === "awaiting_decision") {
+      throw new WorkflowRunAdapterError("Pinned validator run remained nonterminal after approval");
+    }
+    await writeAtomic(path.join(directory, "validation-result.json"), result);
+    return result;
+  }
 }
 
 export class WorkflowRunAdapterError extends Error {
@@ -135,7 +164,27 @@ function validationResult(report, headSha) {
     return { status: "passed", headSha, report };
   }
   if (report.outcome && report.outcome !== "passed") return { status: "failed", headSha, report };
+  if (report.runId && report.gate?.status === "awaiting_approval" && report.outcome === null) {
+    return {
+      status: "awaiting_decision",
+      headSha,
+      validatorRunId: report.runId,
+      review: {
+        summary: reviewSummary(report),
+        findings: Array.isArray(report.findings) ? report.findings : [],
+      },
+      report,
+    };
+  }
   throw new WorkflowRunAdapterError("Validator outcome is not terminal and unambiguous");
+}
+
+function reviewSummary(report) {
+  const findings = Array.isArray(report.findings) ? report.findings : [];
+  if (findings.length === 1 && typeof findings[0]?.description === "string") {
+    return findings[0].description.replaceAll(/\s+/gu, " ").trim().slice(0, 500);
+  }
+  return `${findings.length || "A"} validation concern${findings.length === 1 ? "" : "s"} need review.`;
 }
 
 function validateWorkerResult(result) {

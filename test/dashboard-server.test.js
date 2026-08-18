@@ -59,6 +59,7 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
 
 test("simple workflow dashboard accepts high-level intents only", () => {
   assert.deepEqual(validateWorkflowIntent({ intent: "approve", runId: "ignored" }), { intent: "approve" });
+  assert.deepEqual(validateWorkflowIntent({ intent: "approve_validation" }), { intent: "approve_validation" });
   assert.deepEqual(validateWorkflowIntent({ intent: "status" }), { intent: "status" });
   assert.throws(() => validateWorkflowIntent({ intent: "dispatch", taskId: "task-1" }), /Invalid/u);
 });

@@ -15,6 +15,19 @@ export class WorkflowRunController {
     return this.advance(runId);
   }
 
+  async approveValidation(runId) {
+    const run = await this.store.get(runId);
+    if (run.phase !== "awaiting_validation_decision") {
+      throw new WorkflowRunError("No validation review is awaiting a decision");
+    }
+    await this.store.append(run.id, "validation.review_approved", {
+      operationId: run.validation.operationId,
+      headSha: run.validation.headSha,
+      validatorRunId: run.validation.validatorRunId,
+    }, "validation-review-approved");
+    return this.advance(run.id);
+  }
+
   async advance(runId) {
     try {
       return await this.#advance(runId);
@@ -28,7 +41,7 @@ export class WorkflowRunController {
   async #advance(runId) {
     for (let step = 0; step < 8; step += 1) {
       let run = await this.store.get(runId);
-      if (new Set(["awaiting_approval", "completed", "blocked"]).has(run.phase)) return run;
+      if (new Set(["awaiting_approval", "awaiting_validation_decision", "completed", "blocked"]).has(run.phase)) return run;
       if (run.phase === "approved") {
         const operationId = operation(run.id, "worker");
         await this.store.append(run.id, "worker.launch_requested", { operationId }, "worker-launch-requested");
@@ -59,14 +72,31 @@ export class WorkflowRunController {
         continue;
       }
       if (run.phase === "validating") {
-        const result = await recoverOrStart(this.validator, "start", run.validation.operationId, {
+        const input = {
           operationId: run.validation.operationId,
           workspacePath: run.worker.workspacePath,
           headSha: run.validation.headSha,
           intent: run.validation.intent,
           run,
-        });
+        };
+        const result = run.validation.status === "decision_approved"
+          ? await this.validator.decide({
+              ...input, validatorRunId: run.validation.validatorRunId, decision: "approve",
+            })
+          : await recoverOrStart(this.validator, "start", run.validation.operationId, input);
         if (!result) return this.#block(run, "Validation result could not be proven after interruption");
+        if (result.status === "awaiting_decision") {
+          if (result.headSha !== run.validation.headSha) {
+            return this.#block(run, "Validator review reported a different Git head");
+          }
+          await this.store.append(run.id, "validation.review_requested", {
+            operationId: run.validation.operationId,
+            headSha: result.headSha,
+            validatorRunId: result.validatorRunId,
+            review: result.review,
+          }, "validation-review-requested");
+          continue;
+        }
         if (!new Set(["passed", "failed"]).has(result.status)) return run;
         if (result.headSha !== run.validation.headSha) return this.#block(run, "Validator reported a different Git head");
         await this.store.append(run.id, "validation.observed", {

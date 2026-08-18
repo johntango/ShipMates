@@ -103,6 +103,29 @@ function applyEvent(run, event) {
         throw new WorkflowRunError("Validation observation must be terminal");
       }
       return next;
+    case "validation.review_requested":
+      requirePhase(run, "validating", event);
+      requireOperation(run.validation, event);
+      if (event.data.headSha !== run.validation.headSha || !event.data.validatorRunId) {
+        throw new WorkflowRunError("Validation review must match the exact requested run and head");
+      }
+      next.phase = "awaiting_validation_decision";
+      next.validation = {
+        ...run.validation, status: "awaiting_decision",
+        validatorRunId: event.data.validatorRunId,
+        review: event.data.review,
+      };
+      return next;
+    case "validation.review_approved":
+      requirePhase(run, "awaiting_validation_decision", event);
+      requireOperation(run.validation, event);
+      if (event.data.headSha !== run.validation.headSha ||
+        event.data.validatorRunId !== run.validation.validatorRunId) {
+        throw new WorkflowRunError("Validation approval does not match the pinned run and head");
+      }
+      next.phase = "validating";
+      next.validation = { ...run.validation, status: "decision_approved", decisionAt: event.at };
+      return next;
     case "workflow.completed":
       requirePhase(run, "validated", event);
       next.phase = "completed";

@@ -1482,6 +1482,9 @@ async function runInteractiveFirstmate() {
       const active = (await simpleWorkflowStore.list()).find(({ phase }) =>
         !new Set(["completed", "blocked"]).has(phase));
       if (!active) return { presentation: "No simple local workflow is active." };
+      if (intent === "approve_validation" && active.phase === "awaiting_validation_decision") {
+        return { presentation: renderWorkflowRun(await simpleWorkflowController.approveValidation(active.id)) };
+      }
       if (intent === "approve" && active.phase !== "awaiting_approval") {
         return { presentation: renderWorkflowRun(await simpleWorkflowController.advance(active.id)) };
       }

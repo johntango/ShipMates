@@ -6,6 +6,11 @@ export function projectWorkflowRun(run) {
     implementing: ["In progress", null, "The Implementer is working in an isolated workspace."],
     worker_complete: ["In progress", null, "Implementation finished; exact-head validation is starting."],
     validating: ["In progress", null, "No-mistakes is validating the exact implemented Git head."],
+    awaiting_validation_decision: [
+      "Blocked safely",
+      "Review the validation concern, then approve validation or stop.",
+      run.validation?.review?.summary || "Validation needs one human risk decision before it can finish.",
+    ],
     validated: ["In progress", null, "Validation passed; completion is being recorded."],
     completed: ["Passed", null, "Implementation and exact-head local validation completed."],
     blocked: ["Blocked safely", "Review the recorded blocker before retrying.", run.blocker || "The workflow stopped without risking additional changes."],
