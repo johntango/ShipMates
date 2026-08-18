@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  LocalValidationSetupBlockedError,
   LocalValidationWorkflow,
   LocalValidationWorkflowError,
-  LocalValidationRecoveryRequiredError,
 } from "../src/workflows/local-validation.js";
 
 test("records local validation for the exact active lease", async () => {
@@ -77,11 +77,13 @@ test("does not repeat a validator after durable intent without a result", async 
 
   await assert.rejects(
     workflow.run({ taskId: "validation-001", intent: "Validate locally" }),
-    /validator result lost/u,
+    LocalValidationSetupBlockedError,
   );
+  assert.equal(store.snapshot.state, "blocked");
+  assert.equal(store.evidence.some(({ kind }) => kind === "validation-setup-failure"), true);
   await assert.rejects(
     workflow.run({ taskId: "validation-001", intent: "Validate locally" }),
-    LocalValidationRecoveryRequiredError,
+    LocalValidationWorkflowError,
   );
   assert.equal(runs, 1);
 });
@@ -104,12 +106,17 @@ test("explicitly reconciles one exact durable validation request", async () => {
   });
   await assert.rejects(
     workflow.run({ taskId: "validation-001", intent }),
-    /validator result lost/u,
+    LocalValidationSetupBlockedError,
   );
   loseResult = false;
   const result = await workflow.reconcile({ taskId: "validation-001", intent });
   assert.equal(result.report.runId, "run-local-1");
   assert.equal(runs, 2);
+  assert.deepEqual(store.transitions.map(({ from, to }) => [from, to]), [
+    ["validating", "blocked"],
+    ["blocked", "running"],
+    ["running", "validating"],
+  ]);
 });
 
 test("moves an approval-gated validation to awaiting human", async () => {

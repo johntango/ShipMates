@@ -333,24 +333,33 @@ export class NoMistakesLocalGate {
       const relative = path.relative(this.stateRoot, existingRoot);
       if (path.basename(reposPath) !== "repos" || relative.startsWith("..") ||
         path.isAbsolute(relative)) {
-        throw new NoMistakesGateError(
-          "Existing no-mistakes remote is outside the managed validation state",
+        if (!retirableManagedRemote(remotePath)) {
+          throw new NoMistakesGateError(
+            "Existing no-mistakes remote is outside the managed validation state",
+          );
+        }
+        const removed = await this.runner(
+          "git", ["remote", "remove", "no-mistakes"], {
+            cwd: worktreePath,
+            env: process.env,
+            timeout: 10_000,
+            maxBuffer: 1024 * 1024,
+          },
         );
+        if (removed.exitCode !== 0) {
+          throw new NoMistakesGateError(
+            "Could not detach a stale managed no-mistakes remote",
+          );
+        }
+        taskRoot = await this.#originRuntimeHome(worktreePath);
+      } else {
+        taskRoot = existingRoot;
       }
-      taskRoot = existingRoot;
     } else if (!(existing.exitCode === 2 ||
       (existing.exitCode === 128 && /no such remote/iu.test(existing.stderr)))) {
       throw new NoMistakesGateError("Could not inspect the no-mistakes Git remote");
     } else {
-      const origin = await this.runner("git", ["remote", "get-url", "origin"], {
-        cwd: worktreePath,
-        env: process.env,
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-      });
-      if (origin.exitCode === 0 && origin.stdout.trim()) {
-        taskRoot = path.join(this.stateRoot, "runtime", digest(origin.stdout.trim()).slice(0, 16));
-      }
+      taskRoot = await this.#originRuntimeHome(worktreePath);
     }
     await mkdir(taskRoot, { recursive: true });
     if (Buffer.byteLength(path.join(taskRoot, "socket"), "utf8") <= 100) {
@@ -371,6 +380,18 @@ export class NoMistakesLocalGate {
       await symlink(taskRoot, linkPath, "dir");
     }
     return linkPath;
+  }
+
+  async #originRuntimeHome(worktreePath) {
+    const origin = await this.runner("git", ["remote", "get-url", "origin"], {
+      cwd: worktreePath,
+      env: process.env,
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return origin.exitCode === 0 && origin.stdout.trim()
+      ? path.join(this.stateRoot, "runtime", digest(origin.stdout.trim()).slice(0, 16))
+      : path.join(this.stateRoot, "runtime");
   }
 
   async #inspect(worktreePath) {
@@ -428,6 +449,21 @@ export class NoMistakesLocalGate {
     }
     return this.pin;
   }
+}
+
+function retirableManagedRemote(remotePath) {
+  const resolved = path.resolve(remotePath);
+  const legacyRoot = path.join(homedir(), ".no-mistakes", "repos");
+  const legacyRelative = path.relative(legacyRoot, resolved);
+  if (!legacyRelative.startsWith("..") && !path.isAbsolute(legacyRelative) &&
+    /^[a-f0-9]{8,64}\.git$/u.test(legacyRelative)) return true;
+
+  const reposPath = path.dirname(resolved);
+  const runtimeInstance = path.dirname(reposPath);
+  return path.basename(reposPath) === "repos" &&
+    /^[a-f0-9]{16}$/u.test(path.basename(runtimeInstance)) &&
+    path.basename(path.dirname(runtimeInstance)) === "runtime" &&
+    path.basename(path.dirname(path.dirname(runtimeInstance))) === "no-mistakes";
 }
 
 function validateSkipSteps(steps) {

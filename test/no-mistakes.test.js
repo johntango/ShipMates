@@ -151,6 +151,64 @@ test("reuses the managed runtime already bound to the repository remote", async 
   assert.equal(init.options.env.NM_HOME, existingRoot);
 });
 
+test("rebinds a stale ShipMates-managed remote from a recycled worktree", async () => {
+  const calls = [];
+  const stateRoot = path.join(tmpdir(), "shipmates-firstmate-current", "no-mistakes");
+  const staleRemote = path.join(
+    tmpdir(), "shipmates-firstmate-prior", "no-mistakes", "runtime",
+    "0123456789abcdef", "repos", "gate.git",
+  );
+  const baseRunner = fakeRunner({ calls, output: passingOutput() });
+  const runner = async (command, args, options) => {
+    if (command === "git" && args.join(" ") === "remote get-url no-mistakes") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: `${staleRemote}\n`, stderr: "" };
+    }
+    if (command === "git" && args.join(" ") === "remote remove no-mistakes") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (command === "git" && args.join(" ") === "remote get-url origin") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: "git@github.com:owner/repo.git\n", stderr: "" };
+    }
+    return baseRunner(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes", stateRoot, runner,
+    clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  await gate.run({
+    taskId: "validation-recycled", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate the recycled worktree",
+  });
+
+  assert.equal(calls.some(({ args }) => args.join(" ") === "remote remove no-mistakes"), true);
+  const init = calls.find(({ args }) => args[0] === "init");
+  assert.notEqual(init.options.env.NM_HOME, path.dirname(path.dirname(staleRemote)));
+  assert.match(init.options.env.NM_HOME, /shipmates-no-mistakes-runtime\/[a-f0-9]{16}$/u);
+});
+
+test("continues to reject an arbitrary external no-mistakes remote", async () => {
+  const runner = async (command, args, options) => {
+    if (command === "git" && args.join(" ") === "remote get-url no-mistakes") {
+      return { exitCode: 0, stdout: "/opt/unmanaged/gate.git\n", stderr: "" };
+    }
+    return fakeRunner({ output: passingOutput() })(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes",
+    stateRoot: path.join(tmpdir(), "shipmates-current", "no-mistakes"),
+    runner, clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  await assert.rejects(gate.run({
+    taskId: "validation-unmanaged", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate safely",
+  }), /outside the managed validation state/u);
+});
+
 test("uses an origin-specific runtime when Git reports an absent no-mistakes remote as 128", async () => {
   const calls = [];
   const stateRoot = path.join(tmpdir(), "shipmates-no-mistakes-multi-repo");

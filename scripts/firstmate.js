@@ -1267,11 +1267,14 @@ async function runInteractiveFirstmate() {
         child.once("exit", async (exitCode, signal) => {
           await receiptRecorded.catch(() => {});
           activeRequests.delete(taskId);
-          console.error(exitCode === 0
-            ? `“${taskName}” in ${projectNameForTask} completed.`
-            : `“${taskName}” in ${projectNameForTask} failed (${signal ? `signal ${signal}` : `exit ${exitCode}`}).`);
           try {
             let snapshot = await interactiveStore.getSnapshot(taskId);
+            const stoppedSafely = new Set(["blocked", "recovery_required"]).has(snapshot.state);
+            console.error(exitCode === 0
+              ? `“${taskName}” in ${projectNameForTask} completed.`
+              : stoppedSafely
+                ? `“${taskName}” in ${projectNameForTask} blocked safely; review the recorded next action.`
+                : `“${taskName}” in ${projectNameForTask} failed (${signal ? `signal ${signal}` : `exit ${exitCode}`}).`);
             if (!dispatchPolicy.trackProjectAttempt) {
               const reconciledReadOnly = await readOnlyInspectionTracker.reconcile({
                 taskId, requestId, exitCode, signal,
