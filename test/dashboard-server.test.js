@@ -52,6 +52,8 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
       why: "No files will change until you approve.", phase: "awaiting_approval",
     },
   }]);
+  assert.deepEqual(state.tasks, []);
+  assert.deepEqual(state.projects, []);
   assert.doesNotMatch(JSON.stringify(state.workflowRuns), /workflow-secret/u);
 });
 

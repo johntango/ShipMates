@@ -234,10 +234,10 @@ export async function buildDashboardState({
       alerts: watchdog ? await watchdog.inspect() : [],
       historical: watchdog?.inspectHistorical ? await watchdog.inspectHistorical() : [],
     },
-    projects: projects.map((project) => ({
+    projects: workflowRunStore ? [] : projects.map((project) => ({
       ...projectProjection(project, taskById), selected: project.id === selectedProject?.id,
     })),
-    tasks: tasks.slice(0, 30),
+    tasks: workflowRunStore ? [] : tasks.slice(0, 30),
     workflowRuns,
   };
 }

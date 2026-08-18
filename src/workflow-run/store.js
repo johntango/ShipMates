@@ -41,7 +41,7 @@ export class WorkflowRunStore {
     try { entries = await readdir(path.join(this.rootDir, "workflow-runs"), { withFileTypes: true }); }
     catch (error) { if (error.code === "ENOENT") return []; throw error; }
     const runs = [];
-    for (const entry of entries.filter(({ isDirectory }) => isDirectory())) {
+    for (const entry of entries.filter((candidate) => candidate.isDirectory())) {
       try { runs.push(await this.get(entry.name)); } catch { /* Ignore damaged historical runs. */ }
     }
     return runs.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));

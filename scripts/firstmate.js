@@ -116,6 +116,10 @@ import { RepositoryDeleteWorkflow } from "../src/workflows/repository-delete.js"
 import { RepositoryPurgeWorkflow } from "../src/workflows/repository-purge.js";
 import { workflowRunEnabled } from "../src/workflow-run/feature.js";
 import { WorkflowRunStore } from "../src/workflow-run/store.js";
+import { WorkflowRunController } from "../src/workflow-run/controller.js";
+import { WorkflowRunWorkerAdapter, WorkflowRunValidatorAdapter } from "../src/workflow-run/adapters.js";
+import { SimpleWorkflowConversation } from "../src/workflow-run/interactive.js";
+import { renderWorkflowRun } from "../src/workflow-run/projection.js";
 
 const rawArgs = process.argv.slice(2);
 if (rawArgs[0] === "--delivery") {
@@ -487,6 +491,7 @@ async function runInteractiveFirstmate() {
   const activeRequests = new Map();
   const advancingProjects = new Set();
   const announcedProjectCompletions = new Map();
+  const announcedWorkflowRuns = new Set();
   const pendingArtifactReports = new Set();
   const interactiveStore = new TaskStore({
     rootDir: path.resolve(
@@ -625,6 +630,33 @@ async function runInteractiveFirstmate() {
   });
   let activeProject = await projectStore.active() || repositoryProject;
   const conversation = new FirstmateCodexConversation({ rootDir: interactiveStore.rootDir });
+  let simpleWorkflowController = null;
+  let simpleWorkflowConversation = null;
+  if (simpleWorkflowStore) {
+    const validatorBinary = await resolvePinnedNoMistakesBinary({
+      explicitPath: process.env.NO_MISTAKES_BIN || null,
+    });
+    simpleWorkflowController = new WorkflowRunController({
+      store: simpleWorkflowStore,
+      worker: new WorkflowRunWorkerAdapter({
+        stateRoot: interactiveStore.rootDir,
+        workerScript: fileURLToPath(new URL("./workflow-run-worker.js", import.meta.url)),
+      }),
+      validator: WorkflowRunValidatorAdapter.localOnly({
+        stateRoot: interactiveStore.rootDir, binaryPath: validatorBinary,
+      }),
+    });
+    simpleWorkflowConversation = new SimpleWorkflowConversation({
+      store: simpleWorkflowStore,
+      controller: simpleWorkflowController,
+      context: () => discoverFirstmateContext({ cwd: process.cwd() }),
+      planner: (message, context) => conversation.turn({
+        message,
+        workingDirectory: context.repoPath,
+        project: { selectedProject: null, projects: [] },
+      }),
+    });
+  }
   const dashboardReview = new DashboardLavishReview({ stateRoot: interactiveStore.rootDir });
   let latestTaskId = null;
   let activeProjectTaskId = await projectContext.load();
@@ -710,6 +742,10 @@ async function runInteractiveFirstmate() {
     message: "FirstMate is handling an instruction",
     status: "coordinating",
   }, async () => {
+        if (simpleWorkflowConversation && !governedDispatch) {
+          console.log(await simpleWorkflowConversation.handle(message));
+          return;
+        }
         const governedPlanDispatch = governedDispatch?.planTaskId
           ? governedDispatch : null;
         if (governedPlanDispatch) {
@@ -1442,6 +1478,18 @@ async function runInteractiveFirstmate() {
     projectStore,
     watchdog,
     workflowRunStore: simpleWorkflowStore,
+    onWorkflowIntent: simpleWorkflowController ? async ({ intent }) => {
+      const active = (await simpleWorkflowStore.list()).find(({ phase }) =>
+        !new Set(["completed", "blocked"]).has(phase));
+      if (!active) return { presentation: "No simple local workflow is active." };
+      if (intent === "approve" && active.phase !== "awaiting_approval") {
+        return { presentation: renderWorkflowRun(await simpleWorkflowController.advance(active.id)) };
+      }
+      const run = intent === "approve"
+        ? await simpleWorkflowController.approve(active.id)
+        : await simpleWorkflowController.advance(active.id);
+      return { presentation: renderWorkflowRun(run) };
+    } : null,
     onCommand: dispatchRequest,
     onProjectAction: handleProjectAction,
     port: Number(process.env.SHIPMATES_DASHBOARD_PORT || 4390),
@@ -1491,6 +1539,18 @@ async function runInteractiveFirstmate() {
   const announcedWatchdogAlerts = new Set();
   const reconcileProjects = async () => {
     const reconciled = [];
+    if (simpleWorkflowController) {
+      for (const run of await simpleWorkflowStore.list()) {
+        if (!new Set(["awaiting_approval", "completed", "blocked"]).has(run.phase)) {
+          const advanced = await simpleWorkflowController.advance(run.id);
+          if (new Set(["completed", "blocked"]).has(advanced.phase) &&
+            !announcedWorkflowRuns.has(advanced.id)) {
+            announcedWorkflowRuns.add(advanced.id);
+            console.log(renderWorkflowRun(advanced));
+          }
+        }
+      }
+    }
     for (const project of await projectStore.list()) {
       if (project.status !== "approved" || project.executionPolicy?.mode === "persistent_project") continue;
       for (const planned of project.tasks.filter(({ taskId, status }) =>

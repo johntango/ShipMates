@@ -73,6 +73,23 @@ for multiline terminal input. Use `/cancel` to discard that input. `/exit`,
 workers are allowed to finish, so exiting the prompt is not equivalent to
 terminating active tasks.
 
+The experimental single-run local workflow is opt-in while the legacy flow
+remains available:
+
+```sh
+SHIPMATES_SIMPLE_WORKFLOW=1 npm run firstmate
+```
+
+In this mode, an ordinary local development request produces one short plan.
+After one plan approval, Firstmate launches one Implementer in a Treehouse
+workspace, creates a clean candidate commit there, and runs pinned no-mistakes
+against that exact commit. A passing run completes automatically. It does not
+merge or copy the candidate into the checkout, push, publish, or open a pull
+request. Those delivery actions remain separate explicit decisions. The
+dashboard shows only the high-level phase and accepts only plan approval or a
+status refresh; internal run and operation identifiers stay in diagnostic
+state beneath `SHIPMATES_STATE_DIR`.
+
 ### Firstmate output and evidence
 
 Normal interactive and one-shot output leads with a concise human summary:
