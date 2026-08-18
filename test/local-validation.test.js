@@ -207,6 +207,69 @@ test("reconciles a validator approval completed outside Firstmate without respon
   assert.equal(store.snapshot.validationApprovalRequests[0].status, "completed");
 });
 
+test("supervisor adopts only an exact externally completed approval without responding", async () => {
+  const store = new MemoryStore();
+  const intent = "Validate locally";
+  const gated = {
+    ...validationReport(), intentSha256: "unused",
+    initialHeadSha: "a".repeat(40), finalHeadSha: "a".repeat(40),
+    gate: { step: "test", status: "awaiting_approval" },
+  };
+  let responses = 0;
+  const workflow = new LocalValidationWorkflow({ store, gate: {
+    pinEvidence,
+    async run() { return gated; },
+    async observe() {
+      return {
+        ...gated,
+        intentSha256: store.snapshot.validationRequests[0].intentSha256,
+        gate: null,
+        passed: true,
+      };
+    },
+    async respond() { responses += 1; },
+  } });
+  await workflow.run({ taskId: "validation-001", intent });
+  store.snapshot.validationRuns[0].intentSha256 =
+    store.snapshot.validationRequests[0].intentSha256;
+
+  const result = await workflow.reconcileCompletedApproval({
+    taskId: "validation-001", intent,
+  });
+
+  assert.equal(result.reconciled, true);
+  assert.equal(result.snapshot.state, "ready_to_merge");
+  assert.equal(responses, 0);
+});
+
+test("supervisor leaves an open external approval gate awaiting human", async () => {
+  const store = new MemoryStore();
+  const intent = "Validate locally";
+  const gated = {
+    ...validationReport(), intentSha256: "unused",
+    initialHeadSha: "a".repeat(40), finalHeadSha: "a".repeat(40),
+    gate: { step: "test", status: "awaiting_approval" },
+  };
+  let responses = 0;
+  const workflow = new LocalValidationWorkflow({ store, gate: {
+    pinEvidence, async run() { return gated; },
+    async observe() { return store.snapshot.validationRuns[0]; },
+    async respond() { responses += 1; },
+  } });
+  await workflow.run({ taskId: "validation-001", intent });
+  store.snapshot.validationRuns[0].intentSha256 =
+    store.snapshot.validationRequests[0].intentSha256;
+
+  const result = await workflow.reconcileCompletedApproval({
+    taskId: "validation-001", intent,
+  });
+
+  assert.equal(result.reconciled, false);
+  assert.equal(result.snapshot.state, "awaiting_human");
+  assert.equal(store.snapshot.validationApprovalRequests.length, 0);
+  assert.equal(responses, 0);
+});
+
 test("finishes approval after terminal reconciliation was already recorded", async () => {
   const store = new MemoryStore();
   const intent = "Validate locally";

@@ -243,6 +243,55 @@ export class LocalValidationWorkflow {
   async reconcileApproval({ taskId, intent }) {
     return this.approve({ taskId, intent });
   }
+
+  async reconcileCompletedApproval({ taskId, intent }) {
+    if (typeof intent !== "string" || intent.trim() === "") {
+      throw new TypeError("intent must be a non-empty string");
+    }
+    let snapshot = await this.store.getSnapshot(taskId);
+    const prior = snapshot.validationRuns?.at(-1);
+    const request = snapshot.validationRequests?.at(-1);
+    const intentSha256 = digest(intent);
+    if (snapshot.state !== "awaiting_human" || request?.status !== "completed" ||
+      prior?.gate?.status !== "awaiting_approval" || request.runId !== prior.runId ||
+      request.intentSha256 !== intentSha256 || prior.intentSha256 !== intentSha256 ||
+      prior.finalHeadSha !== snapshot.worktree?.headSha) {
+      return { snapshot, report: prior, reconciled: false };
+    }
+    const report = await this.gate.observe({
+      taskId, worktreePath: snapshot.worktree.worktreePath,
+      expectedHeadSha: snapshot.worktree.headSha, intent, runId: prior.runId,
+    });
+    if (report.runId !== prior.runId || report.passed !== true || report.gate !== null ||
+      report.finalHeadSha !== prior.finalHeadSha || report.intentSha256 !== intentSha256) {
+      return { snapshot, report, reconciled: false };
+    }
+    const approval = snapshot.validationApprovalRequests?.at(-1);
+    if (!approval) {
+      snapshot = await this.store.requestValidationApproval({
+        taskId, actor: this.actor,
+        request: {
+          operationId: "validation-approval-v1", runId: prior.runId,
+          headSha: prior.finalHeadSha, intentSha256,
+        },
+        eventId: `${taskId}:validation:${prior.runId}:approval-requested:v1`,
+      });
+    } else if (approval.runId !== prior.runId || approval.headSha !== prior.finalHeadSha ||
+      approval.intentSha256 !== intentSha256) {
+      throw new LocalValidationRecoveryRequiredError(
+        "Durable validation approval intent does not match the completed validator run",
+      );
+    }
+    snapshot = await this.store.reconcileLocalValidation({
+      taskId, actor: this.actor, report, runId: prior.runId,
+      eventId: `${taskId}:validation:${prior.runId}:reconciled:v1`,
+      at: report.completedAt,
+    });
+    snapshot = await transitionApprovedValidation(
+      this.store, snapshot, this.actor, taskId, prior.runId,
+    );
+    return { snapshot, report, reconciled: true };
+  }
 }
 
 function transitionApprovedValidation(store, snapshot, actor, taskId, runId) {

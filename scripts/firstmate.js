@@ -48,7 +48,10 @@ import {
   taskArtifactSummary,
 } from "../src/cli/firstmate-follow-up.js";
 import { readFirstmateMessage } from "../src/cli/firstmate-message.js";
-import { handleValidationApproval } from "../src/cli/firstmate-validation-approval.js";
+import {
+  handleValidationApproval,
+  reconcileCompletedValidationApproval,
+} from "../src/cli/firstmate-validation-approval.js";
 import { appearsToRequireHumanInput, humanInputRequired } from "../src/cli/terminal-style.js";
 import {
   answerProjectQuery,
@@ -1481,6 +1484,15 @@ async function runInteractiveFirstmate() {
     const reconciled = [];
     for (const project of await projectStore.list()) {
       if (project.status !== "approved" || project.executionPolicy?.mode === "persistent_project") continue;
+      for (const planned of project.tasks.filter(({ taskId, status }) =>
+        taskId && status === "dispatched")) {
+        const recovered = await reconcileCompletedValidationApproval(planned.taskId, {
+          store: interactiveStore, projectStore, orchestrator, advanceProject,
+        });
+        if (recovered) {
+          console.error(`Reconciled completed local validation for ${project.name} — ${planned.title}; validation was not rerun.`);
+        }
+      }
       const results = await orchestrator.reconcileProject(project.id);
       reconciled.push({ projectId: project.id, results });
     }

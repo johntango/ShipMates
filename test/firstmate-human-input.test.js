@@ -94,6 +94,58 @@ test("approval command validates, delivers, reconciles, and advances dependent w
   ]);
 });
 
+test("supervisor reconciles and advances an externally completed validation", async () => {
+  const { reconcileCompletedValidationApproval } = await import(
+    "../src/cli/firstmate-validation-approval.js"
+  );
+  const calls = [];
+  const project = {
+    id: "project-1", repoPath: "/registered/project",
+    executionPolicy: { autoAdvance: true },
+  };
+  const result = await reconcileCompletedValidationApproval("task-123", {
+    store: {
+      rootDir: "/state",
+      getSnapshot: async () => ({
+        state: "awaiting_human",
+        validationRuns: [{
+          command: { args: ["axi", "run", "--intent", "repair approval"] },
+        }],
+      }),
+    },
+    projectStore: {
+      describeAttempt: async () => ({ projectId: project.id }),
+      get: async () => project,
+    },
+    orchestrator: {
+      reconcileTask: async () => ({
+        context: { projectId: project.id, projectName: "Test", taskName: "Build" },
+      }),
+    },
+    binaryPath: "/pinned/no-mistakes",
+    createGate: () => ({}),
+    createValidationWorkflow: () => ({
+      reconcileCompletedApproval: async (input) => {
+        calls.push(["observe", input]);
+        return { reconciled: true };
+      },
+    }),
+    createDeliveryWorkflow: () => ({
+      deliver: async (input) => calls.push(["deliver", input]),
+    }),
+    schedule: (callback) => callback(),
+    advanceProject: async (projectId, options) =>
+      calls.push(["advance", projectId, options]),
+  });
+
+  assert.equal(result.taskId, "task-123");
+  assert.deepEqual(calls, [
+    ["observe", { taskId: "task-123", intent: "repair approval" }],
+    ["deliver", { taskId: "task-123", destinationRepoPath: "/registered/project" }],
+    ["advance", "project-1", { reason: "completed validation reconciled and delivered" }],
+  ]);
+});
+
 test("retries delivery without rerunning validation after a terminal pass", async () => {
   const { handleValidationApproval } = await import(
     "../src/cli/firstmate-validation-approval.js"
