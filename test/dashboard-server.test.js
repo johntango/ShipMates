@@ -51,6 +51,11 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
       outcome: "Awaiting your approval", nextAction: "Approve the short plan to begin local work, or stop without changing files.",
       why: "The short plan is ready; no files have changed.", phase: "Awaiting your approval", details: [],
     },
+    milestones: [
+      { label: "Plan", status: "Awaiting your approval", summary: "The approved scope is ready; no implementation has started." },
+      { label: "Implementer", status: "Queued", summary: "Implementation has not started." },
+      { label: "No-mistakes", status: "Queued", summary: "Validation is queued until implementation completes." },
+    ],
   }]);
   assert.deepEqual(state.tasks, []);
   assert.deepEqual(state.projects, []);
@@ -82,6 +87,11 @@ test("projects completed simple workflow authorship, validation, and durable pag
   assert.match(run.presentation.why, /Implementer created.*no-mistakes tested and validated/iu);
   assert.match(run.presentation.details.join("\n"), /file:\/\/\/isolated\/candidate\/site\/index\.html/u);
   assert.match(run.presentation.details.join("\n"), /generated 0 project tests.*executed 3 test cases/isu);
+  assert.deepEqual(run.milestones.map(({ label, status }) => [label, status]), [
+    ["Plan", "Approved"], ["Implementer", "Completed"], ["No-mistakes", "Passed"],
+  ]);
+  assert.match(run.milestones[1].summary, /site\/index\.html/u);
+  assert.match(run.milestones[2].summary, /executed 3 test cases/iu);
   assert.doesNotMatch(JSON.stringify(run), /workflow-secret|localhost/iu);
 });
 

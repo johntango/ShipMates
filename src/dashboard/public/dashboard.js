@@ -48,7 +48,11 @@
             ${run.presentation.details?.length ? `<div class="small mt-2">${run.presentation.details.map((detail) => `<div>${escape(detail)}</div>`).join("")}</div>` : ""}
             ${run.action === "approve" ? '<button class="btn btn-success btn-sm mt-2" data-workflow-intent="approve">Approve plan</button>' : run.action === "approve_validation" ? '<button class="btn btn-warning btn-sm mt-2" data-workflow-intent="approve_validation">Review decision</button>' : ""}
           </div>
-          <details class="small mt-2"><summary>Short plan</summary><div class="mt-2">${escape(run.plan)}</div></details>
+          <details class="small mt-2"><summary>Approved scope</summary><div class="mt-2">${escape(run.plan)}</div></details>
+          <section class="small mt-3" aria-label="Actual execution milestones">
+            <strong>Actual execution</strong>
+            <ol class="mt-2 mb-0">${(run.milestones || []).map((milestone) => `<li class="mb-2"><strong>${escape(milestone.label)} — ${escape(milestone.status)}</strong><div class="text-body-secondary">${escape(milestone.summary)}</div></li>`).join("")}</ol>
+          </section>
         </div>
       </article>`).join("");
     const legacyTaskCards = state.tasks.map((task) => `

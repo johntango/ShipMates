@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
-  validationContract, WorkflowRunValidatorAdapter, WorkflowRunWorkerAdapter,
+  readWorkflowRunVisibility, validationContract, WorkflowRunValidatorAdapter, WorkflowRunWorkerAdapter,
 } from "../src/workflow-run/adapters.js";
 import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { SimpleWorkflowConversation } from "../src/workflow-run/interactive.js";
@@ -13,6 +13,14 @@ import { WorkflowRunStore } from "../src/workflow-run/store.js";
 
 const OPERATION = "a".repeat(24);
 const HEAD = "b".repeat(40);
+
+test("corrupt visibility evidence is ignored and cannot gate workflow execution", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-visibility-"));
+  const directory = path.join(root, "workflow-run-operations", OPERATION);
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, "herdr-visibility.json"), "not json");
+  assert.equal(await readWorkflowRunVisibility({ stateRoot: root, operationId: OPERATION }), null);
+});
 
 test("production worker bridge launches once and adopts a durable clean result", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "workflow-adapter-"));

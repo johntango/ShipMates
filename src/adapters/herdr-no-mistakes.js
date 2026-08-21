@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 
 import { shellQuote } from "./herdr-pane.js";
 
@@ -10,6 +11,7 @@ export class HerdrNoMistakesObserver {
     nodePath = process.execPath,
     onWarning = console.error,
     displayTaskId = true,
+    visibilityRoot = null,
   } = {}) {
     if (!client || !watcherScript) {
       throw new TypeError("HerdrNoMistakesObserver requires client and watcherScript");
@@ -20,11 +22,19 @@ export class HerdrNoMistakesObserver {
     this.nodePath = nodePath;
     this.onWarning = onWarning;
     this.displayTaskId = displayTaskId;
+    this.visibilityRoot = visibilityRoot ? path.resolve(visibilityRoot) : null;
     this.sequence = 0;
   }
 
   async started({ taskId, binaryPath, runtimeHome, worktreePath, expectedHeadSha }) {
-    if (!this.currentPaneId) return null;
+    const visibilityPath = this.#visibilityPath(taskId);
+    if (!this.currentPaneId) {
+      await writeHerdrVisibilityReceipt(visibilityPath, {
+        available: false, state: "unavailable",
+        summary: "Herder visibility unavailable; validation continues.",
+      });
+      return null;
+    }
     try {
       const agent = this.displayTaskId ? `ShipMates no-mistakes: ${taskId}` : "ShipMates no-mistakes";
       const existing = (await this.client.list()).find((pane) => pane.agent === agent);
@@ -32,6 +42,10 @@ export class HerdrNoMistakesObserver {
         paneId: this.currentPaneId,
         cwd: worktreePath,
       })).paneId;
+      await writeHerdrVisibilityReceipt(visibilityPath, {
+        available: true, state: "pane_created", paneId,
+        summary: "Validation is visible in Herder.",
+      });
       const source = `shipmates:no-mistakes:${taskId}`;
       await this.client.reportAgent({
         paneId,
@@ -69,14 +83,59 @@ export class HerdrNoMistakesObserver {
           source,
           agent,
           expectedHeadSha,
+          ...(visibilityPath ? [visibilityPath] : []),
         ].map(shellQuote).join(" "),
+      });
+      await writeHerdrVisibilityReceipt(visibilityPath, {
+        available: true, state: "attach_started", paneId,
+        summary: "Validation is visible in Herder.",
       });
       return paneId;
     } catch (error) {
+      await writeHerdrVisibilityReceipt(visibilityPath, {
+        available: false, state: "attach_failed",
+        summary: "Herder visibility unavailable; validation continues.",
+      });
       this.onWarning?.(`no-mistakes Herdr visibility unavailable (${error.name || "Error"})`);
       return null;
     }
   }
+
+  #visibilityPath(taskId) {
+    if (!this.visibilityRoot || typeof taskId !== "string" ||
+      !/^workflow-[a-f0-9]{24}$/u.test(taskId)) return null;
+    return path.join(this.visibilityRoot, taskId.slice("workflow-".length), "herdr-visibility.json");
+  }
+}
+
+export async function writeHerdrVisibilityReceipt(target, value) {
+  if (!target) return;
+  try {
+    const receipt = {
+      schemaVersion: 1,
+      available: value.available === true,
+      state: String(value.state || "unavailable"),
+      summary: String(value.summary || "").replaceAll(/\s+/gu, " ").trim().slice(0, 200),
+      ...(value.paneId ? { paneId: String(value.paneId) } : {}),
+      updatedAt: new Date().toISOString(),
+    };
+    await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+    const temporary = `${target}.${process.pid}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporary, target);
+  } catch {
+    // Visibility evidence must never affect validation authority or execution.
+  }
+}
+
+export function retainedValidationSummary(projection) {
+  if (projection?.terminal && projection.state === "idle") {
+    return "Validation passed. This pane is retained as read-only evidence.";
+  }
+  if (projection?.terminal) {
+    return `Validation ${projection.stage || "finished"}. This pane is retained as read-only evidence.`;
+  }
+  return "Validation finished. See First Mate for the authoritative outcome.";
 }
 
 export function parseAxiRunId(output) {

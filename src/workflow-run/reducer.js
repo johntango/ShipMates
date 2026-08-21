@@ -94,7 +94,10 @@ function applyEvent(run, event) {
       if (event.data.headSha !== run.validation.headSha) {
         throw new WorkflowRunError("Observed validation head does not match the requested head");
       }
-      next.validation = { ...run.validation, status: event.data.status, report: event.data.report };
+      next.validation = {
+        ...run.validation, status: event.data.status, report: event.data.report,
+        ...(event.data.visibility ? { visibility: event.data.visibility } : {}),
+      };
       if (event.data.status === "passed") {
         next.phase = "validated";
       } else if (event.data.status === "failed") {

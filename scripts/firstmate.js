@@ -672,6 +672,7 @@ async function runInteractiveFirstmate() {
             watcherScript: fileURLToPath(new URL("./no-mistakes-pane.js", import.meta.url)),
             onWarning: (message) => console.error(message),
             displayTaskId: false,
+            visibilityRoot: path.join(interactiveStore.rootDir, "workflow-run-operations"),
           })),
         },
       }),

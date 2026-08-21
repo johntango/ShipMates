@@ -8,6 +8,7 @@ import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { workflowRunEnabled } from "../src/workflow-run/feature.js";
 import {
   projectWorkflowRun, renderWorkflowRun, validationEvidenceSummary,
+  workflowExecutionMilestones,
 } from "../src/workflow-run/projection.js";
 import { reduceWorkflowRun } from "../src/workflow-run/reducer.js";
 import { WorkflowRunStore } from "../src/workflow-run/store.js";
@@ -65,6 +66,7 @@ test("approval to completion uses one worker and one exact-head validator", asyn
     why: "The Implementer created the code, and no-mistakes tested and validated that exact isolated candidate.",
     phase: "Passed",
     details: [
+      "Herder visibility was unavailable; validation continued independently.",
       "Created by: The Implementer created the code in this candidate.",
       "Validated by: No-mistakes tested and validated this exact isolated candidate.",
       "Delivery: The candidate is preserved in its isolated workspace; it has not been copied or merged into the shared checkout.",
@@ -102,6 +104,38 @@ test("validation evidence distinguishes generated tests, test cases, and checks"
     "No individual test-case count was recorded.",
     "No-mistakes completed 1 validation check: test.",
   ]);
+});
+
+test("derives actual execution milestones from durable evidence, not plan prose", () => {
+  const waiting = {
+    phase: "awaiting_approval", plan: "1. Inspect\n2. Build", worker: null, validation: null,
+  };
+  assert.deepEqual(workflowExecutionMilestones(waiting).map(({ label, status }) =>
+    [label, status]), [
+    ["Plan", "Awaiting your approval"], ["Implementer", "Queued"], ["No-mistakes", "Queued"],
+  ]);
+  const working = {
+    ...waiting, phase: "implementing", worker: { status: "launched", receipt: { pid: 1 } },
+  };
+  assert.equal(workflowExecutionMilestones(working)[1].status, "Working");
+  assert.equal(workflowExecutionMilestones({ ...working, phase: "blocked" })[1].status,
+    "Blocked safely");
+  const completed = {
+    ...working, phase: "completed",
+    worker: { status: "completed", headSha: HEAD, report: {
+      status: "completed", files: ["site/index.html", "site/app.js"],
+    } },
+    validation: { status: "passed", headSha: HEAD, report: {
+      executedTestCaseCount: 4,
+      steps: [{ step: "test", status: "completed" }, { step: "lint", status: "completed" }],
+    } },
+  };
+  const milestones = workflowExecutionMilestones(completed);
+  assert.equal(milestones[0].status, "Approved");
+  assert.match(milestones[1].summary, /site\/index\.html, site\/app\.js/u);
+  assert.equal(milestones[2].status, "Passed");
+  assert.match(milestones[2].summary, /executed 4 test cases.*2 validation checks/isu);
+  assert.doesNotMatch(JSON.stringify(milestones), /workflow-|task id|operation/iu);
 });
 
 test("restart after launch intent observes the operation without a duplicate worker", async () => {

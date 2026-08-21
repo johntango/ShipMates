@@ -4,8 +4,59 @@ import { pathToFileURL } from "node:url";
 export function projectWorkflowRun(run) {
   const [phase, nextAction, why] = evidenceStatus(run);
   return Object.freeze({
-    outcome: phase, nextAction, why, phase, details: terminalEvidence(run),
+    outcome: phase, nextAction, why, phase,
+    details: [...visibilityEvidence(run), ...terminalEvidence(run)],
   });
+}
+
+export function workflowExecutionMilestones(run) {
+  const files = Array.isArray(run.worker?.report?.files)
+    ? run.worker.report.files.filter((file) => typeof file === "string" && file.trim())
+    : [];
+  const planApproved = run.phase !== "awaiting_approval" && run.phase !== "planning";
+  const workerStatus = run.phase === "blocked" && run.worker?.status !== "completed" ? "Blocked safely" :
+    run.worker?.status === "completed" ? "Completed" :
+    run.worker?.status === "launched" ? "Working" : run.worker ? "Starting" : "Queued";
+  let validatorStatus = "Queued";
+  if (run.validation?.status === "passed") validatorStatus = "Passed";
+  else if (run.validation?.status === "failed" ||
+    (run.phase === "blocked" && run.validation)) validatorStatus = "Blocked safely";
+  else if (run.validation?.status === "awaiting_decision") validatorStatus = "Awaiting your approval";
+  else if (run.validation) validatorStatus = "Validating";
+  const checks = run.validation?.report ? validationEvidenceSummary(run.validation.report) : [];
+  return Object.freeze([
+    {
+      label: "Plan", status: planApproved ? "Approved" : "Awaiting your approval",
+      summary: planApproved ? "The approved scope is fixed for this local run." :
+        "The approved scope is ready; no implementation has started.",
+    },
+    {
+      label: "Implementer", status: workerStatus,
+      summary: workerStatus === "Completed"
+        ? `The Implementer completed the isolated candidate${files.length ? ` and changed: ${files.join(", ")}` : "."}`
+        : workerStatus === "Blocked safely" ? "Implementation stopped without changing the shared checkout."
+          : workerStatus === "Working" ? "The Implementer is working in the isolated workspace."
+          : workerStatus === "Starting" ? "The isolated Implementer is starting."
+            : "Implementation has not started.",
+    },
+    {
+      label: "No-mistakes", status: validatorStatus,
+      summary: validatorStatus === "Passed" ? `Exact-candidate validation passed.${checks.length ? ` ${checks.join(" ")}` : ""}` :
+        validatorStatus === "Validating" ? "No-mistakes is validating the exact isolated candidate." :
+          validatorStatus === "Awaiting your approval" ? "Validation found a risk requiring your decision." :
+            validatorStatus === "Blocked safely" ? "Validation stopped without changing or publishing the candidate." :
+              "Validation is queued until implementation completes.",
+    },
+  ]);
+}
+
+function visibilityEvidence(run) {
+  if (!run.validation) return [];
+  const visibility = run.visibility || run.validation.visibility;
+  if (visibility?.available) return ["Validation is visible in Herder."];
+  return [new Set(["completed", "blocked"]).has(run.phase)
+    ? "Herder visibility was unavailable; validation continued independently."
+    : "Herder visibility unavailable; validation continues."];
 }
 
 export function renderWorkflowRun(run) {

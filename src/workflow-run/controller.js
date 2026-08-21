@@ -113,7 +113,7 @@ export class WorkflowRunController {
         if (result.headSha !== run.validation.headSha) return this.#block(run, "Validator reported a different Git head");
         await this.store.append(run.id, "validation.observed", {
           operationId: run.validation.operationId, status: result.status,
-          headSha: result.headSha, report: result.report,
+          headSha: result.headSha, report: result.report, visibility: result.visibility || null,
         }, "validation-observed");
         continue;
       }
