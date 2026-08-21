@@ -20,10 +20,19 @@ The shell uses `gpt-5.6-luna` by default with:
 - tracing disabled by default;
 - sensitive trace payloads disabled even when tracing is enabled.
 
-Set `SHIPMATES_FIRSTMATE_MODEL` to choose an explicitly approved model. Set
-`SHIPMATES_FIRSTMATE_TRACING=true` to enable SDK tracing for a run. The API key
-is loaded by Node from the ignored `.env` file and is never written to the task
-ledger.
+Set `SHIPMATES_FIRSTMATE_MODEL` to choose an explicitly approved model. Firstmate
+and persistent Project Agent tracing are off by default. Set
+`SHIPMATES_TRACING=off` to keep tracing disabled, `SHIPMATES_TRACING=platform`
+to use the Agents SDK platform exporter, `SHIPMATES_TRACING=local` to retain
+sanitized structural events beneath `.shipmates/traces`, or
+`SHIPMATES_TRACING=dual` for both. Every mode excludes prompts, outputs, tool
+arguments, error messages, and credentials; local traces retain only structural
+events.
+`SHIPMATES_TRACE_RETENTION_DAYS` defaults to `3` days, and
+`SHIPMATES_TRACE_MAX_RUNS` defaults to `20` runs. The older
+`SHIPMATES_FIRSTMATE_TRACING=true` setting remains a platform-mode compatibility
+alias when `SHIPMATES_TRACING` is unset. The API key is loaded by Node from the
+ignored `.env` file and is never written to the task ledger.
 
 ## Durable call protocol
 

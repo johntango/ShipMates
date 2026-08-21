@@ -93,7 +93,7 @@ export const STATE_CONTRACT = Object.freeze({
       "validation.local.reconciled": ["report", "runId"],
       "validation.approval.requested": ["operationId", "runId", "headSha", "intentSha256"],
       "recovery.audit.recorded": ["report"],
-      "firstmate.run.requested": ["requestId", "attemptId", "requestSha256", "model", "maxTurns", "tracingEnabled", "storeResponse"],
+      "firstmate.run.requested": ["requestId", "attemptId", "requestSha256", "model", "maxTurns", "tracingEnabled", "traceMode", "traceId", "storeResponse"],
       "firstmate.run.classified": ["requestId", "requestEventId", "classification", "usage"],
       "firstmate.run.failed": ["requestId", "requestEventId", "category", "message"],
       "worktree.lease.requested": ["repoPath", "baseSha"],

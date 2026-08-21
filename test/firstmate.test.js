@@ -121,6 +121,32 @@ test("returns a durable classification without repeating the model call", async 
   assert.equal((await store.readEvents("firstmate-test-001")).length, 4);
 });
 
+test("records and supplies a non-sensitive trace identity when tracing is enabled", async (t) => {
+  const store = new TaskStore({ rootDir: await temporaryState(t) });
+  const calls = [];
+  const traceId = `trace_${"b".repeat(32)}`;
+  const shell = new FirstmateShell({
+    store,
+    tracingConfig: { mode: "local" },
+    traceIdFactory: () => traceId,
+    runAgent: async (_agent, _input, options) => {
+      calls.push(options);
+      return successfulResult();
+    },
+    attemptIdFactory: () => "attempt-001",
+  });
+
+  await shell.classify(intake());
+  const snapshot = await store.getSnapshot("firstmate-test-001");
+  assert.equal(snapshot.firstmateRuns[0].traceMode, "local");
+  assert.equal(snapshot.firstmateRuns[0].traceId, traceId);
+  assert.equal(calls[0].traceId, traceId);
+  assert.deepEqual(calls[0].traceMetadata, {
+    component: "firstmate", request_id: "request-001",
+  });
+  assert.equal(calls[0].traceIncludeSensitiveData, false);
+});
+
 test("allows only one concurrent caller to claim a model request", async (t) => {
   const store = new TaskStore({ rootDir: await temporaryState(t) });
   await store.createTask({

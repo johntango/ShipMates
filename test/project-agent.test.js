@@ -56,6 +56,26 @@ test("deterministically dispatches when the model claims completion without usin
   ]);
 });
 
+test("uses the shared non-sensitive tracing configuration", async () => {
+  const calls = [];
+  const controller = new ProjectAgentController({
+    project, task, operations: fixtureOperations([]),
+    tracingConfig: { mode: "dual" },
+    traceIdFactory: () => `trace_${"c".repeat(32)}`,
+    runAgent: async (_agent, _input, options) => {
+      calls.push(options);
+      return { finalOutput: { status: "completed", summary: "Done" } };
+    },
+  });
+  await controller.execute("Build it");
+  assert.equal(calls[0].tracingDisabled, false);
+  assert.equal(calls[0].traceIncludeSensitiveData, false);
+  assert.equal(calls[0].traceId, `trace_${"c".repeat(32)}`);
+  assert.deepEqual(calls[0].traceMetadata, {
+    component: "project-agent", plan_task_id: "interface",
+  });
+});
+
 function fixtureOperations(calls) {
   return {
     inspect: async () => { calls.push(["inspect"]); return { status: "ready", terminalMilestone: false }; },

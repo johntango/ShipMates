@@ -740,6 +740,8 @@ function applyEvent(snapshot, event, index) {
 
     case "firstmate.run.requested": {
       requireCreated(snapshot, event);
+      const hasTraceDetails = Object.hasOwn(event.data, "traceMode") ||
+        Object.hasOwn(event.data, "traceId");
       const {
         requestId,
         attemptId,
@@ -747,6 +749,8 @@ function applyEvent(snapshot, event, index) {
         model,
         maxTurns,
         tracingEnabled,
+        traceMode = tracingEnabled ? "platform" : "off",
+        traceId = null,
         storeResponse,
       } = event.data;
       requireNonEmpty("Firstmate request ID", requestId);
@@ -761,6 +765,12 @@ function applyEvent(snapshot, event, index) {
           "Firstmate tracing must be explicit and response storage must be disabled",
         );
       }
+      if (!new Set(["off", "local", "platform", "dual"]).has(traceMode) ||
+        (traceId !== null && !/^trace_[a-f0-9]{32}$/u.test(traceId)) ||
+        (tracingEnabled !== (traceMode !== "off")) ||
+        (hasTraceDetails && tracingEnabled !== (traceId !== null))) {
+        throw new TaskStateError("Firstmate trace mode and trace ID are inconsistent");
+      }
       if (snapshot.firstmateRuns.some((run) => run.requestId === requestId)) {
         throw new TaskStateError(`Firstmate request already exists: ${requestId}`);
       }
@@ -771,6 +781,8 @@ function applyEvent(snapshot, event, index) {
         model,
         maxTurns,
         tracingEnabled,
+        traceMode,
+        traceId,
         storeResponse,
         status: "requested",
         requestEventId: event.id,

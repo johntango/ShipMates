@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { Agent, run } from "@openai/agents";
+import { Agent, generateTraceId, run } from "@openai/agents";
 import { z } from "zod";
+
+import { traceRunOptions } from "../observability/agent-tracing.js";
 
 import { validateTaskId } from "../core/task-state.js";
 
@@ -117,18 +119,21 @@ export class FirstmateShell {
     actor = "firstmate",
     model = "gpt-5.6-luna",
     tracingEnabled = false,
+    tracingConfig = Object.freeze({ mode: tracingEnabled ? "platform" : "off" }),
     runAgent = run,
     agent = createFirstmateAgent({ model }),
     attemptIdFactory = randomUUID,
+    traceIdFactory = generateTraceId,
   }) {
     if (!store) throw new TypeError("store is required");
     this.store = store;
     this.actor = actor;
     this.model = model;
-    this.tracingEnabled = tracingEnabled;
+    this.tracingConfig = tracingConfig;
     this.runAgent = runAgent;
     this.agent = agent;
     this.attemptIdFactory = attemptIdFactory;
+    this.traceIdFactory = traceIdFactory;
   }
 
   async classify(input, { authorizedAuthority = null } = {}) {
@@ -162,6 +167,8 @@ export class FirstmateShell {
 
     const requestSha256 = digest(parsed.message);
     const attemptId = this.attemptIdFactory();
+    const tracingEnabled = this.tracingConfig.mode !== "off";
+    const traceId = tracingEnabled ? this.traceIdFactory() : null;
     const requestEventId = `firstmate-${parsed.requestId}-requested`;
     snapshot = await this.store.requestFirstmateRun({
       taskId: parsed.taskId,
@@ -171,7 +178,9 @@ export class FirstmateShell {
       requestSha256,
       model: this.model,
       maxTurns: 1,
-      tracingEnabled: this.tracingEnabled,
+      tracingEnabled,
+      traceMode: this.tracingConfig.mode,
+      traceId,
       storeResponse: false,
       eventId: requestEventId,
     });
@@ -188,10 +197,12 @@ export class FirstmateShell {
           buildModelInput(parsed),
           {
             maxTurns: 1,
-            tracingDisabled: !this.tracingEnabled,
-            traceIncludeSensitiveData: false,
-            workflowName: "ShipMates Firstmate intake",
-            groupId: parsed.taskId,
+            ...traceRunOptions(this.tracingConfig, {
+              workflowName: "ShipMates Firstmate intake",
+              groupId: parsed.taskId,
+              traceId,
+              metadata: { component: "firstmate", request_id: parsed.requestId },
+            }),
           },
         );
         classification = firstmateOutputSchema.parse(result.finalOutput);
