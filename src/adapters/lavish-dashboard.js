@@ -173,7 +173,7 @@ export function renderDashboardActionsScript() {
         queueKey: "shipmates-task-action:" + taskId,
       });
       window.lavish.sendQueuedPrompts?.();
-      status.textContent = button.textContent.trim() + " queued. Firstmate will reply in Conversation.";
+      status.textContent = button.textContent.trim() + " sent. Check Conversation for Firstmate's reply.";
     });
   }
   for (const button of document.querySelectorAll("[data-shipmates-review-file]")) {

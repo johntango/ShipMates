@@ -391,8 +391,9 @@ printf '%s\n' 'Inspect the current implementation and report risks' | \
 ```
 
 Operational events are written under the ignored `.shipmates/tasks/` directory.
-The CLI prints the typed classification, aggregate usage, ledger watermark, and
-verified worker reports.
+The [README output guide](../README.md#firstmate-output-and-evidence) defines the
+concise default, detailed evidence command, and machine-readable `--json`
+output.
 
 ## Verification
 

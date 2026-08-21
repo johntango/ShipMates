@@ -21,6 +21,15 @@ export function classifyTaskRecovery(snapshot) {
       false,
     );
   }
+  const readOnlyExecution = latestEvidenceValue(snapshot, "firstmate-local-execution");
+  if (readOnlyExecution?.status === "inspected" && readOnlyExecution.implementation === null) {
+    return decision(
+      "read_only_inspected",
+      "record_observed_completion",
+      "Bounded read-only inspection completed with durable evidence",
+      true,
+    );
+  }
   const implementer = snapshot.workers?.find(({ id }) => id === "implementer") || null;
   const validation = snapshot.validationRuns?.at(-1) || null;
   if (validation?.gate?.status === "awaiting_approval") {
@@ -59,6 +68,12 @@ export function classifyTaskRecovery(snapshot) {
     return decision("stale_active", "inspect_live_process", "Task is active without conclusive terminal evidence", false);
   }
   return decision("human_review", "inspect_evidence", `No automatic recovery policy covers ${snapshot.state}`, false);
+}
+
+function latestEvidenceValue(snapshot, kind) {
+  const item = [...(snapshot.evidence || [])].reverse().find((entry) => entry.kind === kind);
+  if (!item || typeof item.value !== "string") return null;
+  try { return JSON.parse(item.value); } catch { return null; }
 }
 
 function decision(category, action, reason, safeToAutomate) {

@@ -109,13 +109,14 @@ export function parseDemoModeCommand(message, projects) {
 }
 
 export function parseProjectApproval(message, projects, activeProject = null) {
-  const input = String(message || "").trim();
-  if (/^approve\s+(?:the\s+)?(?:project\s+)?plan(?:\s+and\b.*)?$/iu.test(input)) {
+  const input = String(message || "").trim().replace(/[.!?]+$/u, "").trim();
+  const explicit = input.replace(/^i\s+/iu, "");
+  if (/^approve\s+(?:the\s+)?(?:project\s+)?plan(?:\s+and\b.*)?$/iu.test(explicit)) {
     return { project: activeProject, query: activeProject?.name || "selected project" };
   }
-  const named = input.match(/^approve\s+(?:the\s+)?(.+?)\s+project plan(?:\s+and\b.*)?$/iu) ||
-    input.match(/^approve\s+(?:the\s+)?(.+?)\s+plan(?:\s+and\b.*)?$/iu) ||
-    input.match(/^approve project\s+(.+?)(?:\s+and\b.*)?$/iu);
+  const named = explicit.match(/^approve\s+(?:the\s+)?(.+?)\s+project plan(?:\s+and\b.*)?$/iu) ||
+    explicit.match(/^approve\s+(?:the\s+)?(.+?)\s+plan(?:\s+and\b.*)?$/iu) ||
+    explicit.match(/^approve project\s+(.+?)(?:\s+and\b.*)?$/iu);
   if (named) return { project: matchProject(projects, named[1].trim()), query: named[1].trim() };
   return null;
 }

@@ -13,12 +13,13 @@ export function projectTaskPresentation(snapshot, {
   ].filter(Boolean);
   const failedValidation = validation && validation.passed === false &&
     validation.gate?.status !== "awaiting_approval";
-  const safeFailure = failures.some((failure) => safeBlocker.test(failure));
-  const unsafeFailure = failures.some((failure) => !safeBlocker.test(failure));
-  const safelyBlocked = safeFailure || new Set(["awaiting_human", "recovery_required", "blocked"])
+  const safeFailures = failures.filter((failure) => safeBlocker.test(failure));
+  const unsafeFailures = failures.filter((failure) => !safeBlocker.test(failure));
+  const safelyBlocked = safeFailures.length > 0 || new Set(["awaiting_human", "recovery_required", "blocked"])
     .has(snapshot.state);
-  const explicitlyFailed = !safeFailure && (snapshot.state === "failed" || execution?.status === "failed" || failedValidation ||
-    unsafeFailure || readOnlyTerminal?.status === "failed");
+  const explicitlyFailed = unsafeFailures.length > 0 || failedValidation ||
+    readOnlyTerminal?.status === "failed" ||
+    (safeFailures.length === 0 && (snapshot.state === "failed" || execution?.status === "failed"));
   const passed = snapshot.state === "complete" || validation?.passed === true ||
     readOnlyTerminal?.status === "completed" ||
     new Set(["inspected", "completed", "demo_complete"]).has(execution?.status) ||
@@ -28,7 +29,11 @@ export function projectTaskPresentation(snapshot, {
   const status = explicitlyFailed ? "Failed" : safelyBlocked ? "Blocked safely" :
     passed ? "Passed" : "Blocked safely";
   const nextAction = humanAction || nextActionFor({ status, snapshot, reconciliation });
-  const why = whyFor({ status, snapshot, validation, failures, reconciliation });
+  const why = whyFor({
+    status, snapshot, validation,
+    failures: explicitlyFailed ? [...unsafeFailures, ...safeFailures] : failures,
+    reconciliation,
+  });
   const metrics = availableMetrics(snapshot, validation);
 
   return {
@@ -159,6 +164,10 @@ function nextActionFor({ status, snapshot, reconciliation }) {
   if (reconciliation?.action && reconciliation.action !== "no_action") {
     return sentence(reconciliation.action.replaceAll("_", " "));
   }
+  if (snapshot.state === "awaiting_human" &&
+    snapshot.validationApprovalRequests?.at(-1)?.status === "requested") {
+    return "Reconcile the recorded validator response; do not approve or rerun validation again.";
+  }
   if (snapshot.state === "awaiting_human") return "Review the recorded decision and provide the exact requested approval.";
   if (status === "Failed") return "Inspect the failing test or worker evidence, then request a focused repair.";
   if (new Set(["running", "preparing", "awaiting_worker", "validating"]).has(snapshot.state)) {
@@ -174,6 +183,10 @@ function whyFor({ status, snapshot, validation, failures, reconciliation }) {
     return "All assigned read-only agents completed without reporting a mutation or failure.";
   }
   if (failures.length > 0) return sentence(failures[0]);
+  if (validation?.gate?.status === "awaiting_approval" &&
+    snapshot.validationApprovalRequests?.at(-1)?.status === "requested") {
+    return "The approval was recorded, but its validator result has not yet been reconciled into the task ledger.";
+  }
   if (validation?.gate?.status === "awaiting_approval") {
     return `Validation paused at ${validation.gate.step || "an approval gate"}; no unsafe continuation occurred.`;
   }

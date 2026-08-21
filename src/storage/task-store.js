@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   mkdir,
   open,
   readdir,
   readFile,
   rename,
+  stat,
   unlink,
 } from "node:fs/promises";
 import path from "node:path";
@@ -22,12 +24,14 @@ export class TaskStore {
     idFactory = randomUUID,
     lockTimeoutMs = 2_000,
     lockRetryMs = 20,
+    processIdentity = readProcessIdentity,
   } = {}) {
     this.rootDir = path.resolve(rootDir);
     this.clock = clock;
     this.idFactory = idFactory;
     this.lockTimeoutMs = lockTimeoutMs;
     this.lockRetryMs = lockRetryMs;
+    this.processIdentity = processIdentity;
   }
 
   async createTask({ taskId, kind, repo, baseSha, actor, eventId, at }) {
@@ -361,6 +365,13 @@ export class TaskStore {
       at,
       actor,
       data: { report, runId },
+    });
+  }
+
+  async requestValidationApproval({ taskId, actor, request, eventId, at }) {
+    return this.#append(taskId, {
+      id: eventId || this.idFactory(), taskId,
+      type: "validation.approval.requested", at, actor, data: request,
     });
   }
 
@@ -775,6 +786,13 @@ export class TaskStore {
       .sort();
   }
 
+  async withExclusiveLock(lockId, operation) {
+    if (!/^[a-z0-9][a-z0-9._-]{2,63}$/u.test(lockId) || typeof operation !== "function") {
+      throw new TypeError("Exclusive lock requires a valid lock id and operation");
+    }
+    return this.#withLeaseLock(path.join(this.rootDir, "locks", `${lockId}.lock`), lockId, operation);
+  }
+
   async #append(taskId, event, { requireAbsent = false } = {}) {
     validateTaskId(taskId);
     return this.#withLock(taskId, async () => {
@@ -844,35 +862,53 @@ export class TaskStore {
     const taskDir = this.#taskDir(taskId);
     await mkdir(taskDir, { recursive: true, mode: 0o700 });
     const lockPath = path.join(taskDir, "write.lock");
-    const startedAt = Date.now();
-    let handle;
+    return this.#withLeaseLock(lockPath, taskId, operation);
+  }
 
-    while (!handle) {
-      try {
-        handle = await open(lockPath, "wx", 0o600);
-      } catch (error) {
-        if (error.code !== "EEXIST") {
-          throw error;
+  async #withLeaseLock(lockPath, lockId, operation) {
+    const claimsDir = `${lockPath}.claims`;
+    await mkdir(claimsDir, { recursive: true, mode: 0o700 });
+    const token = `${process.pid}-${this.idFactory()}`;
+    const temporaryPath = path.join(claimsDir, `.pending-${token}`);
+    const claimPath = path.join(claimsDir, `${token}.json`);
+    const ownerIdentity = this.processIdentity(process.pid);
+    if (!ownerIdentity) throw new TaskStoreError(`Could not establish lock owner identity: ${lockId}`);
+    const handle = await open(temporaryPath, "wx", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify({
+        pid: process.pid, ownerIdentity, acquiredAt: new Date().toISOString(),
+      })}\n`);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temporaryPath, claimPath);
+
+    const startedAt = Date.now();
+    try {
+      while (true) {
+        const claims = [];
+        for (const name of await readdir(claimsDir)) {
+          if (!name.endsWith(".json")) continue;
+          const candidatePath = path.join(claimsDir, name);
+          try {
+            const owner = JSON.parse(await readFile(candidatePath, "utf8"));
+            if (this.processIdentity(owner.pid) !== owner.ownerIdentity) continue;
+            const metadata = await stat(candidatePath, { bigint: true });
+            claims.push({ name, publishedAt: metadata.ctimeNs });
+          } catch {}
         }
+        claims.sort((left, right) => left.publishedAt < right.publishedAt ? -1 :
+          left.publishedAt > right.publishedAt ? 1 : left.name.localeCompare(right.name));
+        if (claims[0]?.name === path.basename(claimPath)) return await operation();
         if (Date.now() - startedAt >= this.lockTimeoutMs) {
-          throw new TaskStoreError(`Timed out waiting for task lock: ${taskId}`);
+          throw new TaskStoreError(`Timed out waiting for task lock: ${lockId}`);
         }
         await delay(this.lockRetryMs);
       }
-    }
-
-    try {
-      await handle.writeFile(
-        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
-      );
-      await handle.sync();
-      return await operation();
     } finally {
-      await handle.close();
-      await unlink(lockPath).catch((error) => {
-        if (error.code !== "ENOENT") {
-          throw error;
-        }
+      await unlink(claimPath).catch((error) => {
+        if (error.code !== "ENOENT") throw error;
       });
     }
   }
@@ -906,6 +942,16 @@ export class TaskStore {
 
   #snapshotPath(taskId) {
     return path.join(this.#taskDir(taskId), "snapshot.json");
+  }
+}
+
+function readProcessIdentity(pid) {
+  try {
+    return execFileSync("ps", ["-ww", "-o", "lstart=,command=", "-p", String(pid)], {
+      encoding: "utf8",
+    }).trim() || null;
+  } catch {
+    return null;
   }
 }
 

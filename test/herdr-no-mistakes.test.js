@@ -122,3 +122,20 @@ test("does nothing outside Herdr and treats visibility failures as non-fatal", a
   assert.equal(await failing.started({}), null);
   assert.deepEqual(warnings, ["no-mistakes Herdr visibility unavailable (Error)"]);
 });
+
+test("can hide internal task identity in the simple workflow pane label", async () => {
+  const reports = [];
+  const observer = new HerdrNoMistakesObserver({
+    client: {
+      list: async () => [], split: async () => ({ paneId: "w1:p4" }),
+      reportAgent: async (value) => reports.push(value),
+      run: async () => {},
+    },
+    currentPaneId: "w1:p1", watcherScript: "/watcher.js", displayTaskId: false,
+  });
+  await observer.started({
+    taskId: "workflow-private-id", binaryPath: "/validator", runtimeHome: "/state",
+    worktreePath: "/worktree", expectedHeadSha: "a".repeat(40),
+  });
+  assert.equal(reports[0].agent, "ShipMates no-mistakes");
+});

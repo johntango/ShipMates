@@ -23,10 +23,20 @@ export class PlannedTaskDispatcher {
 
   async #dispatchClaimed({ projectId, task }) {
     const project = await this.selectProject(projectId);
+    const requiredAuthority = task.requiredAuthority === "read_only" ? "read_only" : "local_write";
+    const instruction =
+      `${requiredAuthority === "read_only" ? "Inspect" : "Implement"} planned task ${task.id} ` +
+      `for ${project.name}: ${task.title}. ${task.description} ` +
+      `This request is bound to plan task id ${task.id}.`;
     try {
       await this.dispatchRequest(
-        `Implement planned task ${task.id} for ${project.name}: ${task.title}. ${task.description} ` +
-        `This request is bound to plan task id ${task.id}.`,
+        instruction,
+        {
+          projectId,
+          planTaskId: task.id,
+          requiredAuthority,
+          instruction,
+        },
       );
     } catch (error) {
       const failed = (await this.projectStore.get(projectId))?.tasks.find(({ id }) => id === task.id);
@@ -66,4 +76,16 @@ export class PlannedTaskDispatcher {
       task: blocked?.tasks.find(({ id }) => id === task.id) || null,
     };
   }
+}
+
+export async function claimPlannedTaskForDispatch({
+  projectStore, projectId, planTaskId, requiredAuthority,
+}) {
+  const project = await projectStore.get(projectId);
+  let task = project?.tasks.find(({ id }) => id === planTaskId) || null;
+  if (requiredAuthority === "local_write" && task &&
+    new Set(["planned", "ready"]).has(task.status)) {
+    task = await projectStore.claimReadyTask({ projectId, planTaskId });
+  }
+  return task;
 }

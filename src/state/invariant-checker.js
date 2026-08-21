@@ -85,6 +85,10 @@ export class StateInvariantChecker {
     }
     checkSchema(snapshot.schemaVersion, STATE_CONTRACT.taskLedger.snapshotSchemaVersion, `task:${taskId}:snapshot`, findings);
     checkFields(snapshot, STATE_CONTRACT.taskLedger.snapshotFields, `task:${taskId}:snapshot`, findings);
+    for (const approval of snapshot.validationApprovalRequests || []) {
+      checkFields(approval, STATE_CONTRACT.taskLedger.validationApprovalRequestFields,
+        `task:${taskId}:validation_approval_request`, findings);
+    }
     let persisted;
     try {
       persisted = await this.#readJson(path.join("tasks", taskId, "snapshot.json"), { allowMissing: true });

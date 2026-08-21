@@ -136,7 +136,7 @@ export class FirstmateShell {
     this.traceIdFactory = traceIdFactory;
   }
 
-  async classify(input) {
+  async classify(input, { authorizedAuthority = null } = {}) {
     const parsed = firstmateInputSchema.parse(input);
     validateTaskId(parsed.taskId);
     let snapshot = await this.#ensureTask(parsed);
@@ -188,21 +188,26 @@ export class FirstmateShell {
     let classification;
     let usage;
     try {
-      const result = await this.runAgent(
-        this.agent,
-        buildModelInput(parsed),
-        {
-          maxTurns: 1,
-          ...traceRunOptions(this.tracingConfig, {
-            workflowName: "ShipMates Firstmate intake",
-            groupId: parsed.taskId,
-            traceId,
-            metadata: { component: "firstmate", request_id: parsed.requestId },
-          }),
-        },
-      );
-      classification = firstmateOutputSchema.parse(result.finalOutput);
-      usage = normalizeUsage(result.state?.usage);
+      if (new Set(["read_only", "local_write"]).has(authorizedAuthority)) {
+        classification = authorizedClassification(parsed.message, authorizedAuthority);
+        usage = normalizeUsage();
+      } else {
+        const result = await this.runAgent(
+          this.agent,
+          buildModelInput(parsed),
+          {
+            maxTurns: 1,
+            ...traceRunOptions(this.tracingConfig, {
+              workflowName: "ShipMates Firstmate intake",
+              groupId: parsed.taskId,
+              traceId,
+              metadata: { component: "firstmate", request_id: parsed.requestId },
+            }),
+          },
+        );
+        classification = firstmateOutputSchema.parse(result.finalOutput);
+        usage = normalizeUsage(result.state?.usage);
+      }
     } catch (cause) {
       await this.store.recordFirstmateFailure({
         taskId: parsed.taskId,
@@ -282,6 +287,22 @@ export class FirstmateShell {
       eventId: `firstmate-${requestId}-clarified`,
     });
   }
+}
+
+function authorizedClassification(message, authority) {
+  const workItem = String(message).trim();
+  return firstmateOutputSchema.parse({
+    schemaVersion: 1,
+    summary: `${authority === "read_only" ? "Inspect" : "Implement"} the authorized task: ${workItem}`.slice(0, 2_000),
+    taskType: authority === "read_only" ? "review" : "code_change",
+    requiredAuthority: authority,
+    approvalBoundary: "none",
+    recommendedNextStep: authority === "read_only"
+      ? "Run the bounded read-only inspection and report its evidence."
+      : "Run the bounded local implementation and validation workflow.",
+    requiresHumanApproval: false,
+    workItems: [workItem],
+  });
 }
 
 export class FirstmateShellError extends Error {

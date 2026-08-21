@@ -7,6 +7,7 @@ export class FirstmateLocalExecutor {
   constructor({
     runtime, schemaPath, store = null, actor = "firstmate", observer = null,
     implementationWorkflow = null, scoutLimit = 2, heartbeatMs = 15_000,
+    skipImplementationPreflight = false,
   } = {}) {
     if (!runtime || typeof runtime.run !== "function" || !schemaPath) {
       throw new TypeError("FirstmateLocalExecutor requires runtime and schemaPath");
@@ -21,6 +22,7 @@ export class FirstmateLocalExecutor {
       throw new TypeError("scoutLimit must be 1 or 2");
     }
     this.scoutLimit = scoutLimit;
+    this.skipImplementationPreflight = skipImplementationPreflight === true;
     if (!Number.isSafeInteger(heartbeatMs) || heartbeatMs < 1) {
       throw new TypeError("heartbeatMs must be a positive integer");
     }
@@ -47,7 +49,8 @@ export class FirstmateLocalExecutor {
       };
     }
 
-    const workItems = normalizedWorkItems(classification, message, this.scoutLimit);
+    const workItems = classification.requiredAuthority === "local_write" && this.skipImplementationPreflight
+      ? [] : normalizedWorkItems(classification, message, this.scoutLimit);
     await recordProgress(progress, {
       phase: "execution", step: "scouting", message: "Starting bounded task execution",
     });
@@ -62,7 +65,13 @@ export class FirstmateLocalExecutor {
     let implementation = null;
     let status = "inspected";
     try {
-      await this.observer?.begin?.({ taskId, repoPath, workerCount: workItems.length });
+      const implementationOnly = classification.requiredAuthority === "local_write" &&
+        workItems.length === 0;
+      await this.observer?.begin?.({
+        taskId,
+        repoPath,
+        workerCount: implementationOnly ? 1 : workItems.length,
+      });
       scouts = await Promise.all(workItems.map((workItem, index) =>
         this.#runWorker({
           taskId,

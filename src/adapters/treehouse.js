@@ -1,12 +1,50 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const bundledTreehouseCandidate = "/private/tmp/treehouse-v2.0.0/treehouse";
+
+export const PINNED_TREEHOUSE_DARWIN_ARM64 = Object.freeze({
+  version: "v2.0.0",
+  sourceCommit: "68fa3d2556542add76bf80255787b8625a5041a6",
+  archiveSha256: "66022f36eb0c79d6f242025f266b782ac947b3a2817005f13425cbd18874f1f9",
+  binarySha256: "f1c766f5427d132565d1d0499eb788d498031d8f301014940de31933465d924b",
+});
+
+export async function resolvePinnedTreehouseBinary({
+  explicitPath = null,
+  pin = PINNED_TREEHOUSE_DARWIN_ARM64,
+  candidatePaths = [
+    path.join(homedir(), ".local", "share", "shipmates", "runtimes", "treehouse", pin.version, "treehouse"),
+    bundledTreehouseCandidate,
+  ],
+  binaryReader = readFile,
+} = {}) {
+  const candidates = explicitPath ? [explicitPath] : candidatePaths;
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    let bytes;
+    try {
+      bytes = await binaryReader(resolved);
+    } catch (cause) {
+      if (cause?.code === "ENOENT") continue;
+      throw new TreehouseAdapterError("Could not inspect a Treehouse binary candidate", { cause });
+    }
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (sha256 === pin.binarySha256) return resolved;
+    if (explicitPath) {
+      throw new TreehouseAdapterError("TREEHOUSE_BIN does not match the pinned binary digest");
+    }
+  }
+  throw new TreehouseAdapterError(
+    `Pinned Treehouse ${pin.version} is not installed in a supported location`,
+  );
+}
 
 export class TreehouseAdapterError extends Error {
   constructor(message, options = {}) {
@@ -130,11 +168,11 @@ export class TreehouseWorktreeManager {
     if (status.trim() === "") {
       return [];
     }
-    return status.split(/\r?\n/u).map((line) =>
-      parseStatusLine(line, {
+    return status.split(/\r?\n/u)
+      .filter((line) => !isProcessDetailLine(line))
+      .map((line) => parseStatusLine(line, {
         homeDirectory: this.homeDirectory,
-      }),
-    );
+      }));
   }
 
   async findWorktree({ repoPath, worktreePath }) {
@@ -437,11 +475,13 @@ export class TreehouseWorktreeManager {
 
 function defaultTreehouseBinary() {
   if (process.env.TREEHOUSE_BIN) return process.env.TREEHOUSE_BIN;
+  const stable = path.join(homedir(), ".local", "share", "shipmates", "runtimes", "treehouse", "v2.0.0", "treehouse");
+  if (existsSync(stable)) return stable;
   return existsSync(bundledTreehouseCandidate) ? bundledTreehouseCandidate : "treehouse";
 }
 
 function withPreferredPath(environment, directory) {
-  const result = { ...environment };
+  const result = { ...environment, TREEHOUSE_NO_UPDATE_CHECK: "1" };
   const entries = String(result.PATH || "").split(path.delimiter).filter(Boolean);
   result.PATH = [directory, ...entries.filter((entry) => entry !== directory)]
     .join(path.delimiter);
@@ -491,6 +531,10 @@ function parseStatusLine(line, { homeDirectory }) {
     worktreePath: path.resolve(expandedPath),
     leaseHolder: leaseHolder || null,
   });
+}
+
+function isProcessDetailLine(line) {
+  return !/^\s*\d+\s/u.test(line) && /^\s{2,}\S(?:.*\S)? \(\d+\)\s*$/u.test(line);
 }
 
 function assertAbsolutePath(label, value) {

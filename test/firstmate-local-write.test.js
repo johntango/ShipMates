@@ -125,3 +125,28 @@ test("passes local-only demo preparation to Treehouse", async (t) => {
   await prepareFirstmateLocalWrite({ store, manager, taskId, requestId: "demo-request", repoPath: "/repos/demo", localOnly: true });
   assert.equal(localOnly, true);
 });
+
+test("marks unavailable Treehouse capacity as safely blocked before lease acquisition", async (t) => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-capacity-"));
+  t.after(() => rm(rootDir, { recursive: true, force: true }));
+  const store = new TaskStore({ rootDir });
+  await store.createTask({ taskId, kind: "firstmate-intake", repo: "owner/repo", baseSha: headSha, actor: "firstmate" });
+  await store.transition({ taskId, from: "proposed", to: "clarified", actor: "firstmate" });
+  const requestId = "capacity-request";
+  const manager = {
+    async prepareRepository() { assert.fail("capacity must be checked before acquisition"); },
+  };
+  const error = Object.assign(new Error("Treehouse capacity is unavailable; active leases were preserved"), {
+    name: "TreehouseCapacityBlockedError",
+  });
+
+  await assert.rejects(
+    prepareFirstmateLocalWrite({
+      store, manager, taskId, requestId, repoPath: "/repos/shipmates",
+      leaseReconciler: { async ensureCapacity() { throw error; } },
+    }),
+    /capacity is unavailable/u,
+  );
+  const snapshot = await store.getSnapshot(taskId);
+  assert.equal(snapshot.state, "blocked");
+});

@@ -3,7 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CodexWorkerRuntime } from "../src/adapters/codex-worker.js";
-import { NoMistakesLocalGate } from "../src/adapters/no-mistakes.js";
+import {
+  NoMistakesLocalGate,
+  resolvePinnedNoMistakesBinary,
+} from "../src/adapters/no-mistakes.js";
 import { HerdrPaneClient } from "../src/adapters/herdr-pane.js";
 import { HerdrProjectAgentObserver } from "../src/adapters/herdr-project-agent.js";
 import { HerdrNoMistakesObserver } from "../src/adapters/herdr-no-mistakes.js";
@@ -58,7 +61,9 @@ const operations = {
     if (!terminalMilestone) throw new Error("Full validation is reserved for a terminal project milestone");
     implementation ||= await executor.reconcile({ projectId, planTaskId });
     if (implementation?.status !== "completed") throw new Error("Milestone validation requires completed implementation");
-  const binaryPath = process.env.NO_MISTAKES_BIN || "/private/tmp/shipmates-no-mistakes-v1.41.1/no-mistakes";
+  const binaryPath = await resolvePinnedNoMistakesBinary({
+    explicitPath: process.env.NO_MISTAKES_BIN || null,
+  });
   validation = await new NoMistakesLocalGate({
     binaryPath, stateRoot: path.join(stateRoot, "no-mistakes"),
     onProgress: (message) => console.error(`[no-mistakes] ${message}`),

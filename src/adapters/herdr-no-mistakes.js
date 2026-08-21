@@ -9,6 +9,7 @@ export class HerdrNoMistakesObserver {
     watcherScript,
     nodePath = process.execPath,
     onWarning = console.error,
+    displayTaskId = true,
   } = {}) {
     if (!client || !watcherScript) {
       throw new TypeError("HerdrNoMistakesObserver requires client and watcherScript");
@@ -18,13 +19,14 @@ export class HerdrNoMistakesObserver {
     this.watcherScript = path.resolve(watcherScript);
     this.nodePath = nodePath;
     this.onWarning = onWarning;
+    this.displayTaskId = displayTaskId;
     this.sequence = 0;
   }
 
   async started({ taskId, binaryPath, runtimeHome, worktreePath, expectedHeadSha }) {
     if (!this.currentPaneId) return null;
     try {
-      const agent = `ShipMates no-mistakes: ${taskId}`;
+      const agent = this.displayTaskId ? `ShipMates no-mistakes: ${taskId}` : "ShipMates no-mistakes";
       const existing = (await this.client.list()).find((pane) => pane.agent === agent);
       const paneId = existing?.paneId || (await this.client.split({
         paneId: this.currentPaneId,

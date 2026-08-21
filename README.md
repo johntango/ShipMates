@@ -73,6 +73,23 @@ for multiline terminal input. Use `/cancel` to discard that input. `/exit`,
 workers are allowed to finish, so exiting the prompt is not equivalent to
 terminating active tasks.
 
+The experimental single-run local workflow is opt-in while the legacy flow
+remains available:
+
+```sh
+SHIPMATES_SIMPLE_WORKFLOW=1 npm run firstmate
+```
+
+In this mode, an ordinary local development request produces one short plan.
+After one plan approval, Firstmate launches one Implementer in a Treehouse
+workspace, creates a clean candidate commit there, and runs pinned no-mistakes
+against that exact commit. A passing run completes automatically. It does not
+merge or copy the candidate into the checkout, push, publish, or open a pull
+request. Those delivery actions remain separate explicit decisions. The
+dashboard shows only the high-level phase and accepts only plan approval or a
+status refresh; internal run and operation identifiers stay in diagnostic
+state beneath `SHIPMATES_STATE_DIR`.
+
 ### Firstmate output and evidence
 
 Normal interactive and one-shot output leads with a concise human summary:
@@ -100,6 +117,14 @@ node --env-file=.env scripts/firstmate.js --json TASK_ID REQUEST_ID OWNER/REPO B
 The JSON form contains the classification, usage, ledger summary, and complete
 execution result. Omitting `--json` preserves the human-readable default.
 
+Interactive Firstmate may dispatch a bounded read-only inspection without plan
+approval. It records durable intent and launch identity first, restores
+monitoring after interruption, and blocks a duplicate while the prior
+inspection is outstanding. Implementation still requires an approved plan and
+a claimed planned task; external-write and destructive requests keep their
+separate approval workflows. The detailed boundary is specified in the
+[Firstmate orchestration guide](docs/firstmate-orchestration.md#authority-aware-dispatch).
+
 When Firstmate is started inside Herdr, it registers the pane as
 `ShipMates FirstMate` in Herdr's agent/task list as well as naming the pane.
 Its displayed state is `listening` while it waits for input and changes to the
@@ -108,10 +133,14 @@ request. Status reports use a fresh source for every Firstmate process, so an
 ordinary restart cannot be rejected by Herdr as stale.
 
 Scouts, Implementers, and persistent Project Agents run visibly in their
-assigned Herdr panes. When the pinned no-mistakes gate starts, ShipMates opens a
-dedicated `ShipMates no-mistakes: <task>` pane and attaches no-mistakes' native
-TUI to the exact validation run. The pane shows live pipeline steps, agent log
-output, findings, and approval state. Herdr's task dashboard summarizes the
+assigned Herdr panes. An approved implementation that does not need a Scout
+preflight still reserves one distinct Implementer pane before durable dispatch;
+the dispatch receipt records that pane ID. If Herdr is unavailable, the same
+bounded worker may run without pane visibility, but visibility never authorizes,
+duplicates, or blocks execution. When the pinned no-mistakes gate starts,
+ShipMates opens a dedicated `ShipMates no-mistakes: <task>` pane and attaches
+no-mistakes' native TUI to the exact validation run. The pane shows live
+pipeline steps, agent log output, findings, and approval state. Herdr's task dashboard summarizes the
 same run with its current stage (`reviewing`, `testing`, `linting`, and so on),
 elapsed time, attention-needed state, and terminal `passed` or `failed` result;
 select the task to open the detailed pane. The pane waits for a non-terminal
@@ -205,6 +234,11 @@ and a dependency-ready plan item must be atomically claimed, before an
 Implementer can be dispatched. A successful dispatch also requires a durable
 task attachment and launch receipt. Missing launch identity is recorded as a
 blocker instead of leaving work indefinitely described as dispatched.
+
+After the human approves a saved plan, Firstmate automatically claims and
+dispatches its first dependency-ready task. Plan task IDs and claim mechanics
+remain internal governance state; they are not an additional command or
+approval the human must provide.
 
 Plan tasks move through `planned`, `claimed`, `dispatched`, `blocked`, and
 `completed` states. Retries are retained as attempts under the original plan

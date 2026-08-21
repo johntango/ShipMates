@@ -36,7 +36,21 @@
       <p class="mb-2">${alerts.length} task${alerts.length === 1 ? " has" : "s have"} exceeded the ${escape(state.watchdog.thresholdMinutes)} minute monitoring limit.</p>
       <div class="vstack gap-2">${alerts.map((alert) => `<div><strong>${escape(alert.projectName)} — ${escape(alert.taskName)}</strong><br><span>${escape(alert.status)} (${escape(alert.ageMinutes)} minutes).</span><br><span class="small">${escape(alert.remedy)}</span></div>`).join("")}</div>
     </section>` : ""}${historical.length ? `<details class="alert alert-secondary mb-4"><summary>${historical.length} historical ledger record${historical.length === 1 ? "" : "s"} need cleanup (not live processes)</summary><div class="vstack gap-2 mt-3">${historical.map((item) => `<div><strong>${escape(item.projectName)} — ${escape(item.taskName)}</strong><br><span class="small">Recorded ${escape(item.state)} · ${escape(item.ageMinutes)} minutes old. ${escape(item.remedy)}</span></div>`).join("")}</div></details>` : ""}`;
-    document.querySelector("#tasks").innerHTML = state.tasks.map((task) => `
+    const simpleRuns = state.workflowRuns || [];
+    const simpleRunCards = simpleRuns.map((run) => `
+      <article class="card shadow-sm task-card" data-state="${run.presentation.outcome === "Passed" ? "done" : run.presentation.outcome === "Blocked safely" ? "working" : "attention"}">
+        <div class="card-body">
+          <div class="d-flex flex-wrap justify-content-between gap-2"><h2 class="h5 mb-0">${escape(run.request)}</h2><span class="badge text-bg-secondary">${escape(run.phase.replaceAll("_", " "))}</span></div>
+          <div class="alert ${run.presentation.outcome === "Passed" ? "alert-success" : "alert-warning"} mt-3 mb-0">
+            <div class="h5 mb-1">${escape(run.presentation.outcome)}</div>
+            ${run.presentation.nextAction ? `<div><strong>Next action:</strong> ${escape(run.presentation.nextAction)}</div>` : '<div><strong>Next action:</strong> None.</div>'}
+            <div class="small mt-1"><strong>Why:</strong> ${escape(run.presentation.why)}</div>
+            ${run.phase === "awaiting_approval" ? '<button class="btn btn-success btn-sm mt-2" data-workflow-intent="approve">Approve plan</button>' : run.phase === "awaiting_validation_decision" ? '<button class="btn btn-warning btn-sm mt-2" data-workflow-intent="approve_validation">Approve validation concern</button>' : '<button class="btn btn-outline-secondary btn-sm mt-2" data-workflow-intent="status">Refresh status</button>'}
+          </div>
+          <details class="small mt-2"><summary>Short plan</summary><div class="mt-2">${escape(run.plan)}</div></details>
+        </div>
+      </article>`).join("");
+    const legacyTaskCards = state.tasks.map((task) => `
       <article class="card shadow-sm task-card" data-state="${taskTone(task)}">
         <div class="card-body">
           <div class="d-flex flex-wrap align-items-start justify-content-between gap-2">
@@ -60,7 +74,8 @@
           ${task.humanAction ? `<div class="alert alert-warning py-2 mt-3 mb-0" role="alert"><strong>Human input required.</strong> Send this exact command to Firstmate:<br><code>${escape(task.humanAction)}</code></div>` : ""}
           ${task.validation ? `<div class="alert ${task.validation.passed ? "alert-success" : "alert-warning"} py-2 mt-3 mb-0">Validation ${task.validation.passed ? "passed" : "did not pass"}: ${escape(task.validation.outcome || "unknown")}</div>` : ""}
         </div>
-      </article>`).join("") || '<div class="alert alert-secondary">No tasks recorded yet.</div>';
+      </article>`).join("");
+    document.querySelector("#tasks").innerHTML = simpleRunCards + legacyTaskCards || '<div class="alert alert-secondary">No tasks recorded yet.</div>';
     const projects = state.projects || [];
     document.querySelector("#projects").innerHTML = projects.map((project) => {
       const percent = project.progress.total
@@ -117,6 +132,17 @@
     } catch {
       status.className = "alert alert-danger mt-3";
       status.textContent = "Could not contact Firstmate.";
+    } finally { button.disabled = false; }
+  });
+  document.querySelector("#tasks").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-workflow-intent]");
+    if (!button || button.disabled || reviewState) return;
+    button.disabled = true;
+    try {
+      await fetch("/api/workflow/actions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: button.dataset.workflowIntent }),
+      });
     } finally { button.disabled = false; }
   });
   const reviewState = window.SHIPMATES_REVIEW_STATE;

@@ -1,11 +1,40 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import test from "node:test";
 
 import {
+  PINNED_TREEHOUSE_DARWIN_ARM64,
+  resolvePinnedTreehouseBinary,
   TreehouseAdapterError,
   TreehouseWorktreeManager,
 } from "../src/adapters/treehouse.js";
+
+test("resolves only the digest-pinned Treehouse runtime from stable candidates", async () => {
+  const bytes = Buffer.from("verified-treehouse");
+  const pin = {
+    ...PINNED_TREEHOUSE_DARWIN_ARM64,
+    binarySha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+  const resolved = await resolvePinnedTreehouseBinary({
+    pin,
+    candidatePaths: ["/missing/treehouse", "/stable/treehouse"],
+    binaryReader: async (candidate) => {
+      if (candidate === "/stable/treehouse") return bytes;
+      const error = new Error("missing");
+      error.code = "ENOENT";
+      throw error;
+    },
+  });
+  assert.equal(resolved, "/stable/treehouse");
+});
+
+test("rejects an explicit Treehouse binary that does not match the pin", async () => {
+  await assert.rejects(() => resolvePinnedTreehouseBinary({
+    explicitPath: "/wrong/treehouse",
+    binaryReader: async () => Buffer.from("wrong"),
+  }), /TREEHOUSE_BIN does not match the pinned binary digest/u);
+});
 
 test("leases a worktree with a durable task holder", async () => {
   const calls = [];
@@ -71,6 +100,30 @@ test("parses Treehouse status into structured lease records", async () => {
       leaseHolder: null,
     },
   ]);
+});
+
+test("ignores verified Treehouse process-detail continuation lines", async () => {
+  const manager = new TreehouseWorktreeManager({
+    homeDirectory: "/tmp/treehouse-home",
+    executeFile: async () => ({
+      stdout: "1 leased ~/.treehouse/repo/1/repo  (held by task-001)\n" +
+        "                   zsh (63745)\n" +
+        "2 available ~/.treehouse/repo/2/repo\n",
+      stderr: "",
+    }),
+  });
+  const entries = await manager.list({ repoPath: "/repos/practice" });
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].leaseHolder, "task-001");
+  assert.equal(entries[1].state, "available");
+});
+
+test("continues to reject malformed Treehouse worktree rows", async () => {
+  const manager = new TreehouseWorktreeManager({
+    executeFile: async () => ({ stdout: "1 leased\n", stderr: "" }),
+  });
+  await assert.rejects(manager.list({ repoPath: "/repos/practice" }),
+    /Could not parse Treehouse status line/u);
 });
 
 test("requires an exact task holder when reconciling a lease", async () => {
@@ -151,6 +204,7 @@ test("allows an explicit compatible Git directory for Treehouse subprocesses", a
       options.env.PATH === "/compatible/git/bin:/usr/local/bin:/usr/bin"),
     true,
   );
+  assert.equal(calls.every(({ options }) => options.env.TREEHOUSE_NO_UPDATE_CHECK === "1"), true);
 });
 
 test("prepares a local-only demo repository without contacting origin", async () => {

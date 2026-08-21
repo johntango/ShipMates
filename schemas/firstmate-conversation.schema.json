@@ -21,9 +21,10 @@
           "id": { "type": "string" },
           "title": { "type": "string" },
           "description": { "type": "string" },
+          "requiredAuthority": { "type": "string", "enum": ["read_only", "local_write"] },
           "dependsOn": { "type": "array", "items": { "type": "string" } }
         },
-        "required": ["id", "title", "description", "dependsOn"]
+        "required": ["id", "title", "description", "requiredAuthority", "dependsOn"]
       }
     }
   },

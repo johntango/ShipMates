@@ -8,6 +8,9 @@ import { TaskStore } from "../src/storage/task-store.js";
 
 import {
   authorizeFirstmateDispatch,
+  findProcessReceipt,
+  isProcessReceiptLive,
+  readProcessCommand,
   ReadOnlyInspectionTracker,
   verifyAuthorizedClassification,
 } from "../src/workflows/firstmate-dispatch-policy.js";
@@ -26,9 +29,19 @@ test("rejects unauthorized work before any Scout can launch", () => {
   assert.equal(launches, 0);
 });
 
+test("allows a local-write plan item to narrow to read-only but never escalate", () => {
+  assert.doesNotThrow(() => verifyAuthorizedClassification("local_write", "read_only"));
+  assert.throws(() => verifyAuthorizedClassification("local_write", "external_write"),
+    /authorized local_write work was classified as external_write/u);
+  assert.throws(() => verifyAuthorizedClassification("read_only", "local_write"),
+    /authorized read_only work was classified as local_write/u);
+});
+
 test("authorizes durably tracked read-only inspection without project approval", async () => {
   const events = [];
   const tracker = new ReadOnlyInspectionTracker({ store: {
+    async listTaskIds() { return []; },
+    async withExclusiveLock(_lockId, operation) { return operation(); },
     async createTask(value) { events.push({ kind: "task", value }); },
     async recordEvidence(value) { events.push({ kind: value.kind, value }); },
   } });
@@ -47,6 +60,19 @@ test("authorizes durably tracked read-only inspection without project approval",
     "task", "read-only-dispatch-intent", "read-only-launch-receipt",
   ]);
   assert.equal(events[0].value.kind, "firstmate-intake");
+});
+
+test("tracks an approved claimed read-only plan task as a governed project attempt", () => {
+  assert.deepEqual(authorizeFirstmateDispatch({
+    requiredAuthority: "read_only",
+    project: { ...planningProject(), status: "approved" },
+    plannedTask: { id: "inspect", status: "claimed" },
+  }), { mode: "read_only", trackProjectAttempt: true });
+  assert.throws(() => authorizeFirstmateDispatch({
+    requiredAuthority: "read_only",
+    project: planningProject(),
+    plannedTask: { id: "inspect", status: "claimed" },
+  }), /Planned read-only dispatch requires an approved project plan/u);
 });
 
 test("preserves the approved-plan requirement for implementation work", () => {
@@ -84,16 +110,126 @@ test("reconciles a completed fresh-state inspection without approval or duplicat
     eventId: "worker-completed",
   });
 
-  const recovered = await new ReadOnlyInspectionTracker({ store }).reconcileCompleted();
+  const recovered = await new ReadOnlyInspectionTracker({ store }).reconcileInterrupted();
   assert.equal(recovered.length, 1);
   assert.equal(recovered[0].terminal.status, "completed");
-  assert.equal((await tracker.reconcileCompleted()).length, 0);
+  assert.equal((await tracker.reconcileInterrupted()).length, 0);
   const snapshot = await store.getSnapshot(input.taskId);
   assert.equal(snapshot.state, "proposed");
   assert.deepEqual(snapshot.evidence.map(({ kind }) => kind), [
     "read-only-dispatch-intent", "read-only-launch-receipt",
     "firstmate-local-execution", "read-only-inspection-terminal",
   ]);
+});
+
+test("refuses a replacement while an interrupted read-only inspection is outstanding", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-read-only-lock-"));
+  const store = new TaskStore({ rootDir });
+  const tracker = new ReadOnlyInspectionTracker({ store });
+  await tracker.prepare({
+    taskId: "task-original", requestId: "request-original",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  });
+  await tracker.recordReceipt({
+    taskId: "task-original", requestId: "request-original",
+    receipt: { kind: "process", pid: 42 },
+  });
+
+  await assert.rejects(tracker.prepare({
+    taskId: "task-replacement", requestId: "request-replacement",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  }), /task-original is still outstanding/u);
+  assert.deepEqual(await store.listTaskIds(), ["task-original"]);
+});
+
+test("atomically permits only one concurrent read-only inspection", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-read-only-race-"));
+  const store = new TaskStore({ rootDir });
+  const tracker = new ReadOnlyInspectionTracker({ store });
+  const attempts = ["one", "two"].map((suffix) => tracker.prepare({
+    taskId: `task-${suffix}`, requestId: `request-${suffix}`,
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  }));
+  const results = await Promise.allSettled(attempts);
+  assert.deepEqual(results.map(({ status }) => status).sort(), ["fulfilled", "rejected"]);
+  assert.equal((await store.listTaskIds()).length, 1);
+});
+
+test("terminates a missing interrupted worker and permits retry", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-read-only-retry-"));
+  const store = new TaskStore({ rootDir });
+  const tracker = new ReadOnlyInspectionTracker({ store, isReceiptLive: () => false });
+  await tracker.prepare({
+    taskId: "task-stopped", requestId: "request-stopped",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  });
+  await tracker.recordReceipt({
+    taskId: "task-stopped", requestId: "request-stopped",
+    receipt: { kind: "process", pid: 42 },
+  });
+  const reconciled = await tracker.reconcileInterrupted();
+  assert.equal(reconciled[0].terminal.status, "failed");
+  await tracker.prepare({
+    taskId: "task-retry", requestId: "request-retry",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  });
+  assert.deepEqual(await store.listTaskIds(), ["task-retry", "task-stopped"]);
+});
+
+test("requires a matching command identity when recovering a process receipt", () => {
+  const options = {
+    signalProcess() {},
+    readCommand: () => "/node /firstmate.js task-one request-original owner/repo abc",
+  };
+  assert.equal(isProcessReceiptLive({
+    kind: "process", pid: 42, commandToken: "request-original",
+  }, options), true);
+  assert.equal(isProcessReceiptLive({
+    kind: "process", pid: 42, commandToken: "request-reused",
+  }, options), false);
+});
+
+test("reads an untruncated process command for recovery identity", () => {
+  let invocation;
+  const command = readProcessCommand(42, (...args) => {
+    invocation = args;
+    return "full worker command";
+  });
+  assert.equal(command, "full worker command");
+  assert.deepEqual(invocation, [
+    "ps", ["-ww", "-o", "command=", "-p", "42"], { encoding: "utf8" },
+  ]);
+});
+
+test("recovers a launched worker when interruption precedes receipt persistence", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-read-only-handshake-"));
+  const store = new TaskStore({ rootDir });
+  const tracker = new ReadOnlyInspectionTracker({
+    store, isReceiptLive: () => true,
+    findReceipt: (commandToken) => ({ kind: "process", pid: 42, commandToken }),
+  });
+  await tracker.prepare({
+    taskId: "task-handshake", requestId: "request-handshake",
+    repo: "owner/repo", baseSha: "abc123", project: planningProject(),
+  });
+
+  const recovered = await tracker.reconcileInterrupted();
+  assert.equal(recovered[0].live, true);
+  assert.deepEqual(recovered[0].receipt, {
+    kind: "process", pid: 42, commandToken: "request-handshake",
+  });
+  assert.equal((await store.getSnapshot("task-handshake")).evidence.at(-1).kind,
+    "read-only-launch-receipt");
+});
+
+test("finds a worker receipt from its durable request token", () => {
+  const receipt = findProcessReceipt("request-target", () => [
+    "  10 /node /firstmate.js task-other request-other",
+    "  42 /node /firstmate.js task-target request-target",
+  ].join("\n"));
+  assert.deepEqual(receipt, {
+    kind: "process", pid: 42, commandToken: "request-target",
+  });
 });
 
 function planningProject() {

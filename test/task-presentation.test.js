@@ -86,6 +86,19 @@ test("treats authority and environment limitations as blocked safely", () => {
   assert.match(presentation.why, /Sandbox permission denied/u);
 });
 
+test("reports exhausted safe Treehouse capacity as blocked rather than preparing", () => {
+  const presentation = projectTaskPresentation({
+    id: "task-capacity", state: "blocked", workers: [], evidence: [], validationRuns: [],
+  }, { execution: {
+    status: "failed",
+    failure: { message: "Treehouse capacity is unavailable; active and ambiguous leases were preserved" },
+  } });
+
+  assert.equal(presentation.status, "Blocked safely");
+  assert.doesNotMatch(presentation.nextAction, /Wait for the active work/u);
+  assert.match(presentation.why, /capacity is unavailable/u);
+});
+
 test("reports genuine validation failures without inventing metrics", () => {
   const presentation = projectTaskPresentation({
     id: "task-fail", state: "validating", workers: [], evidence: [],
@@ -96,6 +109,20 @@ test("reports genuine validation failures without inventing metrics", () => {
   assert.match(presentation.nextAction, /focused repair/u);
   assert.deepEqual(presentation.evidence.metrics, {});
   assert.match(renderTaskPresentation(presentation, { detail: true }), /Metrics: unavailable\./u);
+});
+
+test("reports substantive failure even when a safe blocker is also present", () => {
+  const presentation = projectTaskPresentation({
+    id: "task-mixed", state: "failed", evidence: [], validationRuns: [],
+    workers: [{
+      id: "scout", status: "failed", failure: { message: "Sandbox permission denied" },
+    }, {
+      id: "implementer", status: "failed", failure: { message: "Tests corrupted the output" },
+    }],
+  });
+
+  assert.equal(presentation.status, "Failed");
+  assert.match(presentation.why, /Tests corrupted the output/u);
 });
 
 test("presents durable read-only terminal evidence as passed after restart", () => {

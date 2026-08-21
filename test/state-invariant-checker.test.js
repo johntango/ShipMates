@@ -15,6 +15,8 @@ test("publishes a versioned ownership contract for every persisted root field", 
   assert.deepEqual(STATE_CONTRACT.projectRegistry.documentFields,
     ["schemaVersion", "activeProjectId", "projects", "repositoryDeletionReceipts"]);
   assert.equal(STATE_CONTRACT.taskLedger.eventTypes.includes("validation.local.requested"), true);
+  assert.equal(STATE_CONTRACT.taskLedger.eventTypes.includes("validation.approval.requested"), true);
+  assert.equal(STATE_CONTRACT.taskLedger.snapshotFields.includes("validationApprovalRequests"), true);
   assert.equal(STATE_CONTRACT.projections.includes("active-project.json"), false);
 });
 
@@ -56,6 +58,37 @@ test("detects undocumented registry fields and cross-project attempt reuse", asy
   const report = await checker.inspect();
   assert.equal(report.findings.some(({ code }) => code === "undocumented_persisted_field"), true);
   assert.equal(report.findings.some(({ code }) => code === "attempt_owned_by_multiple_projects"), true);
+});
+
+test("detects undocumented validation approval request fields", async () => {
+  const snapshot = {
+    schemaVersion: 1, eventsCount: 0, lastEventId: null,
+    validationApprovalRequests: [{
+      operationId: "approval-one", runId: "run-one", headSha: "a".repeat(40),
+      intentSha256: "b".repeat(64), status: "requested", requestEventId: "event-one",
+      hidden: true,
+    }],
+  };
+  const checker = new StateInvariantChecker({
+    rootDir: "/state",
+    projectStore: { list: async () => [] },
+    taskStore: {
+      listTaskIds: async () => ["task-one"],
+      readEvents: async () => [],
+      getSnapshot: async () => snapshot,
+    },
+    herdrProjection: {
+      read: async () => ({ source: { lastEventId: null, eventsCount: 0 } }),
+    },
+    read: async (target) => {
+      if (target.endsWith("snapshot.json")) return JSON.stringify(snapshot);
+      const error = new Error("missing"); error.code = "ENOENT"; throw error;
+    },
+  });
+
+  const report = await checker.inspect();
+  assert.equal(report.findings.some(({ target }) =>
+    target.endsWith("validation_approval_request.hidden")), true);
 });
 
 test("detects raw nested fields, corrupt snapshots, payload drift, and Herdr drift", async (t) => {

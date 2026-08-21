@@ -5,6 +5,7 @@ import express from "express";
 import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
 import { projectOperationalState } from "../projections/operational-state.js";
 import { projectTaskPresentation } from "../projections/task-presentation.js";
+import { projectWorkflowRun } from "../workflow-run/projection.js";
 
 export class ShipMatesDashboardServer {
   constructor({
@@ -12,6 +13,8 @@ export class ShipMatesDashboardServer {
     projectContext,
     projectStore = null,
     watchdog = null,
+    workflowRunStore = null,
+    onWorkflowIntent = null,
     onCommand,
     onProjectAction = null,
     host = "127.0.0.1",
@@ -26,6 +29,8 @@ export class ShipMatesDashboardServer {
     this.projectContext = projectContext;
     this.projectStore = projectStore;
     this.watchdog = watchdog;
+    this.workflowRunStore = workflowRunStore;
+    this.onWorkflowIntent = onWorkflowIntent;
     this.onCommand = onCommand;
     this.onProjectAction = onProjectAction;
     this.host = host;
@@ -60,6 +65,7 @@ export class ShipMatesDashboardServer {
           projectContext: this.projectContext,
           projectStore: this.projectStore,
           watchdog: this.watchdog,
+          workflowRunStore: this.workflowRunStore,
         }));
       } catch (error) {
         next(error);
@@ -80,6 +86,7 @@ export class ShipMatesDashboardServer {
             projectContext: this.projectContext,
             projectStore: this.projectStore,
             watchdog: this.watchdog,
+            workflowRunStore: this.workflowRunStore,
           });
           response.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
         } catch {
@@ -125,6 +132,23 @@ export class ShipMatesDashboardServer {
         response.status(500).json({ accepted: false, error: "Project action failed" });
       }
     });
+    app.post("/api/workflow/actions", async (request, response) => {
+      try {
+        if (typeof this.onWorkflowIntent !== "function") {
+          response.status(503).json({ accepted: false, error: "Simple workflow controls are disabled" });
+          return;
+        }
+        const intent = validateWorkflowIntent(request.body);
+        const result = await this.onWorkflowIntent(intent);
+        response.status(200).json({ accepted: true, recipient: "Firstmate", result: result || null });
+      } catch (error) {
+        if (error instanceof DashboardCommandError) {
+          response.status(400).json({ accepted: false, error: error.message });
+          return;
+        }
+        response.status(500).json({ accepted: false, error: "Workflow action failed" });
+      }
+    });
     app.use((_error, _request, response, _next) => {
       response.status(500).json({ error: "Dashboard request failed" });
     });
@@ -166,6 +190,7 @@ export class ShipMatesDashboardServer {
 
 export async function buildDashboardState({
   store, projectContext, projectStore = null, watchdog = null,
+  workflowRunStore = null,
   reconciliationEngine = new ReconciliationEngine(),
 }) {
   const activeProjectTaskId = await projectContext.load();
@@ -189,6 +214,15 @@ export async function buildDashboardState({
   const selectedProject = projectStore && typeof projectStore.active === "function"
     ? await projectStore.active() : null;
   const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const workflowRuns = workflowRunStore
+    ? (await workflowRunStore.list()).map((run) => ({
+        phase: run.phase,
+        request: run.request,
+        plan: run.plan,
+        updatedAt: run.updatedAt,
+        presentation: projectWorkflowRun(run),
+      }))
+    : [];
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -200,10 +234,11 @@ export async function buildDashboardState({
       alerts: watchdog ? await watchdog.inspect() : [],
       historical: watchdog?.inspectHistorical ? await watchdog.inspectHistorical() : [],
     },
-    projects: projects.map((project) => ({
+    projects: workflowRunStore ? [] : projects.map((project) => ({
       ...projectProjection(project, taskById), selected: project.id === selectedProject?.id,
     })),
-    tasks: tasks.slice(0, 30),
+    tasks: workflowRunStore ? [] : tasks.slice(0, 30),
+    workflowRuns,
   };
 }
 
@@ -258,7 +293,8 @@ function projectTask(snapshot, activeProjectTaskId, reconciliationEngine, durabl
     snapshot, projectTask: durableProjectTask, source: "dashboard",
   });
   const humanAction = snapshot.state === "awaiting_human" &&
-    validation?.gate?.status === "awaiting_approval"
+    validation?.gate?.status === "awaiting_approval" &&
+    snapshot.validationApprovalRequests?.at(-1)?.status !== "requested"
     ? `approve validation for task ${snapshot.id}`
     : null;
   return {
@@ -322,6 +358,13 @@ export function validateProjectAction(value) {
     throw new DashboardCommandError(`${value.action === "retry_blocked" ? "Retry" : "Priority"} actions require a planned task`);
   }
   return { projectId: value.projectId, action: value.action, planTaskId: value.planTaskId || null };
+}
+
+export function validateWorkflowIntent(value) {
+  if (!value || !new Set(["approve", "approve_validation", "status"]).has(value.intent)) {
+    throw new DashboardCommandError("Invalid workflow intent");
+  }
+  return Object.freeze({ intent: value.intent });
 }
 
 export async function executeProjectAction({ onProjectAction, projectId, body }) {

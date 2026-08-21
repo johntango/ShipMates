@@ -7,7 +7,7 @@ import {
   readlink,
   symlink,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -30,10 +30,41 @@ export const FAST_LOCAL_SKIP_STEPS = Object.freeze([
 ]);
 
 export const PINNED_NO_MISTAKES_DARWIN_ARM64 = Object.freeze({
-  version: "v1.41.1",
-  sourceCommit: "4a692bd336c37e9ac36761ee82e558865402abba",
-  binarySha256: "12a72f3aee65f74961c85c43071a731cb224e2684f997aa47cdc76b76fb2022b",
+  version: "v1.48.0",
+  sourceCommit: "2ac37698d441b4318867179e567a9f9dadb345fb",
+  binarySha256: "ae9b455177bc38e9ab45e853f61f2172a5760105ea552cf3dceb55b3c9f39ad3",
 });
+
+export async function resolvePinnedNoMistakesBinary({
+  explicitPath = null,
+  pin = PINNED_NO_MISTAKES_DARWIN_ARM64,
+  candidatePaths = [
+    path.join(homedir(), ".local", "bin", "no-mistakes"),
+    path.join(homedir(), ".no-mistakes", "bin", "no-mistakes"),
+    path.join(tmpdir(), `shipmates-no-mistakes-${pin.version}`, "no-mistakes"),
+  ],
+  binaryReader = readFile,
+} = {}) {
+  validatePin(pin);
+  const candidates = explicitPath ? [explicitPath] : candidatePaths;
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    let bytes;
+    try {
+      bytes = await binaryReader(resolved);
+    } catch (cause) {
+      if (cause?.code === "ENOENT") continue;
+      throw new NoMistakesGateError("Could not inspect a no-mistakes binary candidate", { cause });
+    }
+    if (digest(bytes) === pin.binarySha256) return resolved;
+    if (explicitPath) {
+      throw new NoMistakesGateError("NO_MISTAKES_BIN does not match the pinned binary digest");
+    }
+  }
+  throw new NoMistakesGateError(
+    `Pinned no-mistakes ${pin.version} is not installed in a supported location`,
+  );
+}
 
 const allSteps = Object.freeze([
   "intent",
@@ -192,7 +223,17 @@ export class NoMistakesLocalGate {
     };
   }
 
-  async respond({ taskId, worktreePath, expectedHeadSha, intent, action }) {
+  async observe({ taskId, worktreePath, expectedHeadSha, intent, runId }) {
+    return this.respond({
+      taskId, worktreePath, expectedHeadSha, intent,
+      action: "approve", expectedRunId: runId, observeOnly: true,
+    });
+  }
+
+  async respond({
+    taskId, worktreePath, expectedHeadSha, intent, action,
+    expectedRunId = null, observeOnly = false,
+  }) {
     requireNonEmpty(taskId, "taskId");
     requireNonEmpty(intent, "intent");
     if (!new Set(["approve", "skip"]).has(action)) {
@@ -220,11 +261,20 @@ export class NoMistakesLocalGate {
     };
     let result = await this.runner(this.binaryPath, args, options);
     let parsed = parseAxiOutput(result.stdout);
-    if (parsed.outcome === null) {
+    if (expectedRunId && parsed.runId !== expectedRunId) {
+      throw new NoMistakesGateError("Pinned validator status does not match the approved run");
+    }
+    if (parsed.outcome === null && parsed.gate !== null) {
+      if (observeOnly) {
+        throw new NoMistakesGateError("Approved validator run is not terminal");
+      }
       args = ["axi", "respond", "--action", action];
       await this.runner(this.binaryPath, args, options);
       result = await this.runner(this.binaryPath, ["axi", "status"], options);
       parsed = parseAxiOutput(result.stdout);
+      if (expectedRunId && parsed.runId !== expectedRunId) {
+        throw new NoMistakesGateError("Pinned validator response switched runs");
+      }
     }
     const completedAt = this.clock().toISOString();
     const after = await this.#inspect(workingDirectory);
@@ -302,24 +352,33 @@ export class NoMistakesLocalGate {
       const relative = path.relative(this.stateRoot, existingRoot);
       if (path.basename(reposPath) !== "repos" || relative.startsWith("..") ||
         path.isAbsolute(relative)) {
-        throw new NoMistakesGateError(
-          "Existing no-mistakes remote is outside the managed validation state",
+        if (!retirableManagedRemote(remotePath)) {
+          throw new NoMistakesGateError(
+            "Existing no-mistakes remote is outside the managed validation state",
+          );
+        }
+        const removed = await this.runner(
+          "git", ["remote", "remove", "no-mistakes"], {
+            cwd: worktreePath,
+            env: process.env,
+            timeout: 10_000,
+            maxBuffer: 1024 * 1024,
+          },
         );
+        if (removed.exitCode !== 0) {
+          throw new NoMistakesGateError(
+            "Could not detach a stale managed no-mistakes remote",
+          );
+        }
+        taskRoot = await this.#originRuntimeHome(worktreePath);
+      } else {
+        taskRoot = existingRoot;
       }
-      taskRoot = existingRoot;
     } else if (!(existing.exitCode === 2 ||
       (existing.exitCode === 128 && /no such remote/iu.test(existing.stderr)))) {
       throw new NoMistakesGateError("Could not inspect the no-mistakes Git remote");
     } else {
-      const origin = await this.runner("git", ["remote", "get-url", "origin"], {
-        cwd: worktreePath,
-        env: process.env,
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-      });
-      if (origin.exitCode === 0 && origin.stdout.trim()) {
-        taskRoot = path.join(this.stateRoot, "runtime", digest(origin.stdout.trim()).slice(0, 16));
-      }
+      taskRoot = await this.#originRuntimeHome(worktreePath);
     }
     await mkdir(taskRoot, { recursive: true });
     if (Buffer.byteLength(path.join(taskRoot, "socket"), "utf8") <= 100) {
@@ -340,6 +399,18 @@ export class NoMistakesLocalGate {
       await symlink(taskRoot, linkPath, "dir");
     }
     return linkPath;
+  }
+
+  async #originRuntimeHome(worktreePath) {
+    const origin = await this.runner("git", ["remote", "get-url", "origin"], {
+      cwd: worktreePath,
+      env: process.env,
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return origin.exitCode === 0 && origin.stdout.trim()
+      ? path.join(this.stateRoot, "runtime", digest(origin.stdout.trim()).slice(0, 16))
+      : path.join(this.stateRoot, "runtime");
   }
 
   async #inspect(worktreePath) {
@@ -399,6 +470,21 @@ export class NoMistakesLocalGate {
   }
 }
 
+function retirableManagedRemote(remotePath) {
+  const resolved = path.resolve(remotePath);
+  const legacyRoot = path.join(homedir(), ".no-mistakes", "repos");
+  const legacyRelative = path.relative(legacyRoot, resolved);
+  if (!legacyRelative.startsWith("..") && !path.isAbsolute(legacyRelative) &&
+    /^[a-f0-9]{8,64}\.git$/u.test(legacyRelative)) return true;
+
+  const reposPath = path.dirname(resolved);
+  const runtimeInstance = path.dirname(reposPath);
+  return path.basename(reposPath) === "repos" &&
+    /^[a-f0-9]{16}$/u.test(path.basename(runtimeInstance)) &&
+    path.basename(path.dirname(runtimeInstance)) === "runtime" &&
+    path.basename(path.dirname(path.dirname(runtimeInstance))) === "no-mistakes";
+}
+
 function validateSkipSteps(steps) {
   if (!Array.isArray(steps) || steps.some((step) => !allSteps.includes(step))) {
     throw new TypeError("skipSteps must contain known no-mistakes steps");
@@ -440,7 +526,8 @@ export function parseAxiOutput(stdout) {
   }
   const outcome = topLevel.get("outcome") || null;
   const gate = lines.includes("gate:") ? parseGate(lines) : null;
-  if (!outcome && !gate) {
+  const runStatus = requiredField(runFields, "status");
+  if (!outcome && !gate && runStatus !== "running") {
     throw new NoMistakesOutputError("axi output has neither outcome nor approval gate");
   }
   if (outcome && !new Set(["passed", "blocked", "failed", "cancelled"]).has(outcome)) {
@@ -449,7 +536,7 @@ export function parseAxiOutput(stdout) {
   return {
     runId: requiredField(runFields, "id"),
     branch: requiredField(runFields, "branch"),
-    runStatus: requiredField(runFields, "status"),
+    runStatus,
     head: shortSha(requiredField(runFields, "head")),
     findings: parseFindingsCount(requiredField(runFields, "findings")),
     steps,

@@ -9,6 +9,7 @@ import {
   NoMistakesLocalGate,
   NoMistakesOutputError,
   parseAxiOutput,
+  resolvePinnedNoMistakesBinary,
 } from "../src/adapters/no-mistakes.js";
 
 const HEAD = "a".repeat(40);
@@ -22,6 +23,30 @@ const PIN = Object.freeze({
 const PIN_OPTIONS = Object.freeze({
   binaryReader: async () => BINARY,
   pin: PIN,
+});
+
+test("resolves only an installed binary matching the immutable pin", async () => {
+  const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+  const reads = [];
+  const resolved = await resolvePinnedNoMistakesBinary({
+    pin: PIN,
+    candidatePaths: ["/missing/no-mistakes", "/wrong/no-mistakes", "/pinned/no-mistakes"],
+    binaryReader: async (candidate) => {
+      reads.push(candidate);
+      if (candidate === "/missing/no-mistakes") throw missing;
+      return candidate === "/pinned/no-mistakes" ? BINARY : Buffer.from("wrong");
+    },
+  });
+  assert.equal(resolved, "/pinned/no-mistakes");
+  assert.deepEqual(reads, ["/missing/no-mistakes", "/wrong/no-mistakes", "/pinned/no-mistakes"]);
+});
+
+test("rejects an explicit binary that does not match the pin", async () => {
+  await assert.rejects(() => resolvePinnedNoMistakesBinary({
+    explicitPath: "/custom/no-mistakes",
+    pin: PIN,
+    binaryReader: async () => Buffer.from("wrong"),
+  }), /does not match the pinned binary digest/u);
 });
 
 test("keeps the validation profile separate from immutable binary pin evidence", () => {
@@ -126,6 +151,74 @@ test("reuses the managed runtime already bound to the repository remote", async 
   assert.equal(init.options.env.NM_HOME, existingRoot);
 });
 
+test("rebinds a stale ShipMates-managed remote from a recycled worktree", async () => {
+  const calls = [];
+  const stateRoot = path.join(tmpdir(), "shipmates-firstmate-current", "no-mistakes");
+  const staleRemote = path.join(
+    tmpdir(), "shipmates-firstmate-prior", "no-mistakes", "runtime",
+    "0123456789abcdef", "repos", "gate.git",
+  );
+  const baseRunner = fakeRunner({ calls, output: passingOutput() });
+  const runner = async (command, args, options) => {
+    if (command === "git" && args.join(" ") === "remote get-url no-mistakes") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: `${staleRemote}\n`, stderr: "" };
+    }
+    if (command === "git" && args.join(" ") === "remote remove no-mistakes") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (command === "git" && args.join(" ") === "remote get-url origin") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: "git@github.com:owner/repo.git\n", stderr: "" };
+    }
+    return baseRunner(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes", stateRoot, runner,
+    clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  await gate.run({
+    taskId: "validation-recycled", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate the recycled worktree",
+  });
+
+  assert.equal(calls.some(({ args }) => args.join(" ") === "remote remove no-mistakes"), true);
+  const init = calls.find(({ args }) => args[0] === "init");
+  assert.notEqual(init.options.env.NM_HOME, path.dirname(path.dirname(staleRemote)));
+  const repositoryKey = createHash("sha256")
+    .update("git@github.com:owner/repo.git")
+    .digest("hex").slice(0, 16);
+  const preferredRoot = path.join(stateRoot, "runtime", repositoryKey);
+  const expectedRoot = Buffer.byteLength(path.join(preferredRoot, "socket"), "utf8") <= 100
+    ? preferredRoot
+    : path.join(
+        tmpdir(), "shipmates-no-mistakes-runtime",
+        createHash("sha256").update(preferredRoot).digest("hex").slice(0, 16),
+      );
+  assert.equal(init.options.env.NM_HOME, expectedRoot);
+});
+
+test("continues to reject an arbitrary external no-mistakes remote", async () => {
+  const runner = async (command, args, options) => {
+    if (command === "git" && args.join(" ") === "remote get-url no-mistakes") {
+      return { exitCode: 0, stdout: "/opt/unmanaged/gate.git\n", stderr: "" };
+    }
+    return fakeRunner({ output: passingOutput() })(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes",
+    stateRoot: path.join(tmpdir(), "shipmates-current", "no-mistakes"),
+    runner, clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  await assert.rejects(gate.run({
+    taskId: "validation-unmanaged", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate safely",
+  }), /outside the managed validation state/u);
+});
+
 test("uses an origin-specific runtime when Git reports an absent no-mistakes remote as 128", async () => {
   const calls = [];
   const stateRoot = path.join(tmpdir(), "shipmates-no-mistakes-multi-repo");
@@ -203,6 +296,45 @@ test("approves the existing gate and returns its terminal passing result", async
   assert.equal(report.passed, true);
   assert.deepEqual(calls.find(({ args }) => args[1] === "respond")?.args,
     ["axi", "respond", "--action", "approve"]);
+});
+
+test("observes a pinned validator still running after approval without responding twice", async () => {
+  const calls = [];
+  let statusReads = 0;
+  const base = fakeRunner({ output: passingOutput(), calls });
+  const runner = async (command, args, options) => {
+    if (args.join(" ") === "axi status") {
+      calls.push({ command, args, options });
+      statusReads += 1;
+      return { exitCode: 0, stdout: statusReads === 1 ? gateOutput() : runningOutput(), stderr: "" };
+    }
+    if (args.join(" ") === "axi respond --action approve") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    return base(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes", runner,
+    clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  const first = await gate.respond({
+    taskId: "validation-001", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate locally", action: "approve",
+    expectedRunId: "run-local-2",
+  });
+  assert.equal(first.runStatus, "running");
+  assert.equal(first.outcome, null);
+  assert.equal(first.gate, null);
+
+  const second = await gate.respond({
+    taskId: "validation-001", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate locally", action: "approve",
+    expectedRunId: "run-local-2",
+  });
+  assert.equal(second.runStatus, "running");
+  assert.equal(calls.filter(({ args }) => args.join(" ") === "axi respond --action approve").length, 1);
 });
 
 test("rejects malformed output and a remote-capable step that ran", async () => {
@@ -370,4 +502,12 @@ gate:
   status: awaiting_approval
   findings: "1 blocking"
 `;
+}
+
+function runningOutput() {
+  return gateOutput()
+    .replace("    review,awaiting_approval,1,2", "    review,completed,1,2")
+    .replace("    test,pending,0,0", "    test,completed,0,3")
+    .replace("    lint,pending,0,0", "    lint,running,0,4")
+    .replace(/gate:\n[\s\S]*$/u, "");
 }

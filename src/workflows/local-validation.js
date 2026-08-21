@@ -52,16 +52,7 @@ export class LocalValidationWorkflow {
       eventId: `${taskId}:validation:requested:v1`,
     });
     const request = snapshot.validationRequests.at(-1);
-    const report = await this.gate.run({
-      taskId,
-      worktreePath: snapshot.worktree.worktreePath,
-      expectedHeadSha: snapshot.worktree.headSha,
-      intent,
-      onProgress: validationProgressRecorder({
-        store: this.store, taskId, actor: this.actor, attemptId: request.attemptId,
-        idFactory: this.idFactory,
-      }),
-    });
+    const report = await this.#runGate({ snapshot, request, taskId, intent });
     const recorded = await this.store.recordLocalValidation({
       taskId,
       actor: this.actor,
@@ -91,7 +82,8 @@ export class LocalValidationWorkflow {
       }
       return { snapshot, report: snapshot.validationRuns.at(-1), reused: true };
     }
-    if (snapshot.state !== "validating" || snapshot.worktree?.status !== "leased" ||
+    if (!new Set(["validating", "blocked"]).has(snapshot.state) ||
+      snapshot.worktree?.status !== "leased" ||
       request?.status !== "requested" ||
       request.headSha !== snapshot.worktree.headSha ||
       request.branch !== snapshot.worktree.branch ||
@@ -101,16 +93,19 @@ export class LocalValidationWorkflow {
         "Durable validation request no longer matches the exact active lease and intent",
       );
     }
-    const report = await this.gate.run({
-      taskId,
-      worktreePath: snapshot.worktree.worktreePath,
-      expectedHeadSha: request.headSha,
-      intent,
-      onProgress: validationProgressRecorder({
-        store: this.store, taskId, actor: this.actor, attemptId: request.attemptId,
-        idFactory: this.idFactory,
-      }),
-    });
+    if (snapshot.state === "blocked") {
+      snapshot = await this.store.transition({
+        taskId, from: "blocked", to: "running", actor: this.actor,
+        reason: "Resume the exact blocked local validation request",
+        eventId: `${taskId}:validation:${request.attemptId}:resume-running:${this.idFactory()}:v1`,
+      });
+      snapshot = await this.store.transition({
+        taskId, from: "running", to: "validating", actor: this.actor,
+        reason: "Resume the exact blocked local validation request",
+        eventId: `${taskId}:validation:${request.attemptId}:resume-validating:${this.idFactory()}:v1`,
+      });
+    }
+    const report = await this.#runGate({ snapshot, request, taskId, intent });
     snapshot = await this.store.recordLocalValidation({
       taskId,
       actor: this.actor,
@@ -124,6 +119,48 @@ export class LocalValidationWorkflow {
       store: this.store, snapshot, report, taskId, actor: this.actor,
     });
     return { snapshot, report, reused: false };
+  }
+
+  async #runGate({ snapshot, request, taskId, intent }) {
+    try {
+      return await this.gate.run({
+        taskId,
+        worktreePath: snapshot.worktree.worktreePath,
+        expectedHeadSha: request.headSha,
+        intent,
+        onProgress: validationProgressRecorder({
+          store: this.store, taskId, actor: this.actor, attemptId: request.attemptId,
+          idFactory: this.idFactory,
+        }),
+      });
+    } catch (cause) {
+      const message = safeSetupMessage(cause);
+      await this.store.recordEvidence({
+        taskId,
+        actor: this.actor,
+        kind: "validation-setup-failure",
+        value: JSON.stringify({
+          operationId: request.operationId,
+          attemptId: request.attemptId,
+          requestEventId: request.requestEventId,
+          errorName: safeErrorName(cause),
+          message,
+        }),
+        eventId: `${taskId}:validation:${request.attemptId}:setup-failed:${this.idFactory()}:v1`,
+      });
+      const current = await this.store.getSnapshot(taskId);
+      if (current.state === "validating") {
+        await this.store.transition({
+          taskId, from: "validating", to: "blocked", actor: this.actor,
+          reason: `Local validation setup blocked safely: ${message}`,
+          eventId: `${taskId}:validation:${request.attemptId}:blocked:${this.idFactory()}:v1`,
+        });
+      }
+      throw new LocalValidationSetupBlockedError(
+        `Local validation setup blocked safely: ${message}`,
+        { cause },
+      );
+    }
   }
 
   async approve({ taskId, intent }) {
@@ -155,13 +192,38 @@ export class LocalValidationWorkflow {
         "Validation approval does not match the exact recorded approval gate and intent",
       );
     }
-    const report = await this.gate.respond({
-      taskId,
-      worktreePath: snapshot.worktree.worktreePath,
-      expectedHeadSha: snapshot.worktree.headSha,
-      intent,
-      action: "approve",
+    const approval = snapshot.validationApprovalRequests?.at(-1);
+    const operationId = "validation-approval-v1";
+    if (!approval) {
+      snapshot = await this.store.requestValidationApproval({
+        taskId, actor: this.actor,
+        request: {
+          operationId, runId: prior.runId,
+          headSha: prior.finalHeadSha,
+          intentSha256,
+        },
+        eventId: `${taskId}:validation:${prior.runId}:approval-requested:v1`,
+      });
+    } else if (approval.operationId !== operationId || approval.runId !== prior.runId ||
+      approval.headSha !== prior.finalHeadSha || approval.intentSha256 !== intentSha256) {
+      throw new LocalValidationRecoveryRequiredError(
+        "Durable validation approval intent does not match the active gate",
+      );
+    }
+    let report = await this.gate.observe({
+      taskId, worktreePath: snapshot.worktree.worktreePath,
+      expectedHeadSha: snapshot.worktree.headSha, intent, runId: prior.runId,
     });
+    if (report.runId === prior.runId && report.passed !== true &&
+      report.gate?.status === "awaiting_approval") {
+      report = await this.gate.respond({
+        taskId,
+        worktreePath: snapshot.worktree.worktreePath,
+        expectedHeadSha: snapshot.worktree.headSha,
+        intent,
+        action: "approve",
+      });
+    }
     if (report.runId !== prior.runId || report.passed !== true) {
       throw new LocalValidationRecoveryRequiredError(
         "Approved validation did not return a terminal passing result for the same run",
@@ -170,12 +232,63 @@ export class LocalValidationWorkflow {
     snapshot = await this.store.reconcileLocalValidation({
       taskId, actor: this.actor, report, runId: prior.runId,
       eventId: `${taskId}:validation:${prior.runId}:reconciled:v1`,
-      at: report.completedAt,
     });
     snapshot = await transitionApprovedValidation(
       this.store, snapshot, this.actor, taskId, prior.runId,
     );
     return { snapshot, report, reused: false };
+  }
+
+  async reconcileApproval({ taskId, intent }) {
+    return this.approve({ taskId, intent });
+  }
+
+  async reconcileCompletedApproval({ taskId, intent }) {
+    if (typeof intent !== "string" || intent.trim() === "") {
+      throw new TypeError("intent must be a non-empty string");
+    }
+    let snapshot = await this.store.getSnapshot(taskId);
+    const prior = snapshot.validationRuns?.at(-1);
+    const request = snapshot.validationRequests?.at(-1);
+    const intentSha256 = digest(intent);
+    if (snapshot.state !== "awaiting_human" || request?.status !== "completed" ||
+      prior?.gate?.status !== "awaiting_approval" || request.runId !== prior.runId ||
+      request.intentSha256 !== intentSha256 || prior.intentSha256 !== intentSha256 ||
+      prior.finalHeadSha !== snapshot.worktree?.headSha) {
+      return { snapshot, report: prior, reconciled: false };
+    }
+    const report = await this.gate.observe({
+      taskId, worktreePath: snapshot.worktree.worktreePath,
+      expectedHeadSha: snapshot.worktree.headSha, intent, runId: prior.runId,
+    });
+    if (report.runId !== prior.runId || report.passed !== true || report.gate !== null ||
+      report.finalHeadSha !== prior.finalHeadSha || report.intentSha256 !== intentSha256) {
+      return { snapshot, report, reconciled: false };
+    }
+    const approval = snapshot.validationApprovalRequests?.at(-1);
+    if (!approval) {
+      snapshot = await this.store.requestValidationApproval({
+        taskId, actor: this.actor,
+        request: {
+          operationId: "validation-approval-v1", runId: prior.runId,
+          headSha: prior.finalHeadSha, intentSha256,
+        },
+        eventId: `${taskId}:validation:${prior.runId}:approval-requested:v1`,
+      });
+    } else if (approval.runId !== prior.runId || approval.headSha !== prior.finalHeadSha ||
+      approval.intentSha256 !== intentSha256) {
+      throw new LocalValidationRecoveryRequiredError(
+        "Durable validation approval intent does not match the completed validator run",
+      );
+    }
+    snapshot = await this.store.reconcileLocalValidation({
+      taskId, actor: this.actor, report, runId: prior.runId,
+      eventId: `${taskId}:validation:${prior.runId}:reconciled:v1`,
+    });
+    snapshot = await transitionApprovedValidation(
+      this.store, snapshot, this.actor, taskId, prior.runId,
+    );
+    return { snapshot, report, reconciled: true };
   }
 }
 
@@ -234,6 +347,23 @@ export class LocalValidationRecoveryRequiredError extends LocalValidationWorkflo
     super(message, options);
     this.name = "LocalValidationRecoveryRequiredError";
   }
+}
+
+export class LocalValidationSetupBlockedError extends LocalValidationWorkflowError {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.name = "LocalValidationSetupBlockedError";
+  }
+}
+
+function safeErrorName(error) {
+  return typeof error?.name === "string" && /^[A-Za-z][A-Za-z0-9]*$/u.test(error.name)
+    ? error.name : "UnknownError";
+}
+
+function safeSetupMessage(error) {
+  const value = typeof error?.message === "string" ? error.message : "Validation tool unavailable";
+  return value.replaceAll(/\s+/gu, " ").trim().slice(0, 300) || "Validation tool unavailable";
 }
 
 function digest(value) {

@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  discoverFirstmateHerdrPane,
+  HerdrPaneClient,
   HerdrPanePool,
   HerdrPaneWorkerProcessError,
   HerdrPaneWorkerLauncher,
@@ -23,6 +25,54 @@ const scouts = [
   { workerId: "scout-left", brief: "Inspect exported functions" },
   { workerId: "scout-right", brief: "Inspect the test coverage" },
 ];
+
+test("discovers the unique Herder pane running First Mate when no pane env is set", async () => {
+  const client = {
+    async list() {
+      return [
+        { paneId: "w1:p1", cwd: "/repo" },
+        { paneId: "w1:p2", cwd: "/repo" },
+        { paneId: "w1:p3", cwd: "/other" },
+      ];
+    },
+    async processInfo(paneId) {
+      return {
+        paneId,
+        foregroundProcesses: paneId === "w1:p2"
+          ? [{ cwd: "/repo", argv: ["node", "scripts/firstmate.js"] }]
+          : [{ cwd: "/repo", argv: ["zsh"] }],
+      };
+    },
+  };
+  assert.equal(await discoverFirstmateHerdrPane({ client, repoPath: "/repo" }), "w1:p2");
+});
+
+test("fails closed when Herder pane discovery is ambiguous", async () => {
+  const client = {
+    async list() {
+      return [{ paneId: "w1:p1", cwd: "/repo" }, { paneId: "w1:p2", cwd: "/repo" }];
+    },
+    async processInfo(paneId) {
+      return { paneId, foregroundProcesses: [{ cwd: "/repo", argv: ["node", "scripts/firstmate.js"] }] };
+    },
+  };
+  assert.equal(await discoverFirstmateHerdrPane({ client, repoPath: "/repo" }), null);
+});
+
+test("uses Herder 0.8 metadata flags without disabling worker visibility", async () => {
+  const calls = [];
+  const client = new HerdrPaneClient({
+    executeFile: async (_file, args) => { calls.push(args); return { stdout: "" }; },
+  });
+  await client.reportMetadata({
+    paneId: "w1:p2", source: "shipmates:worker:task-1:scout-1",
+    displayAgent: "ShipMates scout-1", customStatus: "inspecting",
+    stateLabels: { working: "inspecting" },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].includes("--custom-status"), false);
+  assert.deepEqual(calls[0].slice(-2), ["--state-label", "working=inspecting"]);
+});
 
 test("runs exactly two scouts concurrently in distinct verified panes", async (t) => {
   const store = await runningLeasedTask(t);

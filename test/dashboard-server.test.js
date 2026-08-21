@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
 
 import {
   buildDashboardState,
@@ -10,6 +11,7 @@ import {
   ShipMatesDashboardServer,
   validateDashboardCommand,
   validateProjectAction,
+  validateWorkflowIntent,
 } from "../src/dashboard/server.js";
 
 test("projects recent tasks and the active project without report prose leakage", async () => {
@@ -31,6 +33,35 @@ test("projects recent tasks and the active project without report prose leakage"
   assert.equal(state.tasks[0].presentation.status, "Passed");
   assert.equal(state.tasks[0].presentation.nextAction, null);
   assert.deepEqual(state.tasks[0].taskProgress.map(({ sequence }) => sequence), [0, 1]);
+});
+
+test("projects simple workflows without exposing diagnostic identifiers", async () => {
+  const { store, projectContext } = fixture();
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { list: async () => [{
+      id: "workflow-secret", phase: "awaiting_approval", request: "Build a page",
+      plan: "Build and validate it", updatedAt: "2026-08-18T12:00:00.000Z",
+    }] },
+  });
+  assert.deepEqual(state.workflowRuns, [{
+    phase: "awaiting_approval", request: "Build a page", plan: "Build and validate it",
+    updatedAt: "2026-08-18T12:00:00.000Z",
+    presentation: {
+      outcome: "Blocked safely", nextAction: "Approve the short plan to begin local work.",
+      why: "No files will change until you approve.", phase: "awaiting_approval",
+    },
+  }]);
+  assert.deepEqual(state.tasks, []);
+  assert.deepEqual(state.projects, []);
+  assert.doesNotMatch(JSON.stringify(state.workflowRuns), /workflow-secret/u);
+});
+
+test("simple workflow dashboard accepts high-level intents only", () => {
+  assert.deepEqual(validateWorkflowIntent({ intent: "approve", runId: "ignored" }), { intent: "approve" });
+  assert.deepEqual(validateWorkflowIntent({ intent: "approve_validation" }), { intent: "approve_validation" });
+  assert.deepEqual(validateWorkflowIntent({ intent: "status" }), { intent: "status" });
+  assert.throws(() => validateWorkflowIntent({ intent: "dispatch", taskId: "task-1" }), /Invalid/u);
 });
 
 test("projects project plans and binds planned items to durable tasks", async () => {
@@ -211,10 +242,36 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
   assert.match(page, /option value="light"/u);
   assert.match(page, /option value="dark"/u);
   assert.match(page, /Send to Firstmate/u);
-  assert.match(script, /Human input required\./u);
-  assert.match(script, /task\.humanAction/u);
-  assert.match(script, /Human-readable task outcome/u);
-  assert.match(script, /Work breakdown and detailed evidence/u);
+  const elements = new Map();
+  const element = (selector) => {
+    if (!elements.has(selector)) elements.set(selector, {
+      value: "system", dataset: {}, className: "", textContent: "", innerHTML: "",
+      disabled: false, placeholder: "", addEventListener() {}, querySelector() { return element(`${selector} button`); },
+    });
+    return elements.get(selector);
+  };
+  const presentation = {
+    status: "Passed", nextAction: null, why: "All checks passed",
+    workBreakdown: { agents: [], tasks: [], tests: [], decisions: [] },
+    evidence: { ledger: { evidenceCount: 2 }, metrics: { tokens: null, validationDurationMs: null } },
+  };
+  vm.runInNewContext(script, {
+    document: {
+      documentElement: element("html"), querySelector: element,
+      querySelectorAll: () => [],
+    },
+    window: { SHIPMATES_REVIEW_STATE: {
+      generatedAt: "2026-07-15T12:00:00Z", watchdog: {}, projects: [],
+      tasks: [{ summary: "Inspection", state: "complete", authority: "read_only",
+        presentation, workers: [], files: [], taskProgress: [], humanAction: "review task-1" }],
+    } },
+    localStorage: { getItem: () => "system", setItem() {} },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    Date, Set, Number, encodeURIComponent,
+  });
+  assert.match(element("#tasks").innerHTML, /Human-readable task outcome/u);
+  assert.match(element("#tasks").innerHTML, /Work breakdown and detailed evidence/u);
+  assert.match(element("#tasks").innerHTML, /Human input required\./u);
 });
 
 test("accepts bounded human messages and rejects empty or control input", () => {
@@ -255,6 +312,8 @@ test("governed project advancement selects its target before dispatch", async ()
   assert.match(source, /selectProject: async \(projectId\)/u);
   assert.match(source, /plannedTaskDispatcher\.retryBlocked/u);
   assert.match(source, /Retry returned before a durable task was created/u);
+  assert.match(source, /governedDispatch\?\.planTaskId/u);
+  assert.match(source, /claimPlannedTaskForDispatch/u);
 });
 
 function fixture() {

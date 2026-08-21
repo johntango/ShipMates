@@ -14,6 +14,12 @@ test("surfaces validation and push approval gates in the Firstmate terminal", as
   assert.match(source, /console\.error\(humanInputRequired/u);
 });
 
+test("passes the governed plan-task binding to the standard execution backend", async () => {
+  const source = await readFile(path.resolve("scripts/firstmate.js"), "utf8");
+  assert.match(source, /executionBackends\.dispatch\(\{\s*project: projectForTask, planTaskId,/u);
+  assert.match(source, /review\.stderr\.log/u);
+});
+
 test("approval command validates, delivers, reconciles, and advances dependent work", async () => {
   const { handleValidationApproval } = await import(
     "../src/cli/firstmate-validation-approval.js"
@@ -61,6 +67,7 @@ test("approval command validates, delivers, reconciles, and advances dependent w
         },
       },
       createGate: (options) => ({ options }),
+      resolveBinary: async () => "/pinned/no-mistakes",
       createValidationWorkflow: ({ gate, actor }) => ({
         approve: async (input) => calls.push(["approve", actor, input, gate.options]),
       }),
@@ -85,6 +92,58 @@ test("approval command validates, delivers, reconciles, and advances dependent w
   assert.equal(calls[4][2].destinationRepoPath, "/registered/project");
   assert.deepEqual(calls[7].slice(1), [
     "project-1", { reason: "validation approved and delivered" },
+  ]);
+});
+
+test("supervisor reconciles and advances an externally completed validation", async () => {
+  const { reconcileCompletedValidationApproval } = await import(
+    "../src/cli/firstmate-validation-approval.js"
+  );
+  const calls = [];
+  const project = {
+    id: "project-1", repoPath: "/registered/project",
+    executionPolicy: { autoAdvance: true },
+  };
+  const result = await reconcileCompletedValidationApproval("task-123", {
+    store: {
+      rootDir: "/state",
+      getSnapshot: async () => ({
+        state: "awaiting_human",
+        validationRuns: [{
+          command: { args: ["axi", "run", "--intent", "repair approval"] },
+        }],
+      }),
+    },
+    projectStore: {
+      describeAttempt: async () => ({ projectId: project.id }),
+      get: async () => project,
+    },
+    orchestrator: {
+      reconcileTask: async () => ({
+        context: { projectId: project.id, projectName: "Test", taskName: "Build" },
+      }),
+    },
+    binaryPath: "/pinned/no-mistakes",
+    createGate: () => ({}),
+    createValidationWorkflow: () => ({
+      reconcileCompletedApproval: async (input) => {
+        calls.push(["observe", input]);
+        return { reconciled: true };
+      },
+    }),
+    createDeliveryWorkflow: () => ({
+      deliver: async (input) => calls.push(["deliver", input]),
+    }),
+    schedule: (callback) => callback(),
+    advanceProject: async (projectId, options) =>
+      calls.push(["advance", projectId, options]),
+  });
+
+  assert.equal(result.taskId, "task-123");
+  assert.deepEqual(calls, [
+    ["observe", { taskId: "task-123", intent: "repair approval" }],
+    ["deliver", { taskId: "task-123", destinationRepoPath: "/registered/project" }],
+    ["advance", "project-1", { reason: "completed validation reconciled and delivered" }],
   ]);
 });
 
@@ -161,6 +220,7 @@ for (const [label, ApprovalError] of [
         reconcileTask: async (taskId) => calls.push(["reconcile", taskId]),
       },
       createGate: () => ({}),
+      resolveBinary: async () => "/pinned/no-mistakes",
       createValidationWorkflow: () => ({
         approve: async () => {
           throw new ApprovalError("validator head changed");
@@ -213,6 +273,7 @@ test("retries project reconciliation after the recovery transition succeeds", as
       },
     },
     createGate: () => ({}),
+    resolveBinary: async () => "/pinned/no-mistakes",
     createValidationWorkflow: () => ({
       approve: async () => {
         throw new LocalValidationRecoveryRequiredError("validator head changed");

@@ -89,9 +89,12 @@ fresh read-only audit restored current `safe` status.
 
 ## Live Firstmate execution
 
-When `npm run firstmate` runs inside a Herdr pane (`HERDR_PANE_ID` is set), it
-now publishes live execution status in addition to the deterministic ledger
-projection:
+When `npm run firstmate` runs inside a Herdr pane, it publishes live execution
+status in addition to the deterministic ledger projection. It uses
+`HERDR_PANE_ID` when supplied; otherwise it discovers the unique pane running
+this repository's `scripts/firstmate.js` and passes that identity to worker
+children. Missing or ambiguous discovery disables visibility only, so manual
+pane creation is never required and local worker execution remains available:
 
 - the interactive host pane is named `ShipMates FirstMate` while FirstMate is
   listening, even before a task is dispatched; this uses Herdr display metadata

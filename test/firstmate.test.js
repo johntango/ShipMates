@@ -64,6 +64,43 @@ test("records a tool-free typed Firstmate classification and clarifies the task"
   });
 });
 
+test("uses the parent's bounded read-only authority without a second model classification", async (t) => {
+  const store = new TaskStore({ rootDir: await temporaryState(t) });
+  const shell = new FirstmateShell({
+    store,
+    runAgent: async () => assert.fail("authorized read-only work must not be reclassified"),
+    attemptIdFactory: () => "attempt-001",
+  });
+
+  const result = await shell.classify({
+    ...intake(),
+    message: "Inspect the repository structure and existing web stack.",
+  }, { authorizedAuthority: "read_only" });
+
+  assert.equal(result.classification.requiredAuthority, "read_only");
+  assert.equal(result.classification.requiresHumanApproval, false);
+  assert.deepEqual(result.classification.workItems, [
+    "Inspect the repository structure and existing web stack.",
+  ]);
+  assert.deepEqual(result.usage, {
+    requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0,
+  });
+  assert.equal(result.snapshot.state, "clarified");
+});
+
+test("reuses a verified governed implementation authority without model reclassification", async (t) => {
+  const store = new TaskStore({ rootDir: await temporaryState(t) });
+  let calls = 0;
+  const shell = new FirstmateShell({
+    store,
+    runAgent: async () => { calls += 1; return successfulResult(); },
+    attemptIdFactory: () => "attempt-001",
+  });
+
+  await shell.classify(intake(), { authorizedAuthority: "local_write" });
+  assert.equal(calls, 0);
+});
+
 test("returns a durable classification without repeating the model call", async (t) => {
   const store = new TaskStore({ rootDir: await temporaryState(t) });
   let calls = 0;
