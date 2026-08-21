@@ -1,4 +1,6 @@
-export function workflowProgressMessage(event) {
+import { validationEvidenceSummary } from "./projection.js";
+
+export function workflowProgressMessage(event, run = null) {
   if (!event || typeof event.type !== "string") return null;
   switch (event.type) {
     case "workflow.created":
@@ -14,7 +16,10 @@ export function workflowProgressMessage(event) {
         : "Validation needs one decision before it can continue.";
     }
     case "workflow.completed":
-      return "Validation completed. The local candidate passed and is ready for review.";
+      return [
+        "Validation completed. The local candidate passed and is ready for review.",
+        ...(run?.validation?.report ? validationEvidenceSummary(run.validation.report) : []),
+      ].join(" ");
     case "workflow.blocked":
       return "Blocked safely. No further workflow action was taken; review the dashboard for the next step.";
     default:

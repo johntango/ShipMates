@@ -32,11 +32,11 @@ export class SimpleWorkflowConversation {
       }
       return renderWorkflowRun(await this.controller.approve(active.id));
     }
-    if (isStatus(message)) {
+    if (isWorkflowFollowUp(message)) {
       if (this.planningPromise) return "Firstmate is still preparing and saving the short plan.";
-      const active = await this.#active();
-      if (!active) return "No simple local workflow is active.";
-      return renderWorkflowRun(await this.controller.advance(active.id));
+      const latest = (await this.store.list())[0];
+      if (!latest) return "No simple local workflow has been recorded yet.";
+      return renderWorkflowRun(latest);
     }
     if (this.planningPromise) {
       return "Firstmate is still preparing the current short plan. No second request was started.";
@@ -95,8 +95,13 @@ function isValidationApproval(value) {
   return /^\s*(?:i\s+)?approve\s+(?:the\s+)?validation(?:\s+(?:risk|warning|concern))?[.!]?\s*$/iu.test(value);
 }
 
-function isStatus(value) {
-  return /^\s*(?:show\s+)?status[.!]?\s*$/iu.test(value);
+function isWorkflowFollowUp(value) {
+  const message = String(value).replaceAll(/\s+/gu, " ").trim();
+  if (/^(?:show\s+)?status[.!]?$/iu.test(message)) return true;
+  if (!/^(?:can\s+you\s+)?(?:show|tell|give|where|what|which|how|did|is|are)\b/iu.test(message)) {
+    return false;
+  }
+  return /\b(?:status|result|outcome|happened|finish(?:ed)?|complete(?:d)?|pass(?:ed)?|fail(?:ed)?|page|url|preview|files?|artifacts?|creat(?:e|ed)|changed|tests?|validation)\b/iu.test(message);
 }
 
 function isLocalImplementation(decision) {

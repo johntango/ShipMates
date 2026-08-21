@@ -232,6 +232,72 @@ test("explains safely when approval arrives before any request", async () => {
   assert.match(await conversation.handle("I approve the plan"), /No plan is ready.*Send the development request/iu);
 });
 
+test("terminal result follow-ups use durable simple-workflow evidence without planning or mutation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-follow-up-"));
+  let generatedIds = 0;
+  const store = new WorkflowRunStore({
+    rootDir: root, idFactory: () => `private-result-${generatedIds += 1}`,
+  });
+  let plannerCalls = 0;
+  const conversation = new SimpleWorkflowConversation({
+    store,
+    controller: new WorkflowRunController({
+      store,
+      worker: {
+        observe: async () => null,
+        launch: async () => ({ receipt: {}, completed: {
+          workspacePath: "/isolated/candidate", headSha: HEAD,
+          report: {
+            status: "completed", files: ["site/index.html", "site/app.js"],
+            artifacts: [
+              { url: "http://localhost:8000" },
+              { path: "/evidence/page.png" },
+            ],
+          },
+        } }),
+      },
+      validator: {
+        observe: async () => null,
+        start: async ({ headSha }) => ({ status: "passed", headSha, report: {
+          outcome: "passed", headChanged: false,
+          steps: [
+            { step: "test", status: "completed" },
+            { step: "lint", status: "completed" },
+            { step: "review", status: "skipped" },
+          ],
+        } }),
+      },
+    }),
+    context: async () => ({ repoPath: "/repo", baseSha: "0".repeat(40) }),
+    planner: async () => {
+      plannerCalls += 1;
+      return { action: "dispatch", requiredAuthority: "local_write", tasks: [] };
+    },
+  });
+  await conversation.handle("Build a page");
+  await conversation.handle("I approve the plan");
+  const before = (await store.list())[0].eventCount;
+  const callsBefore = plannerCalls;
+
+  for (const question of [
+    "where is the page?", "what is the URL?", "show status", "what happened?",
+    "what files did it create?", "show me the preview artifacts",
+  ]) {
+    const answer = await conversation.handle(question);
+    assert.match(answer, /Outcome: Passed/u);
+    assert.match(answer, /isolated workspace.*not been copied or merged/iu);
+    assert.match(answer, /file:\/\/\/isolated\/candidate\/site\/index\.html/u);
+    assert.match(answer, /site\/index\.html, site\/app\.js/u);
+    assert.match(answer, /Durable preview evidence: \/evidence\/page\.png/u);
+    assert.doesNotMatch(answer, /localhost:8000|private-result|workflow-|task id/iu);
+    assert.match(answer, /No generated project tests were recorded/u);
+    assert.match(answer, /No individual test-case count was recorded/u);
+    assert.match(answer, /completed 2 validation checks: test, lint/u);
+  }
+  assert.equal(plannerCalls, callsBefore);
+  assert.equal((await store.list())[0].eventCount, before);
+});
+
 function runFixture() {
   return {
     id: "workflow-test", repoPath: "/repo", baseHeadSha: "0".repeat(40),

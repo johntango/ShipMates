@@ -6,7 +6,9 @@ import test from "node:test";
 
 import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { workflowRunEnabled } from "../src/workflow-run/feature.js";
-import { projectWorkflowRun, renderWorkflowRun } from "../src/workflow-run/projection.js";
+import {
+  projectWorkflowRun, renderWorkflowRun, validationEvidenceSummary,
+} from "../src/workflow-run/projection.js";
 import { reduceWorkflowRun } from "../src/workflow-run/reducer.js";
 import { WorkflowRunStore } from "../src/workflow-run/store.js";
 
@@ -56,7 +58,31 @@ test("approval to completion uses one worker and one exact-head validator", asyn
     outcome: "Passed", nextAction: null,
     why: "Implementation and exact-head local validation completed.", phase: "completed",
   });
-  assert.doesNotMatch(renderWorkflowRun(completed), /workflow-|operation|task id/iu);
+  assert.doesNotMatch(renderWorkflowRun(completed), /workflow-test|operation id|task id/iu);
+});
+
+test("validation evidence distinguishes generated tests, test cases, and checks", () => {
+  assert.deepEqual(validationEvidenceSummary({
+    generatedTestCount: 0,
+    executedTestCaseCount: 12,
+    steps: [
+      { step: "intent", status: "completed" },
+      { step: "test", status: "completed" },
+      { step: "lint", status: "completed" },
+      { step: "review", status: "skipped" },
+    ],
+  }), [
+    "No-mistakes generated 0 project tests.",
+    "No-mistakes executed 12 test cases.",
+    "No-mistakes completed 2 validation checks: test, lint.",
+  ]);
+  assert.deepEqual(validationEvidenceSummary({
+    steps: [{ step: "test", status: "completed" }],
+  }), [
+    "No generated project tests were recorded by no-mistakes.",
+    "No individual test-case count was recorded.",
+    "No-mistakes completed 1 validation check: test.",
+  ]);
 });
 
 test("restart after launch intent observes the operation without a duplicate worker", async () => {

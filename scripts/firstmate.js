@@ -502,8 +502,8 @@ async function runInteractiveFirstmate() {
   const simpleWorkflowStore = workflowRunEnabled()
     ? new WorkflowRunStore({
         rootDir: interactiveStore.rootDir,
-        onEvent: (event) => {
-          const message = workflowProgressMessage(event);
+        onEvent: (event, run) => {
+          const message = workflowProgressMessage(event, run);
           if (message) console.log(message);
         },
       })
