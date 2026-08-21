@@ -45,11 +45,11 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
     }] },
   });
   assert.deepEqual(state.workflowRuns, [{
-    phase: "awaiting_approval", request: "Build a page", plan: "Build and validate it",
+    phase: "Awaiting your approval", action: "approve", request: "Build a page", plan: "Build and validate it",
     updatedAt: "2026-08-18T12:00:00.000Z",
     presentation: {
-      outcome: "Blocked safely", nextAction: "Approve the short plan to begin local work.",
-      why: "No files will change until you approve.", phase: "awaiting_approval", details: [],
+      outcome: "Awaiting your approval", nextAction: "Approve the short plan to begin local work, or stop without changing files.",
+      why: "The short plan is ready; no files have changed.", phase: "Awaiting your approval", details: [],
     },
   }]);
   assert.deepEqual(state.tasks, []);
@@ -65,10 +65,10 @@ test("projects completed simple workflow authorship, validation, and durable pag
       id: "workflow-secret", phase: "completed", request: "Build a page",
       plan: "Build and validate it", updatedAt: "2026-08-18T12:00:00.000Z",
       worker: {
-        workspacePath: "/isolated/candidate",
+        workspacePath: "/isolated/candidate", status: "completed", headSha: "a".repeat(40),
         report: { status: "completed", files: ["site/index.html"] },
       },
-      validation: { report: {
+      validation: { status: "passed", headSha: "a".repeat(40), report: {
         outcome: "passed", generatedTestCount: 0, executedTestCaseCount: 3,
         steps: [{ step: "test", status: "completed" }],
       } },
@@ -76,6 +76,8 @@ test("projects completed simple workflow authorship, validation, and durable pag
   });
 
   const [run] = state.workflowRuns;
+  assert.equal(run.phase, "Passed");
+  assert.equal(run.action, "status");
   assert.equal(run.presentation.outcome, "Passed");
   assert.match(run.presentation.why, /Implementer created.*no-mistakes tested and validated/iu);
   assert.match(run.presentation.details.join("\n"), /file:\/\/\/isolated\/candidate\/site\/index\.html/u);

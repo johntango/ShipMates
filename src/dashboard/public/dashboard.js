@@ -40,13 +40,13 @@
     const simpleRunCards = simpleRuns.map((run) => `
       <article class="card shadow-sm task-card" data-state="${run.presentation.outcome === "Passed" ? "done" : run.presentation.outcome === "Blocked safely" ? "working" : "attention"}">
         <div class="card-body">
-          <div class="d-flex flex-wrap justify-content-between gap-2"><h2 class="h5 mb-0">${escape(run.request)}</h2><span class="badge text-bg-secondary">${escape(run.phase.replaceAll("_", " "))}</span></div>
+          <div class="d-flex flex-wrap justify-content-between gap-2"><h2 class="h5 mb-0">${escape(run.request)}</h2><span class="badge text-bg-secondary">${escape(run.phase)}</span></div>
           <div class="alert ${run.presentation.outcome === "Passed" ? "alert-success" : "alert-warning"} mt-3 mb-0">
             <div class="h5 mb-1">${escape(run.presentation.outcome)}</div>
             ${run.presentation.nextAction ? `<div><strong>Next action:</strong> ${escape(run.presentation.nextAction)}</div>` : '<div><strong>Next action:</strong> None.</div>'}
             <div class="small mt-1"><strong>Why:</strong> ${escape(run.presentation.why)}</div>
             ${run.presentation.details?.length ? `<div class="small mt-2">${run.presentation.details.map((detail) => `<div>${escape(detail)}</div>`).join("")}</div>` : ""}
-            ${run.phase === "awaiting_approval" ? '<button class="btn btn-success btn-sm mt-2" data-workflow-intent="approve">Approve plan</button>' : run.phase === "awaiting_validation_decision" ? '<button class="btn btn-warning btn-sm mt-2" data-workflow-intent="approve_validation">Approve validation concern</button>' : '<button class="btn btn-outline-secondary btn-sm mt-2" data-workflow-intent="status">Refresh status</button>'}
+            ${run.action === "approve" ? '<button class="btn btn-success btn-sm mt-2" data-workflow-intent="approve">Approve plan</button>' : run.action === "approve_validation" ? '<button class="btn btn-warning btn-sm mt-2" data-workflow-intent="approve_validation">Review decision</button>' : ""}
           </div>
           <details class="small mt-2"><summary>Short plan</summary><div class="mt-2">${escape(run.plan)}</div></details>
         </div>

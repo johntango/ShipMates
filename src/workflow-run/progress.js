@@ -2,25 +2,29 @@ import { renderWorkflowRun } from "./projection.js";
 
 export function workflowProgressMessage(event, run = null) {
   if (!event || typeof event.type !== "string") return null;
+  if (run && new Set([
+    "workflow.created", "worker.launched", "validation.requested",
+    "validation.review_requested", "workflow.completed", "workflow.blocked",
+  ]).has(event.type)) return renderWorkflowRun(run);
   switch (event.type) {
     case "workflow.created":
-      return "Short plan ready. First Mate is waiting for your approval.";
+      return "Status: Awaiting your approval\nNext: Approve the short plan to begin local work, or stop without changing files.\nWhy: The short plan is ready; no files have changed.";
     case "worker.launched":
-      return "Plan approved. One Implementer started in an isolated workspace.";
+      return "Status: Working\nNext: No action needed; First Mate is monitoring the isolated Implementer.\nWhy: The Implementer is active in the isolated workspace.";
     case "validation.requested":
-      return "Implementation finished. No-mistakes started validating the exact candidate.";
+      return "Status: Validating\nNext: No action needed; First Mate is monitoring no-mistakes for the exact candidate result.\nWhy: The Implementer finished, and no-mistakes is validating that exact isolated candidate.";
     case "validation.review_requested": {
       const summary = clean(event.data?.review?.summary);
       return summary
-        ? `Validation needs one decision: ${summary}`
-        : "Validation needs one decision before it can continue.";
+        ? `Status: Awaiting your approval\nNext: Choose whether to accept this validation risk or stop safely.\nWhy: ${summary}`
+        : "Status: Awaiting your approval\nNext: Choose whether to accept this validation risk or stop safely.\nWhy: No-mistakes found a risk that requires human judgment.";
     }
     case "workflow.completed":
       return run
         ? renderWorkflowRun(run)
         : "Completed. The Implementer created the code, and no-mistakes tested and validated that exact isolated candidate.";
     case "workflow.blocked":
-      return "Blocked safely. No further workflow action was taken; review the dashboard for the next step.";
+      return "Status: Blocked safely\nNext: Resolve the stated issue, then ask First Mate to try the request again.\nWhy: The workflow stopped without risking additional changes.";
     default:
       return null;
   }

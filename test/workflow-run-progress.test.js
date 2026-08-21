@@ -31,8 +31,8 @@ test("reports meaningful durable transitions once without internal identifiers",
   }, "launched");
 
   assert.deepEqual(messages, [
-    "Short plan ready. First Mate is waiting for your approval.",
-    "Plan approved. One Implementer started in an isolated workspace.",
+    "Status: Awaiting your approval\nNext: Approve the short plan to begin local work, or stop without changing files.\nWhy: The short plan is ready; no files have changed.",
+    "Status: Working\nNext: No action needed; First Mate is monitoring the isolated Implementer.\nWhy: The Implementer is active in the isolated workspace.",
   ]);
   assert.doesNotMatch(messages.join(" "), /private-run-id|worker-op/u);
   const replayed = await new WorkflowRunStore({ rootDir: store.rootDir }).get(run.id);
@@ -41,11 +41,11 @@ test("reports meaningful durable transitions once without internal identifiers",
 });
 
 test("renders validation, review, completion, and blocked transitions in plain language", () => {
-  assert.match(workflowProgressMessage({ type: "validation.requested" }), /No-mistakes started/u);
+  assert.match(workflowProgressMessage({ type: "validation.requested" }), /^Status: Validating/u);
   assert.equal(workflowProgressMessage({
     type: "validation.review_requested",
     data: { review: { summary: "Browser evidence is unavailable.\nPlease review." } },
-  }), "Validation needs one decision: Browser evidence is unavailable. Please review.");
+  }), "Status: Awaiting your approval\nNext: Choose whether to accept this validation risk or stop safely.\nWhy: Browser evidence is unavailable. Please review.");
   assert.match(workflowProgressMessage({ type: "workflow.completed" }), /Implementer created the code/iu);
   assert.match(workflowProgressMessage({ type: "workflow.completed" }, {
     validation: { report: {
@@ -58,6 +58,6 @@ test("renders validation, review, completion, and blocked transitions in plain l
     },
     phase: "completed",
   }), /Implementer created the code.*No-mistakes tested and validated.*file:\/\/\/isolated\/candidate\/site\/index\.html.*generated 0 project tests.*executed 4 test cases.*1 validation check/isu);
-  assert.match(workflowProgressMessage({ type: "workflow.blocked" }), /^Blocked safely/u);
+  assert.match(workflowProgressMessage({ type: "workflow.blocked" }), /^Status: Blocked safely/u);
   assert.equal(workflowProgressMessage({ type: "worker.launch_requested" }), null);
 });

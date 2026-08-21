@@ -2,39 +2,89 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 export function projectWorkflowRun(run) {
-  const values = {
-    awaiting_approval: ["Blocked safely", "Approve the short plan to begin local work.", "No files will change until you approve."],
-    approved: ["In progress", null, "The approved local work is starting."],
-    launching: ["In progress", null, "One isolated Implementer is being started."],
-    implementing: ["In progress", null, "The Implementer is working in an isolated workspace."],
-    worker_complete: ["In progress", null, "Implementation finished; exact-head validation is starting."],
-    validating: ["In progress", null, "No-mistakes is validating the exact implemented Git head."],
-    awaiting_validation_decision: [
-      "Blocked safely",
-      "Review the validation concern, then approve validation or stop.",
-      run.validation?.review?.summary || "Validation needs one human risk decision before it can finish.",
-    ],
-    validated: ["In progress", null, "Validation passed; completion is being recorded."],
-    completed: [
-      "Passed", null,
-      "The Implementer created the code, and no-mistakes tested and validated that exact isolated candidate.",
-    ],
-    blocked: ["Blocked safely", "Review the recorded blocker before retrying.", run.blocker || "The workflow stopped without risking additional changes."],
-  };
-  const [outcome, nextAction, why] = values[run.phase] || ["Failed", "Inspect diagnostic evidence.", "The workflow is in an unknown state."];
+  const [phase, nextAction, why] = evidenceStatus(run);
   return Object.freeze({
-    outcome, nextAction, why, phase: run.phase, details: terminalEvidence(run),
+    outcome: phase, nextAction, why, phase, details: terminalEvidence(run),
   });
 }
 
 export function renderWorkflowRun(run) {
   const view = projectWorkflowRun(run);
   return [
-    `Outcome: ${view.outcome}`,
+    `Status: ${view.phase}`,
     ...(view.nextAction ? [`Next: ${view.nextAction}`] : []),
     `Why: ${view.why}`,
     ...view.details,
   ].join("\n");
+}
+
+function evidenceStatus(run) {
+  if (run.phase === "blocked") {
+    return [
+      "Blocked safely",
+      "Resolve the stated issue, then ask First Mate to try the request again.",
+      run.blocker || "The workflow stopped without risking additional changes.",
+    ];
+  }
+  if (run.phase === "completed") {
+    const exactPass = run.worker?.status === "completed" &&
+      run.validation?.status === "passed" &&
+      run.validation?.headSha === run.worker?.headSha;
+    return exactPass
+      ? [
+          "Passed",
+          "Review the isolated candidate. Sharing it remains a separate explicit decision.",
+          "The Implementer created the code, and no-mistakes tested and validated that exact isolated candidate.",
+        ]
+      : [
+          "Blocked safely",
+          "Ask First Mate to inspect the stored evidence before any delivery.",
+          "The recorded completion is missing matching worker or exact-head validation evidence.",
+        ];
+  }
+  if (run.phase === "awaiting_validation_decision" ||
+    run.validation?.status === "awaiting_decision") {
+    return [
+      "Awaiting your approval",
+      "Choose whether to accept this validation risk or stop safely.",
+      run.validation?.review?.summary || "No-mistakes found a risk that requires human judgment.",
+    ];
+  }
+  if (run.validation || run.worker?.status === "completed") {
+    return [
+      "Validating",
+      "No action needed; First Mate is monitoring no-mistakes for the exact candidate result.",
+      "The Implementer finished, and no-mistakes is validating that exact isolated candidate.",
+    ];
+  }
+  if (run.worker || new Set(["approved", "launching", "implementing"]).has(run.phase)) {
+    return [
+      "Working",
+      "No action needed; First Mate is monitoring the isolated Implementer.",
+      run.worker?.receipt
+        ? "The Implementer is active in the isolated workspace."
+        : "The approved Implementer is being started in the isolated workspace.",
+    ];
+  }
+  if (run.phase === "awaiting_approval") {
+    return [
+      "Awaiting your approval",
+      "Approve the short plan to begin local work, or stop without changing files.",
+      "The short plan is ready; no files have changed.",
+    ];
+  }
+  if (run.phase === "planning") {
+    return [
+      "Planning",
+      "No action needed; First Mate is preparing a short plan.",
+      "First Mate is turning the request into a bounded local plan.",
+    ];
+  }
+  return [
+    "Blocked safely",
+    "Ask First Mate to inspect the stored evidence before continuing.",
+    "The durable workflow evidence does not identify a safe current phase.",
+  ];
 }
 
 export function validationEvidenceSummary(report) {
@@ -61,7 +111,8 @@ export function validationEvidenceSummary(report) {
 }
 
 function terminalEvidence(run) {
-  if (!new Set(["completed", "blocked"]).has(run.phase)) return [];
+  if (!new Set(["awaiting_validation_decision", "completed", "blocked"]).has(run.phase) &&
+    !run.retries?.length) return [];
   const files = Array.isArray(run.worker?.report?.files)
     ? run.worker.report.files.filter((file) => typeof file === "string" && file.trim())
     : [];
@@ -71,6 +122,14 @@ function terminalEvidence(run) {
   }
   if (run.phase === "completed" && run.validation?.report) {
     lines.push("Validated by: No-mistakes tested and validated this exact isolated candidate.");
+  }
+  if (run.phase === "awaiting_validation_decision") {
+    lines.push("Decision needed: No-mistakes reported a validation risk that First Mate cannot decide silently.");
+    lines.push("Choices: approve this stated risk and continue validation, or stop and keep the isolated candidate unchanged.");
+    lines.push("Default: stop safely unless you explicitly approve the stated risk.");
+  }
+  if (run.retries?.length) {
+    lines.push("Recovery: First Mate used its one safe automatic setup retry and did not duplicate work.");
   }
   if (run.worker?.workspacePath) {
     lines.push("Delivery: The candidate is preserved in its isolated workspace; it has not been copied or merged into the shared checkout.");

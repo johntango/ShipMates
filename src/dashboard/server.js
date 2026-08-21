@@ -215,13 +215,21 @@ export async function buildDashboardState({
     ? await projectStore.active() : null;
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const workflowRuns = workflowRunStore
-    ? (await workflowRunStore.list()).map((run) => ({
-        phase: run.phase,
-        request: run.request,
-        plan: run.plan,
-        updatedAt: run.updatedAt,
-        presentation: projectWorkflowRun(run),
-      }))
+    ? (await workflowRunStore.list()).map((run) => {
+        const presentation = projectWorkflowRun(run);
+        return {
+          phase: presentation.phase,
+          action: run.phase === "awaiting_approval"
+            ? "approve"
+            : run.phase === "awaiting_validation_decision"
+              ? "approve_validation"
+              : "status",
+          request: run.request,
+          plan: run.plan,
+          updatedAt: run.updatedAt,
+          presentation,
+        };
+      })
     : [];
   return {
     schemaVersion: 1,
