@@ -1,5 +1,7 @@
-import { Agent, run, tool } from "@openai/agents";
+import { Agent, generateTraceId, run, tool } from "@openai/agents";
 import { z } from "zod";
+
+import { traceRunOptions } from "../observability/agent-tracing.js";
 
 const emptyParameters = z.object({}).strict();
 
@@ -66,7 +68,8 @@ If approval or recovery is required, call request_human_attention. Never push, p
 }
 
 export class ProjectAgentController {
-  constructor({ project, task, operations, observer = null, model, runAgent = run } = {}) {
+  constructor({ project, task, operations, observer = null, model, runAgent = run,
+    tracingConfig = Object.freeze({ mode: "off" }), traceIdFactory = generateTraceId } = {}) {
     if (!project || !task || typeof runAgent !== "function") throw new TypeError("ProjectAgentController requires project, task, and runAgent");
     this.project = project;
     this.task = task;
@@ -95,6 +98,8 @@ export class ProjectAgentController {
     this.tools = createProjectAgentTools({ project, task, operations: tracked, observer });
     this.agent = createProjectAgent({ project, task, tools: this.tools, model });
     this.runAgent = runAgent;
+    this.tracingConfig = tracingConfig;
+    this.traceIdFactory = traceIdFactory;
   }
 
   async execute(instruction) {
@@ -102,8 +107,12 @@ export class ProjectAgentController {
     try {
       const result = await this.runAgent(this.agent,
         `Execute this approved planned task through the bounded project lifecycle:\n${instruction}`,
-        { maxTurns: 6, tracingDisabled: true, traceIncludeSensitiveData: false,
-          workflowName: `ShipMates ${this.project.name} Project Agent`, groupId: this.project.id });
+        { maxTurns: 6, ...traceRunOptions(this.tracingConfig, {
+          workflowName: `ShipMates ${this.project.name} Project Agent`,
+          groupId: this.project.id,
+          traceId: this.tracingConfig.mode === "off" ? null : this.traceIdFactory(),
+          metadata: { component: "project-agent", plan_task_id: this.task.id },
+        }) });
       let output = result.finalOutput;
       if (!output || !new Set(["completed", "blocked", "awaiting_human"]).has(output.status)) {
         throw new Error("Project Agent returned an invalid result");
