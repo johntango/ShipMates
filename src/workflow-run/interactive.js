@@ -34,9 +34,19 @@ export class SimpleWorkflowConversation {
     }
     if (isWorkflowFollowUp(message)) {
       if (this.planningPromise) return "Firstmate is still preparing and saving the short plan.";
-      const latest = (await this.store.list())[0];
+      const runs = await this.store.list();
+      const latest = runs[0];
       if (!latest) return "No simple local workflow has been recorded yet.";
-      return renderWorkflowRun(latest);
+      const selected = isCompletedResultFollowUp(message)
+        ? runs.find(({ phase }) => phase === "completed") || latest
+        : latest;
+      const lines = [renderWorkflowRun(selected)];
+      if (selected !== latest && latest.phase === "blocked") {
+        lines.push(
+          "Current status note: A newer workflow is blocked safely. That blocker is separate from the completed result above.",
+        );
+      }
+      return lines.join("\n");
     }
     if (this.planningPromise) {
       return "Firstmate is still preparing the current short plan. No second request was started.";
@@ -102,6 +112,12 @@ function isWorkflowFollowUp(value) {
     return false;
   }
   return /\b(?:status|result|outcome|happened|finish(?:ed)?|complete(?:d)?|pass(?:ed)?|fail(?:ed)?|page|url|preview|files?|artifacts?|creat(?:e|ed)|changed|tests?|validation)\b/iu.test(message);
+}
+
+function isCompletedResultFollowUp(value) {
+  const message = String(value).replaceAll(/\s+/gu, " ").trim();
+  if (/^(?:show\s+)?status[.!]?$/iu.test(message)) return false;
+  return /\b(?:result|outcome|happened|finish(?:ed)?|complete(?:d)?|pass(?:ed)?|page|url|preview|files?|artifacts?|creat(?:e|ed)|changed|tests?|validation)\b/iu.test(message);
 }
 
 function isLocalImplementation(decision) {

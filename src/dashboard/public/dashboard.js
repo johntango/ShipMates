@@ -45,6 +45,7 @@
             <div class="h5 mb-1">${escape(run.presentation.outcome)}</div>
             ${run.presentation.nextAction ? `<div><strong>Next action:</strong> ${escape(run.presentation.nextAction)}</div>` : '<div><strong>Next action:</strong> None.</div>'}
             <div class="small mt-1"><strong>Why:</strong> ${escape(run.presentation.why)}</div>
+            ${run.presentation.details?.length ? `<div class="small mt-2">${run.presentation.details.map((detail) => `<div>${escape(detail)}</div>`).join("")}</div>` : ""}
             ${run.phase === "awaiting_approval" ? '<button class="btn btn-success btn-sm mt-2" data-workflow-intent="approve">Approve plan</button>' : run.phase === "awaiting_validation_decision" ? '<button class="btn btn-warning btn-sm mt-2" data-workflow-intent="approve_validation">Approve validation concern</button>' : '<button class="btn btn-outline-secondary btn-sm mt-2" data-workflow-intent="status">Refresh status</button>'}
           </div>
           <details class="small mt-2"><summary>Short plan</summary><div class="mt-2">${escape(run.plan)}</div></details>

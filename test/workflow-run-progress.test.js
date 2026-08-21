@@ -46,13 +46,18 @@ test("renders validation, review, completion, and blocked transitions in plain l
     type: "validation.review_requested",
     data: { review: { summary: "Browser evidence is unavailable.\nPlease review." } },
   }), "Validation needs one decision: Browser evidence is unavailable. Please review.");
-  assert.match(workflowProgressMessage({ type: "workflow.completed" }), /Validation completed/u);
+  assert.match(workflowProgressMessage({ type: "workflow.completed" }), /Implementer created the code/iu);
   assert.match(workflowProgressMessage({ type: "workflow.completed" }, {
     validation: { report: {
       generatedTestCount: 0, executedTestCaseCount: 4,
       steps: [{ step: "test", status: "completed" }],
     } },
-  }), /generated 0 project tests.*executed 4 test cases.*1 validation check/iu);
+    worker: {
+      workspacePath: "/isolated/candidate",
+      report: { status: "completed", files: ["site/index.html"] },
+    },
+    phase: "completed",
+  }), /Implementer created the code.*No-mistakes tested and validated.*file:\/\/\/isolated\/candidate\/site\/index\.html.*generated 0 project tests.*executed 4 test cases.*1 validation check/isu);
   assert.match(workflowProgressMessage({ type: "workflow.blocked" }), /^Blocked safely/u);
   assert.equal(workflowProgressMessage({ type: "worker.launch_requested" }), null);
 });

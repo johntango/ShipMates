@@ -56,9 +56,21 @@ test("approval to completion uses one worker and one exact-head validator", asyn
   assert.deepEqual(calls, { launches: 1, validations: 1 });
   assert.deepEqual(projectWorkflowRun(completed), {
     outcome: "Passed", nextAction: null,
-    why: "Implementation and exact-head local validation completed.", phase: "completed",
+    why: "The Implementer created the code, and no-mistakes tested and validated that exact isolated candidate.",
+    phase: "completed",
+    details: [
+      "Created by: The Implementer created the code in this candidate.",
+      "Validated by: No-mistakes tested and validated this exact isolated candidate.",
+      "Delivery: The candidate is preserved in its isolated workspace; it has not been copied or merged into the shared checkout.",
+      "Candidate workspace: /tmp/workflow-worktree",
+      "No generated project tests were recorded by no-mistakes.",
+      "No individual test-case count was recorded.",
+    ],
   });
-  assert.doesNotMatch(renderWorkflowRun(completed), /workflow-test|operation id|task id/iu);
+  const rendered = renderWorkflowRun(completed);
+  assert.match(rendered, /Implementer created the code/iu);
+  assert.match(rendered, /No-mistakes tested and validated this exact isolated candidate/iu);
+  assert.doesNotMatch(rendered, /workflow-test|operation id|task id/iu);
 });
 
 test("validation evidence distinguishes generated tests, test cases, and checks", () => {
