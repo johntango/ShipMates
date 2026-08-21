@@ -49,12 +49,38 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
     updatedAt: "2026-08-18T12:00:00.000Z",
     presentation: {
       outcome: "Blocked safely", nextAction: "Approve the short plan to begin local work.",
-      why: "No files will change until you approve.", phase: "awaiting_approval",
+      why: "No files will change until you approve.", phase: "awaiting_approval", details: [],
     },
   }]);
   assert.deepEqual(state.tasks, []);
   assert.deepEqual(state.projects, []);
   assert.doesNotMatch(JSON.stringify(state.workflowRuns), /workflow-secret/u);
+});
+
+test("projects completed simple workflow authorship, validation, and durable page", async () => {
+  const { store, projectContext } = fixture();
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { list: async () => [{
+      id: "workflow-secret", phase: "completed", request: "Build a page",
+      plan: "Build and validate it", updatedAt: "2026-08-18T12:00:00.000Z",
+      worker: {
+        workspacePath: "/isolated/candidate",
+        report: { status: "completed", files: ["site/index.html"] },
+      },
+      validation: { report: {
+        outcome: "passed", generatedTestCount: 0, executedTestCaseCount: 3,
+        steps: [{ step: "test", status: "completed" }],
+      } },
+    }] },
+  });
+
+  const [run] = state.workflowRuns;
+  assert.equal(run.presentation.outcome, "Passed");
+  assert.match(run.presentation.why, /Implementer created.*no-mistakes tested and validated/iu);
+  assert.match(run.presentation.details.join("\n"), /file:\/\/\/isolated\/candidate\/site\/index\.html/u);
+  assert.match(run.presentation.details.join("\n"), /generated 0 project tests.*executed 3 test cases/isu);
+  assert.doesNotMatch(JSON.stringify(run), /workflow-secret|localhost/iu);
 });
 
 test("simple workflow dashboard accepts high-level intents only", () => {

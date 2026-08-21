@@ -173,6 +173,8 @@ test("feature-flag conversation gives one plan approval and leaks no ids", async
   assert.doesNotMatch(proposed, /workflow-|internal-secret|task id/iu);
   const completed = await conversation.handle("I approve the plan");
   assert.match(completed, /Outcome: Passed/u);
+  assert.match(completed, /Implementer created the code/iu);
+  assert.match(completed, /No-mistakes tested and validated this exact isolated candidate/iu);
   assert.doesNotMatch(completed, /workflow-|internal-secret|task id/iu);
   assert.equal((await store.list()).length, 1);
 });
@@ -276,12 +278,19 @@ test("terminal result follow-ups use durable simple-workflow evidence without pl
   });
   await conversation.handle("Build a page");
   await conversation.handle("I approve the plan");
+  const newer = await store.create({
+    request: "Build another page", plan: "Build and validate", repoPath: "/repo",
+    baseHeadSha: "0".repeat(40), authority: "local_write",
+  });
+  await store.append(newer.id, "workflow.blocked", {
+    reason: "A separate newer attempt stopped safely.",
+  }, "blocked");
   const before = (await store.list())[0].eventCount;
   const callsBefore = plannerCalls;
 
   for (const question of [
-    "where is the page?", "what is the URL?", "show status", "what happened?",
-    "what files did it create?", "show me the preview artifacts",
+    "where is the page?", "what is the URL?", "what happened?",
+    "what files did it create?", "show me the preview artifacts", "what tests ran?",
   ]) {
     const answer = await conversation.handle(question);
     assert.match(answer, /Outcome: Passed/u);
@@ -293,7 +302,13 @@ test("terminal result follow-ups use durable simple-workflow evidence without pl
     assert.match(answer, /No generated project tests were recorded/u);
     assert.match(answer, /No individual test-case count was recorded/u);
     assert.match(answer, /completed 2 validation checks: test, lint/u);
+    assert.match(answer, /Implementer created the code/iu);
+    assert.match(answer, /No-mistakes tested and validated this exact isolated candidate/iu);
+    assert.match(answer, /newer workflow is blocked safely/iu);
   }
+  const current = await conversation.handle("show status");
+  assert.match(current, /Outcome: Blocked safely/u);
+  assert.doesNotMatch(current, /private-result|workflow-|task id/iu);
   assert.equal(plannerCalls, callsBefore);
   assert.equal((await store.list())[0].eventCount, before);
 });

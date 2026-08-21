@@ -15,11 +15,16 @@ export function projectWorkflowRun(run) {
       run.validation?.review?.summary || "Validation needs one human risk decision before it can finish.",
     ],
     validated: ["In progress", null, "Validation passed; completion is being recorded."],
-    completed: ["Passed", null, "Implementation and exact-head local validation completed."],
+    completed: [
+      "Passed", null,
+      "The Implementer created the code, and no-mistakes tested and validated that exact isolated candidate.",
+    ],
     blocked: ["Blocked safely", "Review the recorded blocker before retrying.", run.blocker || "The workflow stopped without risking additional changes."],
   };
   const [outcome, nextAction, why] = values[run.phase] || ["Failed", "Inspect diagnostic evidence.", "The workflow is in an unknown state."];
-  return Object.freeze({ outcome, nextAction, why, phase: run.phase });
+  return Object.freeze({
+    outcome, nextAction, why, phase: run.phase, details: terminalEvidence(run),
+  });
 }
 
 export function renderWorkflowRun(run) {
@@ -28,7 +33,7 @@ export function renderWorkflowRun(run) {
     `Outcome: ${view.outcome}`,
     ...(view.nextAction ? [`Next: ${view.nextAction}`] : []),
     `Why: ${view.why}`,
-    ...terminalEvidence(run),
+    ...view.details,
   ].join("\n");
 }
 
@@ -61,6 +66,12 @@ function terminalEvidence(run) {
     ? run.worker.report.files.filter((file) => typeof file === "string" && file.trim())
     : [];
   const lines = [];
+  if (run.worker?.report?.status === "completed") {
+    lines.push("Created by: The Implementer created the code in this candidate.");
+  }
+  if (run.phase === "completed" && run.validation?.report) {
+    lines.push("Validated by: No-mistakes tested and validated this exact isolated candidate.");
+  }
   if (run.worker?.workspacePath) {
     lines.push("Delivery: The candidate is preserved in its isolated workspace; it has not been copied or merged into the shared checkout.");
     const entry = staticEntry(run.worker.workspacePath, files);
