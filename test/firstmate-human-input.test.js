@@ -67,6 +67,7 @@ test("approval command validates, delivers, reconciles, and advances dependent w
         },
       },
       createGate: (options) => ({ options }),
+      resolveBinary: async () => "/pinned/no-mistakes",
       createValidationWorkflow: ({ gate, actor }) => ({
         approve: async (input) => calls.push(["approve", actor, input, gate.options]),
       }),
@@ -219,6 +220,7 @@ for (const [label, ApprovalError] of [
         reconcileTask: async (taskId) => calls.push(["reconcile", taskId]),
       },
       createGate: () => ({}),
+      resolveBinary: async () => "/pinned/no-mistakes",
       createValidationWorkflow: () => ({
         approve: async () => {
           throw new ApprovalError("validator head changed");
@@ -271,6 +273,7 @@ test("retries project reconciliation after the recovery transition succeeds", as
       },
     },
     createGate: () => ({}),
+    resolveBinary: async () => "/pinned/no-mistakes",
     createValidationWorkflow: () => ({
       approve: async () => {
         throw new LocalValidationRecoveryRequiredError("validator head changed");

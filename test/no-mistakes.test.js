@@ -187,7 +187,17 @@ test("rebinds a stale ShipMates-managed remote from a recycled worktree", async 
   assert.equal(calls.some(({ args }) => args.join(" ") === "remote remove no-mistakes"), true);
   const init = calls.find(({ args }) => args[0] === "init");
   assert.notEqual(init.options.env.NM_HOME, path.dirname(path.dirname(staleRemote)));
-  assert.match(init.options.env.NM_HOME, /shipmates-no-mistakes-runtime\/[a-f0-9]{16}$/u);
+  const repositoryKey = createHash("sha256")
+    .update("git@github.com:owner/repo.git")
+    .digest("hex").slice(0, 16);
+  const preferredRoot = path.join(stateRoot, "runtime", repositoryKey);
+  const expectedRoot = Buffer.byteLength(path.join(preferredRoot, "socket"), "utf8") <= 100
+    ? preferredRoot
+    : path.join(
+        tmpdir(), "shipmates-no-mistakes-runtime",
+        createHash("sha256").update(preferredRoot).digest("hex").slice(0, 16),
+      );
+  assert.equal(init.options.env.NM_HOME, expectedRoot);
 });
 
 test("continues to reject an arbitrary external no-mistakes remote", async () => {

@@ -17,6 +17,7 @@ export async function handleValidationApproval(message, {
   orchestrator,
   advanceProject,
   binaryPath = null,
+  resolveBinary = resolvePinnedNoMistakesBinary,
   createGate = (options) => new NoMistakesLocalGate(options),
   createValidationWorkflow = (options) => new LocalValidationWorkflow(options),
   createDeliveryWorkflow = (options) => new LocalDeliveryWorkflow(options),
@@ -28,14 +29,13 @@ export async function handleValidationApproval(message, {
   );
   if (!match) return null;
 
-  binaryPath ||= await resolvePinnedNoMistakesBinary({
-    explicitPath: process.env.NO_MISTAKES_BIN || null,
-  });
-
   const taskId = match[1].toLowerCase();
   const snapshot = await store.getSnapshot(taskId);
   const prior = snapshot.validationRuns?.at(-1);
   if (prior?.passed !== true) {
+    binaryPath ||= await resolveBinary({
+      explicitPath: process.env.NO_MISTAKES_BIN || null,
+    });
     const intentIndex = prior?.command?.args?.indexOf("--intent") ?? -1;
     const intent = intentIndex >= 0 ? prior.command.args[intentIndex + 1] : null;
     if (!intent) throw new Error(`Task ${taskId} has no durable validation intent`);
@@ -99,6 +99,7 @@ export async function reconcileCompletedValidationApproval(taskId, {
   orchestrator,
   advanceProject,
   binaryPath = null,
+  resolveBinary = resolvePinnedNoMistakesBinary,
   createGate = (options) => new NoMistakesLocalGate(options),
   createValidationWorkflow = (options) => new LocalValidationWorkflow(options),
   createDeliveryWorkflow = (options) => new LocalDeliveryWorkflow(options),
@@ -110,7 +111,7 @@ export async function reconcileCompletedValidationApproval(taskId, {
   const intentIndex = prior?.command?.args?.indexOf("--intent") ?? -1;
   const intent = intentIndex >= 0 ? prior.command.args[intentIndex + 1] : null;
   if (!intent || snapshot.state !== "awaiting_human") return null;
-  binaryPath ||= await resolvePinnedNoMistakesBinary({
+  binaryPath ||= await resolveBinary({
     explicitPath: process.env.NO_MISTAKES_BIN || null,
   });
   const gate = createGate({
