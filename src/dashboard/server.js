@@ -240,6 +240,13 @@ export async function buildDashboardState({
           updatedAt: run.updatedAt,
           presentation,
           milestones: workflowExecutionMilestones(projectedRun),
+          ...(run.capability ? { capability: {
+            mode: run.capability.context?.content?.mode || null,
+            modeReason: run.capability.context?.content?.modeReason || null,
+            spec: run.capability.spec?.content || null,
+            slice: run.capability.slice?.content || null,
+            review: run.capability.artifacts?.find(({ kind }) => kind === "review.recorded")?.content || null,
+          } } : {}),
         };
       }))
     : [];

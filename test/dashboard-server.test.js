@@ -95,6 +95,37 @@ test("projects completed simple workflow authorship, validation, and durable pag
   assert.doesNotMatch(JSON.stringify(run), /workflow-secret|localhost/iu);
 });
 
+test("projects capability mode, approved scope, slice, baseline policy, and review without ids", async () => {
+  const { store, projectContext } = fixture();
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { list: async () => [{
+      id: "workflow-private", phase: "awaiting_approval", request: "Improve search",
+      plan: "One bounded search slice", updatedAt: "2026-08-22T12:00:00.000Z",
+      capability: {
+        context: { content: { mode: "brownfield", modeReason: "Existing source detected." } },
+        spec: { content: { goal: "Improve search" } },
+        slice: { content: {
+          title: "Bounded search slice", objective: "Improve exact matching",
+          acceptanceChecks: ["Exact matching works"],
+          validationPolicy: { baselineAtBase: true },
+        } },
+        artifacts: [{ kind: "review.recorded", content: { summary: "No review yet" } }],
+      },
+    }] },
+  });
+  assert.deepEqual(state.workflowRuns[0].capability, {
+    mode: "brownfield", modeReason: "Existing source detected.",
+    spec: { goal: "Improve search" },
+    slice: {
+      title: "Bounded search slice", objective: "Improve exact matching",
+      acceptanceChecks: ["Exact matching works"], validationPolicy: { baselineAtBase: true },
+    },
+    review: { summary: "No review yet" },
+  });
+  assert.doesNotMatch(JSON.stringify(state.workflowRuns[0]), /workflow-private/iu);
+});
+
 test("simple workflow dashboard accepts high-level intents only", () => {
   assert.deepEqual(validateWorkflowIntent({ intent: "approve", runId: "ignored" }), { intent: "approve" });
   assert.deepEqual(validateWorkflowIntent({ intent: "approve_validation" }), { intent: "approve_validation" });

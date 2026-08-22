@@ -56,6 +56,15 @@
             ${run.action === "approve" ? '<button class="btn btn-success btn-sm mt-2" data-workflow-intent="approve">Approve plan</button>' : run.action === "approve_validation" ? '<button class="btn btn-warning btn-sm mt-2" data-workflow-intent="approve_validation">Review decision</button>' : ""}
           </div>
           <details class="small mt-2"><summary>Approved scope</summary><div class="mt-2">${escape(run.plan)}</div></details>
+          ${run.capability ? `<section class="small mt-3" aria-label="Capability evidence">
+            <strong>Capability mode: ${escape(run.capability.mode === "brownfield" ? "Brownfield" : "Greenfield")}</strong>
+            <div class="text-body-secondary">${escape(run.capability.modeReason)}</div>
+            ${run.capability.spec ? `<div class="mt-2"><strong>Specification:</strong> ${escape(run.capability.spec.goal)}</div>` : ""}
+            ${run.capability.slice ? `<div class="mt-1"><strong>Current slice:</strong> ${escape(run.capability.slice.title)} — ${escape(run.capability.slice.objective)}</div>
+              <div class="mt-1"><strong>Acceptance:</strong> ${escape(run.capability.slice.acceptanceChecks.join("; "))}</div>
+              <div class="mt-1"><strong>Baseline:</strong> ${escape(run.capability.slice.validationPolicy.baselineAtBase ? "Base-head behavior is compared separately from candidate regressions." : "The explicit acceptance policy is the bootstrap baseline.")}</div>` : ""}
+            ${run.capability.review ? `<div class="mt-2"><strong>Review:</strong> ${escape(run.capability.review.summary)}</div>` : ""}
+          </section>` : ""}
           <section class="small mt-3" aria-label="Actual execution milestones">
             <strong>Actual execution</strong>
             <ol class="mt-2 mb-0">${(run.milestones || []).map((milestone) => `<li class="mb-2"><strong>${escape(milestone.label)} — ${escape(milestone.status)}</strong><div class="text-body-secondary">${escape(milestone.summary)}</div></li>`).join("")}</ol>
