@@ -512,6 +512,7 @@ async function runInteractiveFirstmate() {
     ),
   });
   let lastSimpleProgressMessage = null;
+  let dashboardServer = null;
   const simpleWorkflowStore = workflowRunEnabled()
     ? new WorkflowRunStore({
         rootDir: interactiveStore.rootDir,
@@ -521,6 +522,7 @@ async function runInteractiveFirstmate() {
             lastSimpleProgressMessage = message;
             console.log(message);
           }
+          void dashboardServer?.refresh();
         },
       })
     : null;
@@ -1538,7 +1540,7 @@ async function runInteractiveFirstmate() {
       console.error(`Validation approval recovery blocked safely for ${taskId} (${error.message}).`);
     }
   }
-  const dashboardServer = new ShipMatesDashboardServer({
+  dashboardServer = new ShipMatesDashboardServer({
     store: interactiveStore,
     projectContext,
     projectStore,

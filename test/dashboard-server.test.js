@@ -131,6 +131,30 @@ test("marks the newest simple workflow current and keeps older results as histor
   assert.equal(state.workflowRuns[0].candidate.pageUrl, "file:///isolated/current/public/balls.html");
 });
 
+test("bounds workflow history and pages older projections without exposing identifiers", async () => {
+  const { store, projectContext } = fixture();
+  const runs = Array.from({ length: 24 }, (_, index) => ({
+    id: `workflow-private-${index}`, phase: "completed", request: `Run ${index}`,
+    plan: "Build", updatedAt: new Date(Date.UTC(2026, 7, 24 - index)).toISOString(),
+  }));
+  const workflowRunStore = { list: async () => runs };
+  const first = await buildDashboardState({ store, projectContext, workflowRunStore });
+  const second = await buildDashboardState({
+    store, projectContext, workflowRunStore, workflowHistoryOffset: 10,
+  });
+
+  assert.equal(first.workflowRuns.length, 11);
+  assert.deepEqual(first.workflowHistory, {
+    offset: 0, limit: 10, total: 23, nextOffset: 10, hasMore: true,
+  });
+  assert.equal(second.workflowRuns[0].current, true);
+  assert.equal(second.workflowRuns[1].request, "Run 11");
+  assert.deepEqual(second.workflowHistory, {
+    offset: 10, limit: 10, total: 23, nextOffset: 20, hasMore: true,
+  });
+  assert.doesNotMatch(JSON.stringify([first.workflowRuns, second.workflowRuns]), /workflow-private/iu);
+});
+
 test("projects capability mode, approved scope, slice, baseline policy, and review without ids", async () => {
   const { store, projectContext } = fixture();
   const state = await buildDashboardState({
@@ -342,6 +366,25 @@ test("closes live dashboard event streams before stopping the server", async () 
   assert.equal(server.eventStreams.size, 0);
 });
 
+test("dashboard refresh emits only changed projected state and uses heartbeat comments", async () => {
+  let version = 1;
+  const writes = [];
+  const server = new ShipMatesDashboardServer({
+    ...fixture(), projectContext: { load: async () => null }, onCommand: async () => {},
+    buildState: async () => ({ generatedAt: new Date().toISOString(), version }),
+  });
+  server.eventStreams.add({ write(value) { writes.push(value); } });
+
+  assert.equal(await server.refresh(), true);
+  assert.equal(await server.refresh(), false);
+  assert.equal(writes.filter((value) => value.startsWith("event: state")).length, 1);
+  version = 2;
+  assert.equal(await server.refresh(), true);
+  assert.equal(writes.filter((value) => value.startsWith("event: state")).length, 2);
+  assert.equal(await server.refresh({ heartbeat: true }), false);
+  assert.equal(writes.at(-1), ": heartbeat\n\n");
+});
+
 test("project actions acknowledge completed workflow results", async () => {
   const calls = [];
   const result = await executeProjectAction({
@@ -421,10 +464,15 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
 test("workflow History starts collapsed and remains open across live rerenders", async () => {
   const script = await readFile(path.resolve("src/dashboard/public/dashboard.js"), "utf8");
   const elements = new Map();
+  let taskClickListener = null;
   const element = (selector) => {
     if (!elements.has(selector)) elements.set(selector, {
       value: "system", dataset: {}, className: "", textContent: "", innerHTML: "",
-      disabled: false, placeholder: "", addEventListener() {}, querySelector() { return null; },
+      disabled: false, placeholder: "",
+      addEventListener(name, listener) {
+        if (selector === "#tasks" && name === "click") taskClickListener = listener;
+      },
+      querySelector() { return null; },
     });
     return elements.get(selector);
   };
@@ -436,6 +484,7 @@ test("workflow History starts collapsed and remains open across live rerenders",
   const state = {
     generatedAt: "2026-08-22T12:00:00Z", watchdog: {}, projects: [], tasks: [],
     workflowRuns: [run("Current", true), run("Earlier", false)],
+    workflowHistory: { offset: 0, limit: 1, total: 3, nextOffset: 1, hasMore: true },
   };
   const eventListeners = new Map();
   class EventSource {
@@ -448,8 +497,17 @@ test("workflow History starts collapsed and remains open across live rerenders",
     },
     window: {}, localStorage: { getItem: () => "system", setItem() {} },
     matchMedia: () => ({ matches: false, addEventListener() {} }),
-    fetch: async () => ({ json: async () => state }),
-    EventSource, Date, Set, Number, encodeURIComponent,
+    fetch: async (url) => {
+      if (url === "/api/state") return { ok: true, json: async () => state };
+      const offset = Number(new URL(`http://local${url}`).searchParams.get("offset"));
+      return { ok: true, json: async () => ({
+        workflowRuns: [run(offset === 1 ? "Older one" : "Oldest", false)],
+        workflowHistory: {
+          offset, limit: 1, total: 3, nextOffset: offset + 1, hasMore: offset < 2,
+        },
+      }) };
+    },
+    EventSource, Date, Set, Number, URL, encodeURIComponent,
   });
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -460,6 +518,23 @@ test("workflow History starts collapsed and remains open across live rerenders",
   tasks.querySelector = (selector) => selector === "[data-workflow-history]" ? { open: true } : null;
   eventListeners.get("state")({ data: JSON.stringify(state) });
   assert.match(tasks.innerHTML, /<details class="mt-3" data-workflow-history open>/u);
+
+  const clickLoadOlder = async (offset) => taskClickListener({ target: {
+    closest(selector) {
+      return selector === "[data-load-workflow-history]"
+        ? { disabled: false, dataset: { offset: String(offset) } }
+        : null;
+    },
+  } });
+  await clickLoadOlder(1);
+  assert.match(tasks.innerHTML, /Earlier.*Older one/su);
+  assert.match(tasks.innerHTML, /data-offset="2"/u);
+  eventListeners.get("state")({ data: JSON.stringify(state) });
+  assert.match(tasks.innerHTML, /Earlier.*Older one/su);
+  assert.match(tasks.innerHTML, /data-offset="2"/u);
+  await clickLoadOlder(2);
+  assert.match(tasks.innerHTML, /Earlier.*Older one.*Oldest/su);
+  assert.doesNotMatch(tasks.innerHTML, /Load older results/u);
 });
 
 test("accepts bounded human messages and rejects empty or control input", () => {

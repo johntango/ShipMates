@@ -27,7 +27,19 @@
     if (["running", "awaiting_worker", "validating", "preparing"].includes(task.state)) return "working";
     return "done";
   };
-  const render = (state) => {
+  let latestDashboardState = null;
+  let currentWorkflowRun = null;
+  let loadedWorkflowHistory = [];
+  let workflowHistoryPage = null;
+  const historyKey = (run) => `${run.updatedAt || ""}\n${run.request || ""}`;
+  const mergeHistory = (runs) => {
+    const merged = new Map(loadedWorkflowHistory.map((run) => [historyKey(run), run]));
+    for (const run of runs) merged.set(historyKey(run), run);
+    loadedWorkflowHistory = [...merged.values()].sort((left, right) =>
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  };
+  const render = (state, { appendHistory = false } = {}) => {
+    latestDashboardState = state;
     const tasksElement = document.querySelector("#tasks");
     const workflowHistoryOpen = Boolean(
       tasksElement.querySelector?.("[data-workflow-history]")?.open,
@@ -40,7 +52,23 @@
       <p class="mb-2">${alerts.length} task${alerts.length === 1 ? " has" : "s have"} exceeded the ${escape(state.watchdog.thresholdMinutes)} minute monitoring limit.</p>
       <div class="vstack gap-2">${alerts.map((alert) => `<div><strong>${escape(alert.projectName)} — ${escape(alert.taskName)}</strong><br><span>${escape(alert.status)} (${escape(alert.ageMinutes)} minutes).</span><br><span class="small">${escape(alert.remedy)}</span></div>`).join("")}</div>
     </section>` : ""}${historical.length ? `<details class="alert alert-secondary mb-4"><summary>${historical.length} historical ledger record${historical.length === 1 ? "" : "s"} need cleanup (not live processes)</summary><div class="vstack gap-2 mt-3">${historical.map((item) => `<div><strong>${escape(item.projectName)} — ${escape(item.taskName)}</strong><br><span class="small">Recorded ${escape(item.state)} · ${escape(item.ageMinutes)} minutes old. ${escape(item.remedy)}</span></div>`).join("")}</div></details>` : ""}`;
-    const simpleRuns = state.workflowRuns || [];
+    const incomingRuns = state.workflowRuns || [];
+    const incomingCurrent = appendHistory
+      ? currentWorkflowRun
+      : incomingRuns.find((run) => run.current) || incomingRuns[0] || null;
+    currentWorkflowRun = incomingCurrent;
+    if (!appendHistory && !workflowHistoryPage) loadedWorkflowHistory = [];
+    mergeHistory(incomingRuns.filter((run) => run !== incomingCurrent));
+    if (state.workflowHistory) {
+      workflowHistoryPage = appendHistory || !workflowHistoryPage
+        ? state.workflowHistory
+        : {
+            ...workflowHistoryPage,
+            total: state.workflowHistory.total,
+            hasMore: workflowHistoryPage.nextOffset < state.workflowHistory.total,
+          };
+    }
+    const simpleRuns = incomingCurrent ? [incomingCurrent, ...loadedWorkflowHistory] : loadedWorkflowHistory;
     const maintenance = state.workspaceMaintenance;
     const maintenanceCard = maintenance ? `<article class="card shadow-sm task-card">
       <div class="card-body"><h2 class="h5">Workspace maintenance</h2>
@@ -81,7 +109,10 @@
       </article>`;
     const currentRun = simpleRuns.find((run) => run.current) || simpleRuns[0] || null;
     const historicalRuns = currentRun ? simpleRuns.filter((run) => run !== currentRun) : [];
-    const simpleRunCards = `${currentRun ? simpleRunCard(currentRun, "Current result") : ""}${historicalRuns.length ? `<details class="mt-3" data-workflow-history${workflowHistoryOpen ? " open" : ""}><summary>${historicalRuns.length} earlier workflow result${historicalRuns.length === 1 ? "" : "s"} — History</summary><div class="vstack gap-3 mt-3">${historicalRuns.map((run) => simpleRunCard(run, "History")).join("")}</div></details>` : ""}`;
+    const loadOlder = workflowHistoryPage?.hasMore
+      ? `<button class="btn btn-outline-secondary btn-sm mt-3" data-load-workflow-history data-offset="${escape(workflowHistoryPage.nextOffset)}">Load older results</button>`
+      : "";
+    const simpleRunCards = `${currentRun ? simpleRunCard(currentRun, "Current result") : ""}${historicalRuns.length ? `<details class="mt-3" data-workflow-history${workflowHistoryOpen ? " open" : ""}><summary>${historicalRuns.length} earlier workflow result${historicalRuns.length === 1 ? "" : "s"} — History</summary><div class="vstack gap-3 mt-3">${historicalRuns.map((run) => simpleRunCard(run, "History")).join("")}</div>${loadOlder}</details>` : ""}`;
     const legacyTaskCards = state.tasks.map((task) => `
       <article class="card shadow-sm task-card" data-state="${taskTone(task)}">
         <div class="card-body">
@@ -167,6 +198,21 @@
     } finally { button.disabled = false; }
   });
   document.querySelector("#tasks").addEventListener("click", async (event) => {
+    const loadOlder = event.target.closest("[data-load-workflow-history]");
+    if (loadOlder && !loadOlder.disabled && !reviewState) {
+      loadOlder.disabled = true;
+      try {
+        const response = await fetch(`/api/workflow/history?offset=${encodeURIComponent(loadOlder.dataset.offset)}`);
+        if (!response.ok) return;
+        const page = await response.json();
+        render({
+          ...latestDashboardState,
+          workflowRuns: page.workflowRuns,
+          workflowHistory: page.workflowHistory,
+        }, { appendHistory: true });
+      } finally { loadOlder.disabled = false; }
+      return;
+    }
     const button = event.target.closest("[data-workflow-intent]");
     if (!button || button.disabled || reviewState) return;
     button.disabled = true;
