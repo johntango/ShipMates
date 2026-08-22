@@ -44,9 +44,10 @@
       <p class="small text-body-secondary">Clean is safe maintenance. It preserves candidates, history, dirty or uncertain work, and the shared checkout. Wipe-clean is a separate named and confirmed reset.</p>
       <button class="btn btn-outline-primary btn-sm" data-workflow-intent="clean">Clean safely</button></div>
     </article>` : "";
-    const simpleRunCards = simpleRuns.map((run) => `
+    const simpleRunCard = (run, label) => `
       <article class="card shadow-sm task-card" data-state="${run.presentation.outcome === "Passed" ? "done" : run.presentation.outcome === "Blocked safely" ? "working" : "attention"}">
         <div class="card-body">
+          <div class="small fw-semibold text-uppercase text-body-secondary mb-1">${escape(label)}</div>
           <div class="d-flex flex-wrap justify-content-between gap-2"><h2 class="h5 mb-0">${escape(run.request)}</h2><span class="badge text-bg-secondary">${escape(run.phase)}</span></div>
           <div class="alert ${run.presentation.outcome === "Passed" ? "alert-success" : "alert-warning"} mt-3 mb-0">
             <div class="h5 mb-1">${escape(run.presentation.outcome)}</div>
@@ -55,6 +56,9 @@
             ${run.presentation.details?.length ? `<div class="small mt-2">${run.presentation.details.map((detail) => `<div>${escape(detail)}</div>`).join("")}</div>` : ""}
             ${run.action === "approve" ? '<button class="btn btn-success btn-sm mt-2" data-workflow-intent="approve">Approve plan</button>' : run.action === "approve_validation" ? '<button class="btn btn-warning btn-sm mt-2" data-workflow-intent="approve_validation">Review decision</button>' : ""}
           </div>
+          ${run.candidate?.pageUrl ? `<div class="mt-3"><a class="btn btn-primary btn-sm" href="${escape(run.candidate.pageUrl)}">Open candidate page</a></div>` : ""}
+          ${run.candidate?.workspacePath ? `<div class="small text-body-secondary font-monospace mt-2">Isolated workspace: ${escape(run.candidate.workspacePath)}</div>` : ""}
+          ${run.candidate?.files?.length ? `<div class="small mt-3"><strong>Created or changed files</strong><ul class="mb-0 mt-1">${run.candidate.files.map((file) => `<li><span class="font-monospace">${escape(file.relativePath)}</span></li>`).join("")}</ul></div>` : ""}
           <details class="small mt-2"><summary>Approved scope</summary><div class="mt-2">${escape(run.plan)}</div></details>
           ${run.capability ? `<section class="small mt-3" aria-label="Capability evidence">
             <strong>Capability mode: ${escape(run.capability.mode === "brownfield" ? "Brownfield" : "Greenfield")}</strong>
@@ -70,7 +74,10 @@
             <ol class="mt-2 mb-0">${(run.milestones || []).map((milestone) => `<li class="mb-2"><strong>${escape(milestone.label)} — ${escape(milestone.status)}</strong><div class="text-body-secondary">${escape(milestone.summary)}</div></li>`).join("")}</ol>
           </section>
         </div>
-      </article>`).join("");
+      </article>`;
+    const currentRun = simpleRuns.find((run) => run.current) || simpleRuns[0] || null;
+    const historicalRuns = currentRun ? simpleRuns.filter((run) => run !== currentRun) : [];
+    const simpleRunCards = `${currentRun ? simpleRunCard(currentRun, "Current result") : ""}${historicalRuns.length ? `<details class="mt-3"><summary>${historicalRuns.length} earlier workflow result${historicalRuns.length === 1 ? "" : "s"} — History</summary><div class="vstack gap-3 mt-3">${historicalRuns.map((run) => simpleRunCard(run, "History")).join("")}</div></details>` : ""}`;
     const legacyTaskCards = state.tasks.map((task) => `
       <article class="card shadow-sm task-card" data-state="${taskTone(task)}">
         <div class="card-body">

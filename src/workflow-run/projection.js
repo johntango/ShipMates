@@ -64,12 +64,37 @@ function visibilityEvidence(run) {
 
 export function renderWorkflowRun(run) {
   const view = projectWorkflowRun(run);
+  const candidate = workflowCandidateArtifacts(run);
+  const pageLine = candidate.pageUrl ? `Candidate page: ${candidate.pageUrl}` : null;
   return [
     `Status: ${view.phase}`,
     ...(view.nextAction ? [`Next: ${view.nextAction}`] : []),
     `Why: ${view.why}`,
-    ...view.details,
+    ...(pageLine ? [pageLine] : []),
+    ...view.details.filter((detail) => detail !== pageLine),
   ].join("\n");
+}
+
+export function workflowCandidateArtifacts(run) {
+  const workspacePath = typeof run.worker?.workspacePath === "string" &&
+    path.isAbsolute(run.worker.workspacePath) ? path.resolve(run.worker.workspacePath) : null;
+  const reported = Array.isArray(run.worker?.report?.files) ? run.worker.report.files : [];
+  const files = workspacePath ? reported.flatMap((file) => {
+    if (typeof file !== "string" || !file.trim() || path.isAbsolute(file)) return [];
+    const segments = file.split(/[\\/]/u);
+    if (segments.includes("..") || segments.includes(".")) return [];
+    const relativePath = segments.join("/");
+    return [{
+      relativePath,
+      path: path.join(workspacePath, ...segments),
+      html: /\.html?$/iu.test(relativePath),
+    }];
+  }) : [];
+  return Object.freeze({
+    workspacePath,
+    files: Object.freeze(files),
+    pageUrl: workspacePath ? staticEntry(workspacePath, files.map(({ relativePath }) => relativePath)) : null,
+  });
 }
 
 function evidenceStatus(run) {
@@ -180,9 +205,8 @@ export function baselineEvidenceSummary(report) {
 function terminalEvidence(run) {
   if (!new Set(["awaiting_validation_decision", "completed", "blocked"]).has(run.phase) &&
     !run.retries?.length) return [];
-  const files = Array.isArray(run.worker?.report?.files)
-    ? run.worker.report.files.filter((file) => typeof file === "string" && file.trim())
-    : [];
+  const candidate = workflowCandidateArtifacts(run);
+  const files = candidate.files.map(({ relativePath }) => relativePath);
   const lines = [];
   if (run.worker?.report?.status === "completed") {
     lines.push("Created by: The Implementer created the code in this candidate.");
@@ -198,11 +222,11 @@ function terminalEvidence(run) {
   if (run.retries?.length) {
     lines.push("Recovery: First Mate used its one safe automatic setup retry and did not duplicate work.");
   }
-  if (run.worker?.workspacePath) {
+  if (candidate.workspacePath) {
     lines.push("Delivery: The candidate is preserved in its isolated workspace; it has not been copied or merged into the shared checkout.");
-    const entry = staticEntry(run.worker.workspacePath, files);
+    const entry = candidate.pageUrl;
     if (entry) lines.push(`Candidate page: ${entry}`);
-    else lines.push(`Candidate workspace: ${run.worker.workspacePath}`);
+    else lines.push(`Candidate workspace: ${candidate.workspacePath}`);
   }
   if (files.length) lines.push(`Files: ${files.join(", ")}`);
   if (run.worker?.report?.tests?.length) lines.push(...workerVerificationEvidence(run.worker.report.tests));

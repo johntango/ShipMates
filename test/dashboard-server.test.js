@@ -47,10 +47,12 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
   assert.deepEqual(state.workflowRuns, [{
     phase: "Awaiting your approval", action: "approve", request: "Build a page", plan: "Build and validate it",
     updatedAt: "2026-08-18T12:00:00.000Z",
+    current: true,
     presentation: {
       outcome: "Awaiting your approval", nextAction: "Approve the short plan to begin local work, or stop without changing files.",
       why: "The short plan is ready; no files have changed.", phase: "Awaiting your approval", details: [],
     },
+    candidate: { workspacePath: null, files: [], pageUrl: null },
     milestones: [
       { label: "Plan", status: "Awaiting your approval", summary: "The approved scope is ready; no implementation has started." },
       { label: "Implementer", status: "Queued", summary: "Implementation has not started." },
@@ -84,6 +86,16 @@ test("projects completed simple workflow authorship, validation, and durable pag
   assert.equal(run.phase, "Passed");
   assert.equal(run.action, "status");
   assert.equal(run.presentation.outcome, "Passed");
+  assert.equal(run.current, true);
+  assert.deepEqual(run.candidate, {
+    workspacePath: "/isolated/candidate",
+    files: [{
+      relativePath: "site/index.html",
+      path: "/isolated/candidate/site/index.html",
+      html: true,
+    }],
+    pageUrl: "file:///isolated/candidate/site/index.html",
+  });
   assert.match(run.presentation.why, /Implementer created.*no-mistakes tested and validated/iu);
   assert.match(run.presentation.details.join("\n"), /file:\/\/\/isolated\/candidate\/site\/index\.html/u);
   assert.match(run.presentation.details.join("\n"), /generated 0 project tests.*executed 3 test cases/isu);
@@ -93,6 +105,30 @@ test("projects completed simple workflow authorship, validation, and durable pag
   assert.match(run.milestones[1].summary, /site\/index\.html/u);
   assert.match(run.milestones[2].summary, /executed 3 test cases/iu);
   assert.doesNotMatch(JSON.stringify(run), /workflow-secret|localhost/iu);
+});
+
+test("marks the newest simple workflow current and keeps older results as history", async () => {
+  const { store, projectContext } = fixture();
+  const completed = (request, updatedAt, file) => ({
+    phase: "completed", request, plan: "Build and validate", updatedAt,
+    worker: {
+      workspacePath: `/isolated/${request}`, status: "completed", headSha: "a".repeat(40),
+      report: { status: "completed", files: [file] },
+    },
+    validation: { status: "passed", headSha: "a".repeat(40), report: { outcome: "passed" } },
+  });
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { list: async () => [
+      completed("older", "2026-08-21T12:00:00.000Z", "public/index.html"),
+      completed("current", "2026-08-22T12:00:00.000Z", "public/balls.html"),
+    ] },
+  });
+
+  assert.deepEqual(state.workflowRuns.map(({ request, current }) => [request, current]), [
+    ["current", true], ["older", false],
+  ]);
+  assert.equal(state.workflowRuns[0].candidate.pageUrl, "file:///isolated/current/public/balls.html");
 });
 
 test("projects capability mode, approved scope, slice, baseline policy, and review without ids", async () => {
@@ -351,6 +387,21 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
     },
     window: { SHIPMATES_REVIEW_STATE: {
       generatedAt: "2026-07-15T12:00:00Z", watchdog: {}, projects: [],
+      workflowRuns: [{
+        current: true, request: "Current bouncing page", phase: "Passed", action: "status",
+        plan: "Build it", presentation: {
+          outcome: "Passed", nextAction: "Review it", why: "Validated", details: [],
+        }, milestones: [], candidate: {
+          workspacePath: "/isolated/current",
+          pageUrl: "file:///isolated/current/public/balls.html",
+          files: [{ relativePath: "public/balls.html", path: "/isolated/current/public/balls.html", html: true }],
+        },
+      }, {
+        current: false, request: "Older page", phase: "Passed", action: "status",
+        plan: "Build old", presentation: {
+          outcome: "Passed", nextAction: "Review it", why: "Validated", details: [],
+        }, milestones: [], candidate: { workspacePath: "/isolated/old", pageUrl: null, files: [] },
+      }],
       tasks: [{ summary: "Inspection", state: "complete", authority: "read_only",
         presentation, workers: [], files: [], taskProgress: [], humanAction: "review task-1" }],
     } },
@@ -361,6 +412,10 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
   assert.match(element("#tasks").innerHTML, /Human-readable task outcome/u);
   assert.match(element("#tasks").innerHTML, /Work breakdown and detailed evidence/u);
   assert.match(element("#tasks").innerHTML, /Human input required\./u);
+  assert.match(element("#tasks").innerHTML, /Current result/u);
+  assert.match(element("#tasks").innerHTML, /href="file:\/\/\/isolated\/current\/public\/balls\.html"/u);
+  assert.match(element("#tasks").innerHTML, /Created or changed files.*public\/balls\.html/su);
+  assert.match(element("#tasks").innerHTML, /earlier workflow result.*History.*Older page/su);
 });
 
 test("accepts bounded human messages and rejects empty or control input", () => {

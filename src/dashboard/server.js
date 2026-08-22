@@ -5,7 +5,9 @@ import express from "express";
 import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
 import { projectOperationalState } from "../projections/operational-state.js";
 import { projectTaskPresentation } from "../projections/task-presentation.js";
-import { projectWorkflowRun, workflowExecutionMilestones } from "../workflow-run/projection.js";
+import {
+  projectWorkflowRun, workflowCandidateArtifacts, workflowExecutionMilestones,
+} from "../workflow-run/projection.js";
 import { readWorkflowRunVisibility } from "../workflow-run/adapters.js";
 
 export class ShipMatesDashboardServer {
@@ -220,8 +222,12 @@ export async function buildDashboardState({
   const selectedProject = projectStore && typeof projectStore.active === "function"
     ? await projectStore.active() : null;
   const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const listedWorkflowRuns = workflowRunStore
+    ? [...await workflowRunStore.list()].sort((left, right) =>
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+    : [];
   const workflowRuns = workflowRunStore
-    ? await Promise.all((await workflowRunStore.list()).map(async (run) => {
+    ? await Promise.all(listedWorkflowRuns.map(async (run, index) => {
         const visibility = await readWorkflowRunVisibility({
           stateRoot: workflowRunStore.rootDir,
           operationId: run.validation?.operationId,
@@ -238,7 +244,9 @@ export async function buildDashboardState({
           request: run.request,
           plan: run.plan,
           updatedAt: run.updatedAt,
+          current: index === 0,
           presentation,
+          candidate: workflowCandidateArtifacts(run),
           milestones: workflowExecutionMilestones(projectedRun),
           ...(run.capability ? { capability: {
             mode: run.capability.context?.content?.mode || null,
