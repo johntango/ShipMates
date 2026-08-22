@@ -76,7 +76,7 @@ function evidenceStatus(run) {
   if (run.phase === "blocked") {
     return [
       "Blocked safely",
-      "Resolve the stated issue, then ask First Mate to try the request again.",
+      blockedNextAction(run.blocker),
       run.blocker || "The workflow stopped without risking additional changes.",
     ];
   }
@@ -205,6 +205,7 @@ function terminalEvidence(run) {
     else lines.push(`Candidate workspace: ${run.worker.workspacePath}`);
   }
   if (files.length) lines.push(`Files: ${files.join(", ")}`);
+  if (run.worker?.report?.tests?.length) lines.push(...workerVerificationEvidence(run.worker.report.tests));
   const artifacts = durableArtifacts(run);
   if (artifacts.length) lines.push(`Durable preview evidence: ${artifacts.join(", ")}`);
   if (run.validation?.report) lines.push(...validationEvidenceSummary(run.validation.report));
@@ -213,9 +214,30 @@ function terminalEvidence(run) {
 }
 
 function staticEntry(workspacePath, files) {
-  const relative = files.find((file) => /(?:^|\/)index\.html$/iu.test(file));
+  const htmlFiles = files.filter((file) => /\.html?$/iu.test(file));
+  const relative = htmlFiles.find((file) => /(?:^|\/)index\.html$/iu.test(file)) ||
+    (htmlFiles.length === 1 ? htmlFiles[0] : null);
   if (!relative || path.isAbsolute(relative) || relative.split(/[\\/]/u).includes("..")) return null;
   return pathToFileURL(path.join(workspacePath, relative)).href;
+}
+
+function workerVerificationEvidence(tests) {
+  return tests.flatMap(({ command, result }) => {
+    if (typeof command !== "string" || typeof result !== "string") return [];
+    const cleanCommand = command.replaceAll(/\s+/gu, " ").trim().slice(0, 180);
+    const cleanResult = result.replaceAll(/\s+/gu, " ").trim().slice(0, 300);
+    return [`Implementer verification — ${cleanCommand}: ${cleanResult}`];
+  });
+}
+
+function blockedNextAction(blocker) {
+  if (/validation remote/iu.test(blocker || "")) {
+    return "Inspect or repair the isolated workspace's managed validator binding; keep the candidate unchanged until that safety check succeeds.";
+  }
+  if (/initialize.*no-mistakes/iu.test(blocker || "")) {
+    return "Check the pinned local no-mistakes installation, then retry validation without rerunning implementation.";
+  }
+  return "Review the stated cause, preserve the isolated candidate, and retry only the blocked step when it is safe.";
 }
 
 function durableArtifacts(run) {

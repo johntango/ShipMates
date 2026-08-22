@@ -181,6 +181,15 @@ function safeReason(error) {
     return "The Implementer stopped before producing a verified candidate.";
   }
   if (/validat|no-mistakes/iu.test(message)) {
+    if (/outside the managed validation state/iu.test(message)) {
+      return "The isolated workspace has an unrecognized validation remote, so First Mate preserved it without running no-mistakes.";
+    }
+    if (/detach a stale managed no-mistakes remote/iu.test(message)) {
+      return "First Mate could not safely replace the isolated workspace's stale managed validation remote.";
+    }
+    if (/initialize the pinned local validation repository/iu.test(message)) {
+      return "First Mate could not initialize the pinned local no-mistakes validator for this isolated candidate.";
+    }
     return "No-mistakes validation could not be verified for the exact isolated candidate.";
   }
   return "A required local workflow step could not be verified safely.";

@@ -511,12 +511,16 @@ async function runInteractiveFirstmate() {
       process.env.SHIPMATES_STATE_DIR || path.join(process.cwd(), ".shipmates"),
     ),
   });
+  let lastSimpleProgressMessage = null;
   const simpleWorkflowStore = workflowRunEnabled()
     ? new WorkflowRunStore({
         rootDir: interactiveStore.rootDir,
         onEvent: (event, run) => {
           const message = workflowProgressMessage(event, run);
-          if (message) console.log(message);
+          if (message) {
+            lastSimpleProgressMessage = message;
+            console.log(message);
+          }
         },
       })
     : null;
@@ -804,7 +808,9 @@ async function runInteractiveFirstmate() {
     status: "coordinating",
   }, async () => {
         if (simpleWorkflowConversation && !governedDispatch) {
-          console.log(await simpleWorkflowConversation.handle(message));
+          lastSimpleProgressMessage = null;
+          const response = await simpleWorkflowConversation.handle(message);
+          if (response !== lastSimpleProgressMessage) console.log(response);
           return;
         }
         const governedPlanDispatch = governedDispatch?.planTaskId

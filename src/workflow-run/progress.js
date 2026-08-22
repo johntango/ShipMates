@@ -3,12 +3,12 @@ import { renderWorkflowRun } from "./projection.js";
 export function workflowProgressMessage(event, run = null) {
   if (!event || typeof event.type !== "string") return null;
   if (run && new Set([
-    "workflow.created", "worker.launched", "validation.requested",
+    "worker.launched", "validation.requested",
     "validation.review_requested", "workflow.completed", "workflow.blocked",
   ]).has(event.type)) return renderWorkflowRun(run);
   switch (event.type) {
     case "workflow.created":
-      return "Status: Awaiting your approval\nNext: Approve the short plan to begin local work, or stop without changing files.\nWhy: The short plan is ready; no files have changed.";
+      return null;
     case "worker.launched":
       return "Status: Working\nNext: No action needed; First Mate is monitoring the isolated Implementer.\nWhy: The Implementer is active in the isolated workspace.";
     case "validation.requested":

@@ -160,7 +160,7 @@ export class SimpleWorkflowConversation {
         ? "Describe the goal after /spec. First Mate will capture read-only context and propose one bounded slice."
         : "No local capability workflow has been recorded yet. Start with /spec followed by the goal.";
     }
-    if (command === "status") return [renderWorkflowRun(latest), ...renderCapabilitySummary(latest)].join("\n");
+    if (command === "status") return renderWorkflowRun(latest);
     if (command === "spec") return renderArtifact("Specification", latest.capability?.spec);
     if (command === "plan") {
       if (argument && latest.phase === "completed" && latest.capability?.slice?.content) {
@@ -178,7 +178,7 @@ export class SimpleWorkflowConversation {
           "This later slice is not approved or scheduled. It requires its own scoped approval before implementation.",
         ].join("\n");
       }
-      return renderArtifact("Selected slice", latest.capability?.slice);
+      return renderSlice(latest.capability, latest.phase);
     }
     if (command === "build") {
       if (!active) return "No approved slice is waiting to build. Use /spec to propose a new bounded slice.";
@@ -213,7 +213,7 @@ export class SimpleWorkflowConversation {
         authority: "local_write", capabilityBundle,
       });
       return [
-        "Specification and bounded slice proposed.", ...renderCapabilitySummary(run),
+        "Specification and bounded slice proposed.",
         "No files have changed. Reply “I approve the plan” once to authorize only this first slice.",
         renderWorkflowRun(run),
       ].join("\n");
@@ -230,7 +230,7 @@ export class SimpleWorkflowConversation {
         : "Quality review: implementation or exact-head validation is not terminal yet.";
     const evidence = [
       `Current phase: ${run.phase}.`,
-      run.worker?.report?.summary || "No terminal Implementer report is available.",
+      reviewWorkerEvidence(run),
       run.validation?.report?.outcome ? `Validation outcome: ${run.validation.report.outcome}.` : "No terminal validation outcome is available.",
     ];
     if (run.capability) {
@@ -263,6 +263,37 @@ export class SimpleWorkflowConversation {
 function renderArtifact(label, value) {
   if (!value?.content) return `${label}: no typed artifact has been recorded.`;
   return `${label}:\n${JSON.stringify(value.content, null, 2)}\nThis is advisory evidence inside the current WorkflowRun; it grants no authority.`;
+}
+
+function renderSlice(capability, phase) {
+  const slice = capability?.slice?.content;
+  const spec = capability?.spec?.content;
+  if (!slice || !spec) return "Selected slice: no typed artifact has been recorded.";
+  return [
+    `Selected slice: ${slice.title}`,
+    `Objective: ${slice.objective}`,
+    `Non-goals: ${spec.nonGoals.join("; ")}`,
+    `Acceptance checks: ${slice.acceptanceChecks.join("; ")}`,
+    `Validation: exact candidate head; ${slice.validationPolicy.baselineAtBase ? "record base-head behavior separately" : "use the approved acceptance policy as baseline"}; no remote delivery.`,
+    phase === "awaiting_approval"
+      ? "Next: Reply “I approve the plan” once to authorize this bounded slice."
+      : "Next: Ask for status to see the current execution evidence.",
+    "Detailed typed artifact remains available in durable diagnostic evidence.",
+  ].join("\n");
+}
+
+function reviewWorkerEvidence(run) {
+  if (!run.worker?.report) return "No terminal Implementer report is available.";
+  const summary = (run.worker.report.summary || "The Implementer produced a candidate result.")
+    .replaceAll(/\bNo commit[^.]*\.(?:\s|$)/giu, "")
+    .replaceAll(/\s+/gu, " ").trim();
+  const preserved = run.worker.headSha
+    ? " First Mate preserved the result as the isolated candidate commit used for exact-head validation."
+    : "";
+  const tests = Array.isArray(run.worker.report.tests) && run.worker.report.tests.length
+    ? ` Implementer verification recorded: ${run.worker.report.tests.map(({ command, result }) => `${command}: ${result}`).join("; ")}`
+    : "";
+  return `${summary}${preserved}${tests}`;
 }
 
 function isApproval(value) {

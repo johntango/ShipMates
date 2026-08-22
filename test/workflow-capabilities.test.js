@@ -152,6 +152,49 @@ test("review and ship are advisory evidence and never launch work or delivery", 
   assert.doesNotMatch(await conversation.handle("/status"), /workflow-|operation id|task id/iu);
 });
 
+test("capability responses avoid duplicate summaries and render a readable plan", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "shipmates-capability-readable-"));
+  await writeFile(path.join(root, "package.json"), "{}\n");
+  const store = new WorkflowRunStore({ rootDir: root, idFactory: () => "readable" });
+  const conversation = new SimpleWorkflowConversation({
+    store, controller: {}, context: async () => ({ repoPath: root, baseSha: HEAD }),
+    planner: async () => ({ action: "dispatch", requiredAuthority: "local_write" }),
+  });
+
+  const proposed = await conversation.handle("/spec Build an accessible static page");
+  assert.equal(proposed.match(/Mode: Brownfield/gu)?.length, 1);
+  assert.equal(proposed.match(/Approved scope:/gu)?.length, 1);
+  const status = await conversation.handle("/status");
+  assert.equal(status.match(/Mode: Brownfield/gu)?.length, 1);
+  const plan = await conversation.handle("/plan");
+  assert.match(plan, /Selected slice:.*Objective:.*Non-goals:.*Acceptance checks:.*Validation:.*Next:/su);
+  assert.doesNotMatch(plan, /^\s*\{|"schemaVersion"|"validationPolicy"/mu);
+  assert.match(plan, /Detailed typed artifact remains available/iu);
+});
+
+test("review credits the controller-preserved candidate commit without repeating worker no-commit wording", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "shipmates-review-candidate-"));
+  const store = new WorkflowRunStore({ rootDir: root, idFactory: () => "review-candidate" });
+  const run = await store.create({
+    request: "Build a page", plan: "Build and validate", repoPath: root,
+    baseHeadSha: HEAD,
+  });
+  await store.append(run.id, "workflow.approved", {}, "approved");
+  await store.append(run.id, "worker.launch_requested", { operationId: "worker" }, "worker-request");
+  await store.append(run.id, "worker.launched", { operationId: "worker", receipt: {} }, "worker-launched");
+  await store.append(run.id, "worker.completed", {
+    operationId: "worker", workspacePath: root, headSha: HEAD,
+    report: { status: "completed", summary: "Built the page. No commit, publication, or shared-checkout change occurred." },
+  }, "worker-completed");
+  const conversation = new SimpleWorkflowConversation({
+    store, controller: {}, context: async () => ({ repoPath: root, baseSha: HEAD }),
+    planner: async () => { throw new Error("must not plan"); },
+  });
+  const review = await conversation.handle("/review");
+  assert.match(review, /First Mate preserved the result as the isolated candidate commit/iu);
+  assert.doesNotMatch(review, /No commit/iu);
+});
+
 test("later slice is proposed as typed evidence and remains unapproved", async () => {
   const pack = capabilityPack("greenfield");
   assert.equal(pack.phases.plan.includes("smallest-vertical-slice"), true);

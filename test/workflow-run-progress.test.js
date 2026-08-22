@@ -31,13 +31,12 @@ test("reports meaningful durable transitions once without internal identifiers",
   }, "launched");
 
   assert.deepEqual(messages, [
-    "Status: Awaiting your approval\nNext: Approve the short plan to begin local work, or stop without changing files.\nWhy: The short plan is ready; no files have changed.",
     "Status: Working\nNext: No action needed; First Mate is monitoring the isolated Implementer.\nWhy: The Implementer is active in the isolated workspace.",
   ]);
   assert.doesNotMatch(messages.join(" "), /private-run-id|worker-op/u);
   const replayed = await new WorkflowRunStore({ rootDir: store.rootDir }).get(run.id);
   assert.equal(replayed.phase, "implementing");
-  assert.equal(messages.length, 2);
+  assert.equal(messages.length, 1);
 });
 
 test("renders validation, review, completion, and blocked transitions in plain language", () => {

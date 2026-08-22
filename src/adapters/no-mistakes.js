@@ -479,10 +479,17 @@ function retirableManagedRemote(remotePath) {
 
   const reposPath = path.dirname(resolved);
   const runtimeInstance = path.dirname(reposPath);
-  return path.basename(reposPath) === "repos" &&
-    /^[a-f0-9]{16}$/u.test(path.basename(runtimeInstance)) &&
-    path.basename(path.dirname(runtimeInstance)) === "runtime" &&
-    path.basename(path.dirname(path.dirname(runtimeInstance))) === "no-mistakes";
+  if (path.basename(reposPath) !== "repos" ||
+    !/^[a-f0-9]{16}$/u.test(path.basename(runtimeInstance)) ||
+    !/^[a-f0-9]{8,64}\.git$/u.test(path.basename(resolved))) return false;
+  const runtimeParent = path.dirname(runtimeInstance);
+  const managedStateRuntime = path.basename(runtimeParent) === "runtime" &&
+    path.basename(path.dirname(runtimeParent)) === "no-mistakes";
+  const managedShortRuntime = path.basename(runtimeParent) ===
+    "shipmates-no-mistakes-runtime" && path.resolve(runtimeParent).startsWith(
+      `${path.resolve(tmpdir())}${path.sep}`,
+    );
+  return managedStateRuntime || managedShortRuntime;
 }
 
 function validateSkipSteps(steps) {

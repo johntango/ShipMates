@@ -7,12 +7,29 @@ import test from "node:test";
 import {
   readWorkflowRunVisibility, validationContract, WorkflowRunValidatorAdapter, WorkflowRunWorkerAdapter,
 } from "../src/workflow-run/adapters.js";
+import { implementationPrompt } from "../src/workflow-run/worker-contract.js";
 import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { SimpleWorkflowConversation } from "../src/workflow-run/interactive.js";
 import { WorkflowRunStore } from "../src/workflow-run/store.js";
 
 const OPERATION = "a".repeat(24);
 const HEAD = "b".repeat(40);
+
+test("Implementer handoff requires completed uncommitted changes for controller-owned commit", () => {
+  const prompt = implementationPrompt({
+    runId: "workflow-prompt", instruction: "Build a page", plan: "Build then validate",
+    capability: null,
+  });
+  assert.match(prompt, /required handoff is clean uncommitted working-tree changes.*completed report/isu);
+  assert.match(prompt, /First Mate.*create the isolated candidate commit.*exact-head no-mistakes/isu);
+  assert.match(prompt, /no-commit and no-publication rules are not blockers/iu);
+  assert.match(prompt, /report status completed/iu);
+  assert.match(prompt, /Do not.*commit.*run no-mistakes.*shared checkout/iu);
+  assert.doesNotMatch(
+    prompt,
+    /(?:commit the changes|create the candidate commit yourself)/iu,
+  );
+});
 
 test("corrupt visibility evidence is ignored and cannot gate workflow execution", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "workflow-visibility-"));

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -104,6 +104,43 @@ test("validation evidence distinguishes generated tests, test cases, and checks"
     "No individual test-case count was recorded.",
     "No-mistakes completed 1 validation check: test.",
   ]);
+});
+
+test("blocked result preserves worker verification separately from absent validator evidence", () => {
+  const rendered = renderWorkflowRun({
+    phase: "blocked",
+    blocker: "The isolated workspace has an unrecognized validation remote, so First Mate preserved it without running no-mistakes.",
+    retries: [], validation: { status: "requested" },
+    worker: {
+      status: "completed", workspacePath: "/tmp/candidate", headSha: HEAD,
+      report: {
+        status: "completed", files: ["page.html"],
+        tests: [
+          { command: "node --test test/page.test.js", result: "Passed: 2 tests." },
+          { command: "node --test test/page.test.js test/dashboard.test.js", result: "22 passed, 1 baseline/environment failure." },
+        ],
+      },
+    },
+  });
+  assert.match(rendered, /Inspect or repair.*managed validator binding/iu);
+  assert.match(rendered, /Implementer verification.*Passed: 2 tests/iu);
+  assert.match(rendered, /baseline\/environment failure/iu);
+  assert.doesNotMatch(rendered, /Validated by:|No-mistakes tested and validated/iu);
+});
+
+test("candidate projection links a single safe non-index HTML entry", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "shipmates-page-link-"));
+  await mkdir(path.join(workspace, "public"));
+  const rendered = renderWorkflowRun({
+    phase: "blocked", blocker: "Validation stopped safely.", retries: [],
+    worker: {
+      status: "completed", workspacePath: workspace, headSha: HEAD,
+      report: { status: "completed", files: ["public/balls.html", "public/balls.js"] },
+    },
+    validation: { status: "requested" },
+  });
+  assert.match(rendered, new RegExp(`Candidate page: file://${workspace.replaceAll("/", "\\/")}/public/balls\\.html`, "u"));
+  assert.doesNotMatch(rendered, /localhost/iu);
 });
 
 test("brownfield evidence separates base failures from candidate regressions", () => {
@@ -285,7 +322,7 @@ test("adapter failures stop safely without exposing raw diagnostics", async () =
   assert.equal(blocked.phase, "blocked");
   assert.equal(projectWorkflowRun(blocked).outcome, "Blocked safely");
   assert.doesNotMatch(blocked.blocker, /secret path/u);
-  assert.match(projectWorkflowRun(blocked).nextAction, /Resolve the stated issue/iu);
+  assert.match(projectWorkflowRun(blocked).nextAction, /Review the stated cause/iu);
 });
 
 test("one transient setup failure is retried durably without duplicate work", async () => {
