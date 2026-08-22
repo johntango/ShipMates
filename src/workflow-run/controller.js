@@ -59,6 +59,7 @@ export class WorkflowRunController {
         await this.store.append(run.id, "worker.launched", {
           operationId: run.worker.operationId, receipt: result.receipt,
         }, "worker-launched");
+        await this.#recordWorkspace(run.id, result.workspace);
         if (result.completed) await this.#recordWorker(run.id, run.worker.operationId, result.completed);
         continue;
       }
@@ -69,7 +70,8 @@ export class WorkflowRunController {
             operationId: run.worker.operationId, receipt: run.worker.receipt, run,
           }),
         );
-        if (!result?.completed) return run;
+        await this.#recordWorkspace(run.id, result?.workspace);
+        if (!result?.completed) return result?.workspace ? this.store.get(run.id) : run;
         await this.#recordWorker(run.id, run.worker.operationId, result.completed);
         continue;
       }
@@ -131,6 +133,11 @@ export class WorkflowRunController {
       operationId, workspacePath: completed.workspacePath,
       headSha: completed.headSha, report: completed.report,
     }, "worker-completed");
+  }
+
+  async #recordWorkspace(runId, binding) {
+    if (!binding) return;
+    await this.store.append(runId, "workspace.lease_bound", binding, "workspace-lease-bound");
   }
 
   async #recoverWithRetry(run, component, operationId, action) {

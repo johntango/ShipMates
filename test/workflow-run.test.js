@@ -185,6 +185,34 @@ test("restart reattaches a live Implementer before adopting its terminal report"
   assert.equal((await store.events(run.id)).filter(({ type }) => type === "worker.launched").length, 1);
 });
 
+test("restart durably binds the known workspace without launching a duplicate worker", async () => {
+  const { store, run } = await createRun();
+  await store.append(run.id, "workflow.approved", {}, "approved");
+  await store.append(run.id, "worker.launch_requested", { operationId: "worker-bound" }, "worker-launch-requested");
+  await store.append(run.id, "worker.launched", {
+    operationId: "worker-bound", receipt: { pid: 91 },
+  }, "worker-launched");
+  let launches = 0;
+  const binding = {
+    runId: run.id, repoPath: run.repoPath,
+    worktreePath: "/tmp/known-worktree", baseHeadSha: run.baseHeadSha,
+  };
+  const controller = new WorkflowRunController({
+    store,
+    worker: {
+      launch: async () => { launches += 1; throw new Error("must not launch"); },
+      observe: async () => ({ receipt: { pid: 91 }, workspace: binding }),
+    },
+    validator: passingValidator(),
+  });
+  const current = await controller.advance(run.id);
+  assert.equal(current.phase, "implementing");
+  assert.equal(current.workspace.status, "leased");
+  assert.deepEqual(current.workspace.binding, binding);
+  assert.equal(launches, 0);
+  assert.equal((await store.events(run.id)).filter(({ type }) => type === "workspace.lease_bound").length, 1);
+});
+
 test("restart after worker report starts validation once", async () => {
   const { store, run } = await createRun();
   await seedWorkerComplete(store, run.id);

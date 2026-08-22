@@ -45,13 +45,17 @@ export class WorkflowRunWorkerAdapter {
 
   async observe({ operationId, receipt = null }) {
     const directory = operationDirectory(this.stateRoot, operationId);
+    const workspace = await readJson(path.join(directory, "workspace.json"));
     const result = await readJson(path.join(directory, "result.json"));
-    if (result) return { receipt: receipt || await readJson(path.join(directory, "receipt.json")), completed: validateWorkerResult(result) };
+    if (result) return {
+      receipt: receipt || await readJson(path.join(directory, "receipt.json")),
+      workspace: validateWorkspaceBinding(workspace), completed: validateWorkerResult(result),
+    };
     const failure = await readJson(path.join(directory, "failure.json"));
     if (failure) throw new WorkflowRunAdapterError(`Implementer stopped (${safeName(failure.name)})`);
     const durableReceipt = receipt || await readJson(path.join(directory, "receipt.json"));
     if (durableReceipt?.pid && this.isProcessAlive(durableReceipt.pid)) {
-      return { receipt: durableReceipt };
+      return { receipt: durableReceipt, workspace: validateWorkspaceBinding(workspace) };
     }
     if (durableReceipt) {
       throw new WorkflowRunAdapterError("Implementer exited without a verified candidate commit");
@@ -228,6 +232,19 @@ function validateWorkerResult(result) {
     throw new WorkflowRunAdapterError("Implementer result is not a clean exact commit");
   }
   return result;
+}
+
+function validateWorkspaceBinding(value) {
+  if (value === null) return null;
+  if (!value || value.schemaVersion !== 1 || !/^workflow-[A-Za-z0-9_-]+$/u.test(value.runId) ||
+    !path.isAbsolute(value.repoPath) || !path.isAbsolute(value.worktreePath) ||
+    !/^[a-f0-9]{40}$/u.test(value.baseHeadSha)) {
+    throw new WorkflowRunAdapterError("Implementer workspace binding is malformed");
+  }
+  return Object.freeze({
+    runId: value.runId, repoPath: path.resolve(value.repoPath),
+    worktreePath: path.resolve(value.worktreePath), baseHeadSha: value.baseHeadSha,
+  });
 }
 
 function operationDirectory(stateRoot, operationId) {

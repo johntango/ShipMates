@@ -15,6 +15,10 @@ try {
   });
   await manager.prepareRepository({ repoPath: request.repoPath });
   const lease = await manager.lease({ repoPath: request.repoPath, taskId: request.runId });
+  await writeAtomic(path.join(directory, "workspace.json"), {
+    schemaVersion: 1, runId: request.runId, repoPath: path.resolve(request.repoPath),
+    worktreePath: path.resolve(lease.worktreePath), baseHeadSha: request.baseHeadSha,
+  });
   await manager.alignLeaseBase({ worktreePath: lease.worktreePath, expectedHeadSha: request.baseHeadSha });
   const branch = `agent/${request.runId.slice(0, 48)}`;
   await manager.prepareTaskBranch({

@@ -90,6 +90,34 @@ dashboard shows only the high-level phase and accepts only plan approval or a
 status refresh; internal run and operation identifiers stay in diagnostic
 state beneath `SHIPMATES_STATE_DIR`.
 
+Simple mode also owns conservative local workspace maintenance. Treehouse
+leases are durably bound to one workflow, repository, and exact base head.
+Firstmate reattaches known live work on restart. Routine startup maintenance
+and `clean project` use the same seven-day retention policy and return only an
+old terminal lease that is proven inactive, clean, and still at its exact base
+head. A nonterminal lease is treated as abandoned only after 30 days, when its
+durably recorded process is no longer live and the same clean exact-base proof
+succeeds. Candidates, dirty or advanced worktrees, live work, and uncertain
+ownership are preserved. Inspect first without mutation with:
+
+```text
+show workspace status
+preview clean project
+clean project
+```
+
+`Clean` is safe maintenance: it retains workflow history, evidence, candidate
+commits, specifications, ADRs, and the shared checkout. `Wipe-clean` is a
+separate destructive reset of managed local workflow state. A general request
+never executes it. Start a dry run with `wipe-clean project PROJECT_NAME`;
+Firstmate displays the scope, risks, preserved blockers, archive manifest, and
+an exact `WIPE-CLEAN PROJECT_NAME MANIFEST_TOKEN` confirmation. The token is
+valid only for that current manifest. Wipe-clean archives its evidence index
+before clearing managed state and refuses active, dirty, advanced, candidate,
+unknown, or otherwise insufficiently proven work. It never deletes a source
+checkout, rewrites Git history, deletes shared or remote branches, or performs
+push, PR, merge, or publication operations.
+
 ### Firstmate output and evidence
 
 Normal interactive and one-shot output leads with a concise human summary:

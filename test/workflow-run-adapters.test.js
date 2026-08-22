@@ -38,6 +38,10 @@ test("production worker bridge launches once and adopts a durable clean result",
   assert.equal((await adapter.observe({ operationId: OPERATION })).receipt.pid, 1234);
 
   const operationRoot = path.join(root, "workflow-run-operations", OPERATION);
+  await writeFile(path.join(operationRoot, "workspace.json"), JSON.stringify({
+    schemaVersion: 1, runId: run.id, repoPath: run.repoPath,
+    worktreePath: "/isolated/worktree", baseHeadSha: run.baseHeadSha,
+  }));
   await writeFile(path.join(operationRoot, "result.json"), JSON.stringify({
     workspacePath: "/isolated/worktree", headSha: HEAD, clean: true, commitCreated: true,
     report: { status: "completed", files: ["index.html"] },
@@ -46,7 +50,12 @@ test("production worker bridge launches once and adopts a durable clean result",
     stateRoot: root, workerScript: "/scripts/worker.js",
     spawnProcess: () => { throw new Error("must not relaunch"); },
   });
-  assert.equal((await restarted.observe({ operationId: OPERATION })).completed.headSha, HEAD);
+  const observed = await restarted.observe({ operationId: OPERATION });
+  assert.equal(observed.completed.headSha, HEAD);
+  assert.deepEqual(observed.workspace, {
+    runId: run.id, repoPath: run.repoPath,
+    worktreePath: "/isolated/worktree", baseHeadSha: run.baseHeadSha,
+  });
 });
 
 test("worker launch does not wait for or depend on Herdr visibility", async () => {

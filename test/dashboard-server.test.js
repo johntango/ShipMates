@@ -99,7 +99,27 @@ test("simple workflow dashboard accepts high-level intents only", () => {
   assert.deepEqual(validateWorkflowIntent({ intent: "approve", runId: "ignored" }), { intent: "approve" });
   assert.deepEqual(validateWorkflowIntent({ intent: "approve_validation" }), { intent: "approve_validation" });
   assert.deepEqual(validateWorkflowIntent({ intent: "status" }), { intent: "status" });
+  assert.deepEqual(validateWorkflowIntent({ intent: "workspace_status" }), { intent: "workspace_status" });
+  assert.deepEqual(validateWorkflowIntent({ intent: "clean" }), { intent: "clean" });
   assert.throws(() => validateWorkflowIntent({ intent: "dispatch", taskId: "task-1" }), /Invalid/u);
+});
+
+test("projects evidence-derived workspace maintenance without internal identifiers", async () => {
+  const { store, projectContext } = fixture();
+  const state = await buildDashboardState({
+    store, projectContext, workflowRunStore: { rootDir: "/state", list: async () => [] },
+    workflowWorkspaceMaintenance: { inventory: async () => ({ counts: {
+      active: 1, "retained candidate": 2, "safely reclaimable": 1,
+      "preserved for review": 3,
+    }, items: [{ runId: "workflow-secret" }] }) },
+  });
+  assert.deepEqual(state.workspaceMaintenance, {
+    counts: { active: 1, "retained candidate": 2, "safely reclaimable": 1,
+      "preserved for review": 3 },
+    summary: "1 active; 2 retained candidate; 1 safely reclaimable; 3 preserved for review.",
+    action: "clean",
+  });
+  assert.doesNotMatch(JSON.stringify(state.workspaceMaintenance), /workflow-secret/u);
 });
 
 test("projects project plans and binds planned items to durable tasks", async () => {
