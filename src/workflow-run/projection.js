@@ -1,11 +1,14 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { renderCapabilitySummary } from "./capability-pack.js";
+import { renderProjectRoadmap } from "./project-cycle-pack.js";
+
 export function projectWorkflowRun(run) {
   const [phase, nextAction, why] = evidenceStatus(run);
   return Object.freeze({
     outcome: phase, nextAction, why, phase,
-    details: [...visibilityEvidence(run), ...terminalEvidence(run)],
+    details: humanEvidence(run),
   });
 }
 
@@ -23,7 +26,7 @@ export function workflowExecutionMilestones(run) {
     (run.phase === "blocked" && run.validation)) validatorStatus = "Blocked safely";
   else if (run.validation?.status === "awaiting_decision") validatorStatus = "Awaiting your approval";
   else if (run.validation) validatorStatus = "Validating";
-  const checks = run.validation?.report ? validationEvidenceSummary(run.validation.report) : [];
+  const baseline = humanBaselineEvidence(run);
   return Object.freeze([
     {
       label: "Plan", status: planApproved ? "Approved" : "Awaiting your approval",
@@ -41,8 +44,8 @@ export function workflowExecutionMilestones(run) {
     },
     {
       label: "No-mistakes", status: validatorStatus,
-      summary: validatorStatus === "Passed" ? `Exact-candidate validation passed.${checks.length ? ` ${checks.join(" ")}` : ""}` :
-        validatorStatus === "Validating" ? "No-mistakes is validating the exact isolated candidate." :
+      summary: validatorStatus === "Passed" ? `No-mistakes passed the exact isolated candidate.${baseline.length ? ` ${baseline.join(" ")}` : ""}${compactValidationEvidence(run.validation.report).length ? ` ${compactValidationEvidence(run.validation.report).join(" ")}` : ""}` :
+        validatorStatus === "Validating" ? run.validationActivityMessage || validationActivitySummary(run.validationActivity) :
           validatorStatus === "Awaiting your approval" ? "Validation found a risk requiring your decision." :
             validatorStatus === "Blocked safely" ? "Validation stopped without changing or publishing the candidate." :
               "Validation is queued until implementation completes.",
@@ -59,21 +62,47 @@ function visibilityEvidence(run) {
     : "Herder visibility unavailable; validation continues."];
 }
 
-export function renderWorkflowRun(run) {
+export function renderWorkflowRun(run, { technical = false } = {}) {
   const view = projectWorkflowRun(run);
+  const candidate = workflowCandidateArtifacts(run);
+  const pageLine = candidate.pageUrl ? `Candidate page: ${candidate.pageUrl}` : null;
   return [
     `Status: ${view.phase}`,
     ...(view.nextAction ? [`Next: ${view.nextAction}`] : []),
     `Why: ${view.why}`,
-    ...view.details,
+    ...(pageLine ? [pageLine] : []),
+    ...view.details.filter((detail) => detail !== pageLine),
+    ...(technical ? ["Technical evidence:", ...workflowTechnicalEvidence(run)] : []),
   ].join("\n");
+}
+
+export function workflowCandidateArtifacts(run) {
+  const workspacePath = typeof run.worker?.workspacePath === "string" &&
+    path.isAbsolute(run.worker.workspacePath) ? path.resolve(run.worker.workspacePath) : null;
+  const reported = Array.isArray(run.worker?.report?.files) ? run.worker.report.files : [];
+  const files = workspacePath ? reported.flatMap((file) => {
+    if (typeof file !== "string" || !file.trim() || path.isAbsolute(file)) return [];
+    const segments = file.split(/[\\/]/u);
+    if (segments.includes("..") || segments.includes(".")) return [];
+    const relativePath = segments.join("/");
+    return [{
+      relativePath,
+      path: path.join(workspacePath, ...segments),
+      html: /\.html?$/iu.test(relativePath),
+    }];
+  }) : [];
+  return Object.freeze({
+    workspacePath,
+    files: Object.freeze(files),
+    pageUrl: workspacePath ? staticEntry(workspacePath, files.map(({ relativePath }) => relativePath)) : null,
+  });
 }
 
 function evidenceStatus(run) {
   if (run.phase === "blocked") {
     return [
       "Blocked safely",
-      "Resolve the stated issue, then ask First Mate to try the request again.",
+      blockedNextAction(run.blocker),
       run.blocker || "The workflow stopped without risking additional changes.",
     ];
   }
@@ -105,7 +134,7 @@ function evidenceStatus(run) {
     return [
       "Validating",
       "No action needed; First Mate is monitoring no-mistakes for the exact candidate result.",
-      "The Implementer finished, and no-mistakes is validating that exact isolated candidate.",
+      run.validationActivityMessage || validationActivitySummary(run.validationActivity),
     ];
   }
   if (run.worker || new Set(["approved", "launching", "implementing"]).has(run.phase)) {
@@ -138,6 +167,14 @@ function evidenceStatus(run) {
   ];
 }
 
+function validationActivitySummary(activity) {
+  const stage = activity?.stage === "test" ? "running the tests" :
+    activity?.stage === "lint" ? "checking code quality" :
+      activity?.stage === "review" ? "reviewing the exact isolated candidate" :
+        activity?.stage === "starting" ? "preparing the checks" : "running the checks";
+  return `Still working — no-mistakes is ${stage}. No action is needed.`;
+}
+
 export function validationEvidenceSummary(report) {
   if (!report || typeof report !== "object") {
     return ["No durable no-mistakes check count is available."];
@@ -161,44 +198,156 @@ export function validationEvidenceSummary(report) {
   ];
 }
 
-function terminalEvidence(run) {
-  if (!new Set(["awaiting_validation_decision", "completed", "blocked"]).has(run.phase) &&
-    !run.retries?.length) return [];
-  const files = Array.isArray(run.worker?.report?.files)
-    ? run.worker.report.files.filter((file) => typeof file === "string" && file.trim())
+function compactValidationEvidence(report) {
+  if (!report || typeof report !== "object") return [];
+  const generated = integerMetric(report, ["generatedTestCount", "testsGenerated"]);
+  const testCases = integerMetric(report, ["executedTestCaseCount", "testCasesExecuted", "testCount"]);
+  const checks = Array.isArray(report.steps)
+    ? report.steps.filter(({ step, status }) => status === "completed" &&
+      new Set(["test", "lint", "review"]).has(step)).map(({ step }) =>
+      step === "test" ? "tests" : step)
     : [];
+  return [
+    ...(checks.length ? [
+      `No-mistakes completed ${checks.length} check${checks.length === 1 ? "" : "s"}: ${checks.join(" and ")}.`,
+    ] : []),
+    ...(generated === null ? [] : [generated === 0
+      ? "No-mistakes generated no new project tests."
+      : `No-mistakes generated ${generated} project test${generated === 1 ? "" : "s"}.`]),
+    ...(testCases === null ? [] : [
+      `It ran ${testCases} recorded test case${testCases === 1 ? "" : "s"}.`,
+    ]),
+  ];
+}
+
+export function baselineEvidenceSummary(report) {
+  const baseline = report?.baseline;
+  const candidate = report?.candidate;
+  if (!baseline || !candidate) return [];
+  const existing = Number.isSafeInteger(baseline.failures) ? baseline.failures : null;
+  const introduced = Number.isSafeInteger(candidate.introducedFailures) ? candidate.introducedFailures : null;
+  if (existing === null || introduced === null) return [];
+  return [
+    `Base-head baseline recorded ${existing} existing failure${existing === 1 ? "" : "s"}.`,
+    `Candidate validation recorded ${introduced} introduced regression${introduced === 1 ? "" : "s"}.`,
+  ];
+}
+
+function humanEvidence(run) {
+  if (!new Set(["awaiting_validation_decision", "completed", "blocked"]).has(run.phase) &&
+    !run.retries?.length) return [...renderCapabilitySummary(run), ...projectCycleSummary(run)];
+  const candidate = workflowCandidateArtifacts(run);
+  const files = candidate.files.map(({ relativePath }) => relativePath);
   const lines = [];
   if (run.worker?.report?.status === "completed") {
-    lines.push("Created by: The Implementer created the code in this candidate.");
+    const summary = cleanHumanText(run.worker.report.summary);
+    lines.push(`Created: The Implementer created the code in the isolated candidate${summary ? ` — ${summary}` : "."}`);
   }
   if (run.phase === "completed" && run.validation?.report) {
-    lines.push("Validated by: No-mistakes tested and validated this exact isolated candidate.");
+    lines.push("Checked: No-mistakes tested this exact isolated candidate, and it passed.");
+    lines.push(...compactValidationEvidence(run.validation.report));
+    if (run.projectCycle?.nextRoadmap) {
+      const proposed = run.projectCycle.nextRoadmap.content.nextSlice;
+      lines.push(`Proposed next slice: ${proposed.title} — ${proposed.objective} It is not approved or scheduled.`);
+    }
   }
   if (run.phase === "awaiting_validation_decision") {
-    lines.push("Decision needed: No-mistakes reported a validation risk that First Mate cannot decide silently.");
-    lines.push("Choices: approve this stated risk and continue validation, or stop and keep the isolated candidate unchanged.");
-    lines.push("Default: stop safely unless you explicitly approve the stated risk.");
+    lines.push("Decision needed: validation found a risk that needs your judgment.");
+    lines.push("Choices: accept the stated risk and continue checking, or stop and keep the isolated candidate unchanged.");
+    lines.push("Default: stop safely unless you explicitly accept the stated risk.");
   }
   if (run.retries?.length) {
-    lines.push("Recovery: First Mate used its one safe automatic setup retry and did not duplicate work.");
+    lines.push("Recovery: First Mate made one safe retry without repeating the implementation.");
   }
-  if (run.worker?.workspacePath) {
+  if (candidate.workspacePath) {
     lines.push("Delivery: The candidate is preserved in its isolated workspace; it has not been copied or merged into the shared checkout.");
-    const entry = staticEntry(run.worker.workspacePath, files);
+    const entry = candidate.pageUrl;
     if (entry) lines.push(`Candidate page: ${entry}`);
-    else lines.push(`Candidate workspace: ${run.worker.workspacePath}`);
+    else lines.push(`Candidate workspace: ${candidate.workspacePath}`);
   }
   if (files.length) lines.push(`Files: ${files.join(", ")}`);
   const artifacts = durableArtifacts(run);
   if (artifacts.length) lines.push(`Durable preview evidence: ${artifacts.join(", ")}`);
-  if (run.validation?.report) lines.push(...validationEvidenceSummary(run.validation.report));
+  lines.push(...humanBaselineEvidence(run));
+  lines.push(...projectCycleSummary(run));
   return lines;
 }
 
+function projectCycleSummary(run) {
+  const roadmap = run.projectCycle?.roadmap?.content;
+  if (!roadmap) return [];
+  return [
+    `Project cycle: ${roadmap.currentCycle.name} — ${roadmap.currentCycle.whyNow}`,
+    `Current bounded slice: ${roadmap.nextSlice.title}.`,
+    `Exit criteria: ${roadmap.currentCycle.exitCriteria.join("; ")}`,
+    ...(roadmap.currentCycle.risksAndDependencies.length
+      ? [`Risks or decisions: ${roadmap.currentCycle.risksAndDependencies.join("; ")}`] : []),
+  ];
+}
+
+export function workflowTechnicalEvidence(run) {
+  const candidate = workflowCandidateArtifacts(run);
+  const files = candidate.files.map(({ relativePath }) => relativePath);
+  return [
+    ...renderCapabilitySummary(run),
+    ...(run.projectCycle ? renderProjectRoadmap(run).split("\n") : []),
+    ...visibilityEvidence(run),
+    ...(candidate.workspacePath ? [`Candidate workspace: ${candidate.workspacePath}`] : []),
+    ...(files.length ? [`Changed files: ${files.join(", ")}`] : []),
+    ...(run.worker?.report?.tests?.length ? workerVerificationEvidence(run.worker.report.tests) : []),
+    ...(run.validation?.report ? validationEvidenceSummary(run.validation.report) : []),
+    ...(run.validation?.report ? baselineEvidenceSummary(run.validation.report) : []),
+  ];
+}
+
+function humanBaselineEvidence(run) {
+  const structured = run.validation?.report ? baselineEvidenceSummary(run.validation.report) : [];
+  if (structured.length) return structured.map((line) => line
+    .replace(/^Base-head baseline recorded/iu, "Pre-existing baseline issues:")
+    .replace(/^Candidate validation recorded/iu, "Candidate regressions:"));
+  const results = Array.isArray(run.worker?.report?.tests)
+    ? run.worker.report.tests.map(({ result }) => result).filter((value) => typeof value === "string")
+    : [];
+  return results.some((value) => /baseline|pre-existing|environment failure/iu.test(value))
+    ? ["Baseline/environment: pre-existing issues were recorded separately from candidate regressions."]
+    : [];
+}
+
+function cleanHumanText(value) {
+  if (typeof value !== "string") return "";
+  return value.replaceAll(/`([^`]+)`/gu, "$1")
+    .replaceAll(/\b(?:Changes remain uncommitted|No commit[^.]*|No publication[^.]*)\.?/giu, "")
+    .replaceAll(/\s+/gu, " ").trim().replace(/\.?$/u, ".").slice(0, 500);
+}
+
 function staticEntry(workspacePath, files) {
-  const relative = files.find((file) => /(?:^|\/)index\.html$/iu.test(file));
+  const htmlFiles = files.filter((file) => /\.html?$/iu.test(file));
+  const relative = htmlFiles.find((file) => /(?:^|\/)index\.html$/iu.test(file)) ||
+    (htmlFiles.length === 1 ? htmlFiles[0] : null);
   if (!relative || path.isAbsolute(relative) || relative.split(/[\\/]/u).includes("..")) return null;
   return pathToFileURL(path.join(workspacePath, relative)).href;
+}
+
+function workerVerificationEvidence(tests) {
+  return tests.flatMap(({ command, result }) => {
+    if (typeof command !== "string" || typeof result !== "string") return [];
+    const cleanCommand = command.replaceAll(/\s+/gu, " ").trim().slice(0, 180);
+    const cleanResult = result.replaceAll(/\s+/gu, " ").trim().slice(0, 300);
+    return [`Implementer verification — ${cleanCommand}: ${cleanResult}`];
+  });
+}
+
+function blockedNextAction(blocker) {
+  if (/exceeded its safe time limit|timed out/iu.test(blocker || "")) {
+    return "Keep the isolated candidate unchanged, check local validator availability, then retry validation only.";
+  }
+  if (/validation remote/iu.test(blocker || "")) {
+    return "Inspect or repair the isolated workspace's managed validator binding; keep the candidate unchanged until that safety check succeeds.";
+  }
+  if (/initialize.*no-mistakes/iu.test(blocker || "")) {
+    return "Check the pinned local no-mistakes installation, then retry validation without rerunning implementation.";
+  }
+  return "Review the stated cause, preserve the isolated candidate, and retry only the blocked step when it is safe.";
 }
 
 function durableArtifacts(run) {

@@ -27,7 +27,23 @@
     if (["running", "awaiting_worker", "validating", "preparing"].includes(task.state)) return "working";
     return "done";
   };
-  const render = (state) => {
+  let latestDashboardState = null;
+  let currentWorkflowRun = null;
+  let loadedWorkflowHistory = [];
+  let workflowHistoryPage = null;
+  const historyKey = (run) => `${run.updatedAt || ""}\n${run.request || ""}`;
+  const mergeHistory = (runs) => {
+    const merged = new Map(loadedWorkflowHistory.map((run) => [historyKey(run), run]));
+    for (const run of runs) merged.set(historyKey(run), run);
+    loadedWorkflowHistory = [...merged.values()].sort((left, right) =>
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  };
+  const render = (state, { appendHistory = false } = {}) => {
+    latestDashboardState = state;
+    const tasksElement = document.querySelector("#tasks");
+    const workflowHistoryOpen = Boolean(
+      tasksElement.querySelector?.("[data-workflow-history]")?.open,
+    );
     document.querySelector("#updated").textContent = `Updated ${new Date(state.generatedAt).toLocaleTimeString()}`;
     const alerts = state.watchdog?.alerts || [];
     const historical = state.watchdog?.historical || [];
@@ -36,7 +52,23 @@
       <p class="mb-2">${alerts.length} task${alerts.length === 1 ? " has" : "s have"} exceeded the ${escape(state.watchdog.thresholdMinutes)} minute monitoring limit.</p>
       <div class="vstack gap-2">${alerts.map((alert) => `<div><strong>${escape(alert.projectName)} — ${escape(alert.taskName)}</strong><br><span>${escape(alert.status)} (${escape(alert.ageMinutes)} minutes).</span><br><span class="small">${escape(alert.remedy)}</span></div>`).join("")}</div>
     </section>` : ""}${historical.length ? `<details class="alert alert-secondary mb-4"><summary>${historical.length} historical ledger record${historical.length === 1 ? "" : "s"} need cleanup (not live processes)</summary><div class="vstack gap-2 mt-3">${historical.map((item) => `<div><strong>${escape(item.projectName)} — ${escape(item.taskName)}</strong><br><span class="small">Recorded ${escape(item.state)} · ${escape(item.ageMinutes)} minutes old. ${escape(item.remedy)}</span></div>`).join("")}</div></details>` : ""}`;
-    const simpleRuns = state.workflowRuns || [];
+    const incomingRuns = state.workflowRuns || [];
+    const incomingCurrent = appendHistory
+      ? currentWorkflowRun
+      : incomingRuns.find((run) => run.current) || incomingRuns[0] || null;
+    currentWorkflowRun = incomingCurrent;
+    if (!appendHistory && !workflowHistoryPage) loadedWorkflowHistory = [];
+    mergeHistory(incomingRuns.filter((run) => run !== incomingCurrent));
+    if (state.workflowHistory) {
+      workflowHistoryPage = appendHistory || !workflowHistoryPage
+        ? state.workflowHistory
+        : {
+            ...workflowHistoryPage,
+            total: state.workflowHistory.total,
+            hasMore: workflowHistoryPage.nextOffset < state.workflowHistory.total,
+          };
+    }
+    const simpleRuns = incomingCurrent ? [incomingCurrent, ...loadedWorkflowHistory] : loadedWorkflowHistory;
     const maintenance = state.workspaceMaintenance;
     const maintenanceCard = maintenance ? `<article class="card shadow-sm task-card">
       <div class="card-body"><h2 class="h5">Workspace maintenance</h2>
@@ -44,24 +76,56 @@
       <p class="small text-body-secondary">Clean is safe maintenance. It preserves candidates, history, dirty or uncertain work, and the shared checkout. Wipe-clean is a separate named and confirmed reset.</p>
       <button class="btn btn-outline-primary btn-sm" data-workflow-intent="clean">Clean safely</button></div>
     </article>` : "";
-    const simpleRunCards = simpleRuns.map((run) => `
+    const simpleRunCard = (run, label) => `
       <article class="card shadow-sm task-card" data-state="${run.presentation.outcome === "Passed" ? "done" : run.presentation.outcome === "Blocked safely" ? "working" : "attention"}">
         <div class="card-body">
+          <div class="small fw-semibold text-uppercase text-body-secondary mb-1">${escape(label)}</div>
           <div class="d-flex flex-wrap justify-content-between gap-2"><h2 class="h5 mb-0">${escape(run.request)}</h2><span class="badge text-bg-secondary">${escape(run.phase)}</span></div>
           <div class="alert ${run.presentation.outcome === "Passed" ? "alert-success" : "alert-warning"} mt-3 mb-0">
             <div class="h5 mb-1">${escape(run.presentation.outcome)}</div>
             ${run.presentation.nextAction ? `<div><strong>Next action:</strong> ${escape(run.presentation.nextAction)}</div>` : '<div><strong>Next action:</strong> None.</div>'}
             <div class="small mt-1"><strong>Why:</strong> ${escape(run.presentation.why)}</div>
             ${run.presentation.details?.length ? `<div class="small mt-2">${run.presentation.details.map((detail) => `<div>${escape(detail)}</div>`).join("")}</div>` : ""}
+            ${run.technicalEvidence?.length ? `<details class="small mt-2"><summary>Technical evidence</summary><div class="mt-2">${run.technicalEvidence.map((detail) => `<div>${escape(detail)}</div>`).join("")}</div></details>` : ""}
             ${run.action === "approve" ? '<button class="btn btn-success btn-sm mt-2" data-workflow-intent="approve">Approve plan</button>' : run.action === "approve_validation" ? '<button class="btn btn-warning btn-sm mt-2" data-workflow-intent="approve_validation">Review decision</button>' : ""}
           </div>
+          ${run.candidate?.pageUrl ? `<div class="mt-3"><a class="btn btn-primary btn-sm" href="${escape(run.candidate.pageUrl)}">Open candidate page</a></div>` : ""}
+          ${run.candidate?.workspacePath ? `<div class="small text-body-secondary font-monospace mt-2">Isolated workspace: ${escape(run.candidate.workspacePath)}</div>` : ""}
+          ${run.candidate?.files?.length ? `<div class="small mt-3"><strong>Created or changed files</strong><ul class="mb-0 mt-1">${run.candidate.files.map((file) => `<li><span class="font-monospace">${escape(file.relativePath)}</span></li>`).join("")}</ul></div>` : ""}
           <details class="small mt-2"><summary>Approved scope</summary><div class="mt-2">${escape(run.plan)}</div></details>
+          ${run.capability ? `<section class="small mt-3" aria-label="Capability evidence">
+            <strong>Capability mode: ${escape(run.capability.mode === "brownfield" ? "Brownfield" : "Greenfield")}</strong>
+            <div class="text-body-secondary">${escape(run.capability.modeReason)}</div>
+            ${run.capability.spec ? `<div class="mt-2"><strong>Specification:</strong> ${escape(run.capability.spec.goal)}</div>` : ""}
+            ${run.capability.slice ? `<div class="mt-1"><strong>Current slice:</strong> ${escape(run.capability.slice.title)} — ${escape(run.capability.slice.objective)}</div>
+              <div class="mt-1"><strong>Acceptance:</strong> ${escape(run.capability.slice.acceptanceChecks.join("; "))}</div>
+              <div class="mt-1"><strong>Baseline:</strong> ${escape(run.capability.slice.validationPolicy.baselineAtBase ? "Base-head behavior is compared separately from candidate regressions." : "The explicit acceptance policy is the bootstrap baseline.")}</div>` : ""}
+            ${run.capability.review ? `<div class="mt-2"><strong>Review:</strong> ${escape(run.capability.review.summary)}</div>` : ""}
+          </section>` : ""}
+          ${run.projectCycle ? `<section class="small mt-3" aria-label="Current project cycle">
+            <strong>Current project cycle: ${escape(run.projectCycle.current.name)}</strong>
+            <div class="text-body-secondary">${escape(run.projectCycle.current.whyNow)}</div>
+            <div class="mt-2"><strong>Current slice:</strong> ${escape(run.projectCycle.currentSlice.title)} — ${escape(run.projectCycle.currentSlice.objective)}</div>
+            <div class="mt-1"><strong>Exit criteria:</strong> ${escape(run.projectCycle.current.exitCriteria.join("; "))}</div>
+            ${run.projectCycle.next ? `<div class="alert alert-info py-2 mt-2 mb-0"><strong>Next proposal:</strong> ${escape(run.projectCycle.next.nextSlice.title)}. It is not approved or scheduled.</div>` : ""}
+            <details class="mt-2"><summary>Roadmap and assumptions</summary>
+              <div class="mt-2"><strong>Architecture assumptions:</strong> ${escape(run.projectCycle.current.architectureAssumptions.join("; "))}</div>
+              ${run.projectCycle.current.adrRefs.length ? `<div><strong>ADR references:</strong> ${escape(run.projectCycle.current.adrRefs.join("; "))}</div>` : ""}
+              ${run.projectCycle.current.risksAndDependencies.length ? `<div><strong>Risks or decisions:</strong> ${escape(run.projectCycle.current.risksAndDependencies.join("; "))}</div>` : ""}
+            </details>
+          </section>` : ""}
           <section class="small mt-3" aria-label="Actual execution milestones">
             <strong>Actual execution</strong>
             <ol class="mt-2 mb-0">${(run.milestones || []).map((milestone) => `<li class="mb-2"><strong>${escape(milestone.label)} — ${escape(milestone.status)}</strong><div class="text-body-secondary">${escape(milestone.summary)}</div></li>`).join("")}</ol>
           </section>
         </div>
-      </article>`).join("");
+      </article>`;
+    const currentRun = simpleRuns.find((run) => run.current) || simpleRuns[0] || null;
+    const historicalRuns = currentRun ? simpleRuns.filter((run) => run !== currentRun) : [];
+    const loadOlder = workflowHistoryPage?.hasMore
+      ? `<button class="btn btn-outline-secondary btn-sm mt-3" data-load-workflow-history data-offset="${escape(workflowHistoryPage.nextOffset)}">Load older results</button>`
+      : "";
+    const simpleRunCards = `${currentRun ? simpleRunCard(currentRun, "Current result") : ""}${historicalRuns.length ? `<details class="mt-3" data-workflow-history${workflowHistoryOpen ? " open" : ""}><summary>${historicalRuns.length} earlier workflow result${historicalRuns.length === 1 ? "" : "s"} — History</summary><div class="vstack gap-3 mt-3">${historicalRuns.map((run) => simpleRunCard(run, "History")).join("")}</div>${loadOlder}</details>` : ""}`;
     const legacyTaskCards = state.tasks.map((task) => `
       <article class="card shadow-sm task-card" data-state="${taskTone(task)}">
         <div class="card-body">
@@ -87,7 +151,7 @@
           ${task.validation ? `<div class="alert ${task.validation.passed ? "alert-success" : "alert-warning"} py-2 mt-3 mb-0">Validation ${task.validation.passed ? "passed" : "did not pass"}: ${escape(task.validation.outcome || "unknown")}</div>` : ""}
         </div>
       </article>`).join("");
-    document.querySelector("#tasks").innerHTML = maintenanceCard + simpleRunCards + legacyTaskCards || '<div class="alert alert-secondary">No tasks recorded yet.</div>';
+    tasksElement.innerHTML = maintenanceCard + simpleRunCards + legacyTaskCards || '<div class="alert alert-secondary">No tasks recorded yet.</div>';
     const projects = state.projects || [];
     document.querySelector("#projects").innerHTML = projects.map((project) => {
       const percent = project.progress.total
@@ -147,6 +211,21 @@
     } finally { button.disabled = false; }
   });
   document.querySelector("#tasks").addEventListener("click", async (event) => {
+    const loadOlder = event.target.closest("[data-load-workflow-history]");
+    if (loadOlder && !loadOlder.disabled && !reviewState) {
+      loadOlder.disabled = true;
+      try {
+        const response = await fetch(`/api/workflow/history?offset=${encodeURIComponent(loadOlder.dataset.offset)}`);
+        if (!response.ok) return;
+        const page = await response.json();
+        render({
+          ...latestDashboardState,
+          workflowRuns: page.workflowRuns,
+          workflowHistory: page.workflowHistory,
+        }, { appendHistory: true });
+      } finally { loadOlder.disabled = false; }
+      return;
+    }
     const button = event.target.closest("[data-workflow-intent]");
     if (!button || button.disabled || reviewState) return;
     button.disabled = true;

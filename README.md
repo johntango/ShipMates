@@ -90,6 +90,59 @@ dashboard shows only the high-level phase and accepts only plan approval or a
 status refresh; internal run and operation identifiers stay in diagnostic
 state beneath `SHIPMATES_STATE_DIR`.
 
+Simple mode includes versioned Initial Capability packs. Brownfield is selected
+when established source or project configuration is present; Greenfield is
+selected for an empty or minimal repository. Firstmate displays the selected
+mode and reason before approval. Override it only while proposing a
+specification:
+
+```text
+/spec Build a small local status page
+/spec --mode greenfield Bootstrap a new static site
+/cycle greenfield Build a walking-skeleton web experience
+/roadmap
+/plan
+/build
+/test
+/review
+/ship
+/status
+/clean
+/wipe-clean ProjectName
+```
+
+Natural status, validation, review, artifact, and delivery-preview questions
+route to the same current WorkflowRun. `/spec` captures bounded read-only
+repository context and proposes a typed specification. `/plan` shows one
+bounded vertical slice. One approval authorizes only that first slice; `/build`
+cannot bypass it. `/test` reports or advances exact-head local validation,
+`/review` records a non-authoritative quality view, and `/ship` creates only a
+delivery preview. It never pushes, opens a pull request, merges, publishes, or
+changes the shared checkout. Those actions require a separate future delivery
+approval.
+
+Capability packs are advisory. Their versioned, content-addressed context,
+specification, slice, baseline policy, and review artifacts live in the same
+WorkflowRun event stream. Packs cannot emit lifecycle events, launch workers,
+approve scope, clean or wipe, validate, or deliver. Repository content is
+treated as untrusted data, collection is bounded, and sensitive-looking values
+are redacted from durable context. Brownfield slices request base-head
+characterization and report pre-existing failures separately from candidate
+regressions. After a successful slice, `/plan FOLLOW_UP_GOAL` may record a typed
+follow-up proposal, but it is not scheduled or approved automatically.
+
+Each new capability workflow also records one versioned Project Cycle roadmap
+inside the same WorkflowRun event stream. Greenfield starts with a walking
+skeleton before security, datastore, or scale decisions. Brownfield starts with
+bounded repository context and characterization of existing behavior. Use
+`/roadmap` (or ask “show the current project cycle”) to see why the cycle is
+current, architecture assumptions and ADR references, exit criteria, risks,
+and exactly one next bounded slice. Before approval, `/cycle greenfield GOAL`
+or `/cycle brownfield GOAL` explicitly selects the mode. The ordinary single
+plan approval authorizes only the displayed current slice. After it passes,
+Firstmate records completion evidence and proposes one follow-up, but never
+launches or approves that later slice automatically.
+
 Simple mode also owns conservative local workspace maintenance. Treehouse
 leases are durably bound to one workflow, repository, and exact base head.
 Firstmate reattaches known live work on restart. Routine startup maintenance

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,8 +7,8 @@ import test from "node:test";
 import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { workflowRunEnabled } from "../src/workflow-run/feature.js";
 import {
-  projectWorkflowRun, renderWorkflowRun, validationEvidenceSummary,
-  workflowExecutionMilestones,
+  baselineEvidenceSummary, projectWorkflowRun, renderWorkflowRun, validationEvidenceSummary,
+  workflowExecutionMilestones, workflowTechnicalEvidence,
 } from "../src/workflow-run/projection.js";
 import { reduceWorkflowRun } from "../src/workflow-run/reducer.js";
 import { WorkflowRunStore } from "../src/workflow-run/store.js";
@@ -66,19 +66,16 @@ test("approval to completion uses one worker and one exact-head validator", asyn
     why: "The Implementer created the code, and no-mistakes tested and validated that exact isolated candidate.",
     phase: "Passed",
     details: [
-      "Herder visibility was unavailable; validation continued independently.",
-      "Created by: The Implementer created the code in this candidate.",
-      "Validated by: No-mistakes tested and validated this exact isolated candidate.",
+      "Created: The Implementer created the code in the isolated candidate — Built it.",
+      "Checked: No-mistakes tested this exact isolated candidate, and it passed.",
       "Delivery: The candidate is preserved in its isolated workspace; it has not been copied or merged into the shared checkout.",
       "Candidate workspace: /tmp/workflow-worktree",
-      "No generated project tests were recorded by no-mistakes.",
-      "No individual test-case count was recorded.",
     ],
   });
   const rendered = renderWorkflowRun(completed);
   assert.match(rendered, /^Status: Passed/u);
   assert.match(rendered, /Implementer created the code/iu);
-  assert.match(rendered, /No-mistakes tested and validated this exact isolated candidate/iu);
+  assert.match(rendered, /No-mistakes tested this exact isolated candidate, and it passed/iu);
   assert.doesNotMatch(rendered, /workflow-test|operation id|task id/iu);
 });
 
@@ -104,6 +101,86 @@ test("validation evidence distinguishes generated tests, test cases, and checks"
     "No individual test-case count was recorded.",
     "No-mistakes completed 1 validation check: test.",
   ]);
+});
+
+test("normal output is friendly while technical details preserve exact evidence", () => {
+  const run = {
+    phase: "blocked",
+    blocker: "The isolated workspace has an unrecognized validation remote, so First Mate preserved it without running no-mistakes.",
+    retries: [], validation: { status: "requested" },
+    worker: {
+      status: "completed", workspacePath: "/tmp/candidate", headSha: HEAD,
+      report: {
+        status: "completed", files: ["page.html"],
+        tests: [
+          { command: "node --test test/page.test.js", result: "Passed: 2 tests." },
+          { command: "node --test test/page.test.js test/dashboard.test.js", result: "22 passed, 1 baseline/environment failure." },
+        ],
+      },
+    },
+  };
+  const rendered = renderWorkflowRun(run);
+  assert.match(rendered, /Inspect or repair.*managed validator binding/iu);
+  assert.match(rendered, /Baseline\/environment: pre-existing issues.*candidate regressions/iu);
+  assert.doesNotMatch(rendered, /node --test|Implementer verification|skipped|No individual test-case count/iu);
+  assert.doesNotMatch(rendered, /Validated by:|No-mistakes tested and validated/iu);
+  const technical = renderWorkflowRun(run, { technical: true });
+  assert.match(technical, /Technical evidence:/u);
+  assert.match(technical, /Implementer verification.*node --test.*Passed: 2 tests/iu);
+  assert.deepEqual(workflowTechnicalEvidence(run).slice(-2), [
+    "Implementer verification — node --test test/page.test.js: Passed: 2 tests.",
+    "Implementer verification — node --test test/page.test.js test/dashboard.test.js: 22 passed, 1 baseline/environment failure.",
+  ]);
+});
+
+test("completed output reports compact checks, truthful metrics, and baseline separation", () => {
+  const rendered = renderWorkflowRun({
+    phase: "completed", retries: [],
+    worker: {
+      status: "completed", workspacePath: "/tmp/candidate", headSha: HEAD,
+      report: { status: "completed", summary: "Built the accessible page", files: ["balls.html"] },
+    },
+    validation: { status: "passed", headSha: HEAD, report: {
+      baseline: { failures: 3 }, candidate: { introducedFailures: 0 },
+      steps: [
+        { step: "test", status: "completed" }, { step: "lint", status: "completed" },
+        { step: "review", status: "skipped" },
+      ],
+    } },
+  });
+  assert.match(rendered, /^Status: Passed\nNext:/u);
+  assert.match(rendered, /Created: The Implementer created.*accessible page/iu);
+  assert.match(rendered, /Checked: No-mistakes tested.*passed/iu);
+  assert.match(rendered, /completed 2 checks: tests and lint/iu);
+  assert.match(rendered, /Pre-existing baseline issues: 3 existing failures/iu);
+  assert.match(rendered, /Candidate regressions: 0 introduced regressions/iu);
+  assert.match(rendered, /Candidate page: file:\/\/\/tmp\/candidate\/balls\.html/iu);
+  assert.doesNotMatch(rendered, /skipped|No generated|No individual/iu);
+});
+
+test("candidate projection links a single safe non-index HTML entry", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "shipmates-page-link-"));
+  await mkdir(path.join(workspace, "public"));
+  const rendered = renderWorkflowRun({
+    phase: "blocked", blocker: "Validation stopped safely.", retries: [],
+    worker: {
+      status: "completed", workspacePath: workspace, headSha: HEAD,
+      report: { status: "completed", files: ["public/balls.html", "public/balls.js"] },
+    },
+    validation: { status: "requested" },
+  });
+  assert.match(rendered, new RegExp(`Candidate page: file://${workspace.replaceAll("/", "\\/")}/public/balls\\.html`, "u"));
+  assert.doesNotMatch(rendered, /localhost/iu);
+});
+
+test("brownfield evidence separates base failures from candidate regressions", () => {
+  assert.deepEqual(baselineEvidenceSummary({
+    baseline: { failures: 3 }, candidate: { failures: 3, introducedFailures: 0 },
+  }), [
+    "Base-head baseline recorded 3 existing failures.",
+    "Candidate validation recorded 0 introduced regressions.",
+  ]);
+  assert.deepEqual(baselineEvidenceSummary({ outcome: "passed" }), []);
 });
 
 test("derives actual execution milestones from durable evidence, not plan prose", () => {
@@ -134,7 +211,7 @@ test("derives actual execution milestones from durable evidence, not plan prose"
   assert.equal(milestones[0].status, "Approved");
   assert.match(milestones[1].summary, /site\/index\.html, site\/app\.js/u);
   assert.equal(milestones[2].status, "Passed");
-  assert.match(milestones[2].summary, /executed 4 test cases.*2 validation checks/isu);
+  assert.match(milestones[2].summary, /2 checks: tests and lint.*ran 4 recorded test cases/isu);
   assert.doesNotMatch(JSON.stringify(milestones), /workflow-|task id|operation/iu);
 });
 
@@ -275,7 +352,20 @@ test("adapter failures stop safely without exposing raw diagnostics", async () =
   assert.equal(blocked.phase, "blocked");
   assert.equal(projectWorkflowRun(blocked).outcome, "Blocked safely");
   assert.doesNotMatch(blocked.blocker, /secret path/u);
-  assert.match(projectWorkflowRun(blocked).nextAction, /Resolve the stated issue/iu);
+  assert.match(projectWorkflowRun(blocked).nextAction, /Review the stated cause/iu);
+});
+
+test("validation timeout blocks with a plain safe next action", async () => {
+  const rendered = renderWorkflowRun({
+    phase: "blocked", retries: [],
+    blocker: "No-mistakes validation exceeded its safe time limit; the isolated candidate was preserved unchanged.",
+    worker: { status: "completed", workspacePath: "/tmp/candidate", headSha: HEAD,
+      report: { status: "completed" } },
+    validation: { status: "requested", headSha: HEAD },
+  });
+  assert.match(rendered, /^Status: Blocked safely\nNext: Keep the isolated candidate unchanged.*retry validation only/isu);
+  assert.match(rendered, /safe time limit/iu);
+  assert.doesNotMatch(rendered, /ETIMEDOUT|operation|command/iu);
 });
 
 test("one transient setup failure is retried durably without duplicate work", async () => {

@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
+import { artifact } from "./capability-pack.js";
 import { WorkflowRunError } from "./reducer.js";
+import { nextProjectCycleArtifacts } from "./project-cycle-pack.js";
 
 export class WorkflowRunController {
   constructor({ store, worker, validator, isTransientError = defaultTransientError } = {}) {
@@ -12,6 +14,11 @@ export class WorkflowRunController {
   }
 
   async approve(runId) {
+    const run = await this.store.get(runId);
+    if (run.capability && !run.capability.specApprovedAt) {
+      const approved = artifact("spec.approved", run.capability.spec.content);
+      await this.store.append(runId, "spec.approved", { artifact: approved }, `artifact:${approved.digest}`);
+    }
     await this.store.append(runId, "workflow.approved", {}, "approved");
     return this.advance(runId);
   }
@@ -42,7 +49,14 @@ export class WorkflowRunController {
   async #advance(runId) {
     for (let step = 0; step < 8; step += 1) {
       let run = await this.store.get(runId);
-      if (new Set(["awaiting_approval", "awaiting_validation_decision", "completed", "blocked"]).has(run.phase)) return run;
+      if (run.phase === "completed") {
+        const cycle = nextProjectCycleArtifacts(run);
+        if (!cycle) return run;
+        await this.store.append(run.id, "slice.completed", { artifact: cycle.completion }, `artifact:${cycle.completion.digest}`);
+        await this.store.append(run.id, "roadmap.next_proposed", { artifact: cycle.next }, `artifact:${cycle.next.digest}`);
+        return this.store.get(run.id);
+      }
+      if (new Set(["awaiting_approval", "awaiting_validation_decision", "blocked"]).has(run.phase)) return run;
       if (run.phase === "approved") {
         const operationId = operation(run.id, "worker");
         await this.store.append(run.id, "worker.launch_requested", { operationId }, "worker-launch-requested");
@@ -171,13 +185,32 @@ function operation(runId, purpose) {
 
 function safeReason(error) {
   const message = String(error?.message || "");
+  if (errorChainHasCode(error, "ETIMEDOUT")) {
+    return "No-mistakes validation exceeded its safe time limit; the isolated candidate was preserved unchanged.";
+  }
   if (/Implementer/iu.test(message)) {
     return "The Implementer stopped before producing a verified candidate.";
   }
   if (/validat|no-mistakes/iu.test(message)) {
+    if (/outside the managed validation state/iu.test(message)) {
+      return "The isolated workspace has an unrecognized validation remote, so First Mate preserved it without running no-mistakes.";
+    }
+    if (/detach a stale managed no-mistakes remote/iu.test(message)) {
+      return "First Mate could not safely replace the isolated workspace's stale managed validation remote.";
+    }
+    if (/initialize the pinned local validation repository/iu.test(message)) {
+      return "First Mate could not initialize the pinned local no-mistakes validator for this isolated candidate.";
+    }
     return "No-mistakes validation could not be verified for the exact isolated candidate.";
   }
   return "A required local workflow step could not be verified safely.";
+}
+
+function errorChainHasCode(error, code) {
+  for (let current = error; current; current = current.cause) {
+    if (current.code === code) return true;
+  }
+  return false;
 }
 
 function defaultTransientError(error) {

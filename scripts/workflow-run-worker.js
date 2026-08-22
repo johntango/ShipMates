@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { CodexWorkerRuntime } from "../src/adapters/codex-worker.js";
 import { ControlledGitCommitAdapter } from "../src/adapters/git-commit.js";
 import { resolvePinnedTreehouseBinary, TreehouseWorktreeManager } from "../src/adapters/treehouse.js";
+import { implementationPrompt } from "../src/workflow-run/worker-contract.js";
 
 const requestPath = path.resolve(process.argv[2] || "");
 const directory = path.dirname(requestPath);
@@ -58,18 +59,6 @@ try {
     message: "Implementer stopped before producing a verified candidate commit",
   });
   process.exitCode = 1;
-}
-
-function implementationPrompt(request) {
-  return [
-    "You are the sole bounded Implementer for one user-approved local workflow.",
-    "Work only in the current isolated workspace. Do not inspect .shipmates or orchestration state.",
-    "Do not commit, push, publish, open a pull request, merge, change remotes, or access the shared checkout.",
-    "Implement the approved request and run relevant focused checks. Preserve unrelated files.",
-    `Approved request: ${request.instruction}`,
-    `Approved short plan: ${request.plan}`,
-    `Return the structured report with taskId exactly ${request.runId}.`,
-  ].join("\n");
 }
 
 async function writeAtomic(target, value) {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import vm from "node:vm";
@@ -47,10 +48,13 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
   assert.deepEqual(state.workflowRuns, [{
     phase: "Awaiting your approval", action: "approve", request: "Build a page", plan: "Build and validate it",
     updatedAt: "2026-08-18T12:00:00.000Z",
+    current: true,
     presentation: {
       outcome: "Awaiting your approval", nextAction: "Approve the short plan to begin local work, or stop without changing files.",
       why: "The short plan is ready; no files have changed.", phase: "Awaiting your approval", details: [],
     },
+    candidate: { workspacePath: null, files: [], pageUrl: null },
+    technicalEvidence: [],
     milestones: [
       { label: "Plan", status: "Awaiting your approval", summary: "The approved scope is ready; no implementation has started." },
       { label: "Implementer", status: "Queued", summary: "Implementation has not started." },
@@ -60,6 +64,29 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
   assert.deepEqual(state.tasks, []);
   assert.deepEqual(state.projects, []);
   assert.doesNotMatch(JSON.stringify(state.workflowRuns), /workflow-secret/u);
+});
+
+test("projects current durable validation activity in plain language", async () => {
+  const { store, projectContext } = fixture();
+  const rootDir = await mkdtemp(path.join(tmpdir(), "workflow-dashboard-progress-"));
+  const operationId = "a".repeat(24);
+  const operationRoot = path.join(rootDir, "workflow-run-operations", operationId);
+  await mkdir(operationRoot, { recursive: true });
+  await writeFile(path.join(operationRoot, "validation-progress.json"), JSON.stringify({
+    schemaVersion: 1, status: "running", stage: "lint",
+    startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  }));
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { rootDir, list: async () => [{
+      phase: "validating", request: "Build a page", plan: "Build and validate",
+      updatedAt: new Date().toISOString(), worker: { status: "completed" },
+      validation: { operationId, status: "requested" },
+    }] },
+  });
+  assert.match(state.workflowRuns[0].presentation.why, /Still working.*checking code quality.*No action/iu);
+  assert.match(state.workflowRuns[0].milestones[2].summary, /Still working.*checking code quality/iu);
+  assert.doesNotMatch(JSON.stringify(state.workflowRuns[0]), new RegExp(operationId, "u"));
 });
 
 test("projects completed simple workflow authorship, validation, and durable page", async () => {
@@ -84,15 +111,134 @@ test("projects completed simple workflow authorship, validation, and durable pag
   assert.equal(run.phase, "Passed");
   assert.equal(run.action, "status");
   assert.equal(run.presentation.outcome, "Passed");
+  assert.equal(run.current, true);
+  assert.deepEqual(run.candidate, {
+    workspacePath: "/isolated/candidate",
+    files: [{
+      relativePath: "site/index.html",
+      path: "/isolated/candidate/site/index.html",
+      html: true,
+    }],
+    pageUrl: "file:///isolated/candidate/site/index.html",
+  });
   assert.match(run.presentation.why, /Implementer created.*no-mistakes tested and validated/iu);
   assert.match(run.presentation.details.join("\n"), /file:\/\/\/isolated\/candidate\/site\/index\.html/u);
-  assert.match(run.presentation.details.join("\n"), /generated 0 project tests.*executed 3 test cases/isu);
+  assert.match(run.presentation.details.join("\n"), /generated no new project tests.*ran 3 recorded test cases/isu);
   assert.deepEqual(run.milestones.map(({ label, status }) => [label, status]), [
     ["Plan", "Approved"], ["Implementer", "Completed"], ["No-mistakes", "Passed"],
   ]);
   assert.match(run.milestones[1].summary, /site\/index\.html/u);
-  assert.match(run.milestones[2].summary, /executed 3 test cases/iu);
+  assert.match(run.milestones[2].summary, /ran 3 recorded test cases/iu);
   assert.doesNotMatch(JSON.stringify(run), /workflow-secret|localhost/iu);
+});
+
+test("marks the newest simple workflow current and keeps older results as history", async () => {
+  const { store, projectContext } = fixture();
+  const completed = (request, updatedAt, file) => ({
+    phase: "completed", request, plan: "Build and validate", updatedAt,
+    worker: {
+      workspacePath: `/isolated/${request}`, status: "completed", headSha: "a".repeat(40),
+      report: { status: "completed", files: [file] },
+    },
+    validation: { status: "passed", headSha: "a".repeat(40), report: { outcome: "passed" } },
+  });
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { list: async () => [
+      completed("older", "2026-08-21T12:00:00.000Z", "public/index.html"),
+      completed("current", "2026-08-22T12:00:00.000Z", "public/balls.html"),
+    ] },
+  });
+
+  assert.deepEqual(state.workflowRuns.map(({ request, current }) => [request, current]), [
+    ["current", true], ["older", false],
+  ]);
+  assert.equal(state.workflowRuns[0].candidate.pageUrl, "file:///isolated/current/public/balls.html");
+});
+
+test("bounds workflow history and pages older projections without exposing identifiers", async () => {
+  const { store, projectContext } = fixture();
+  const runs = Array.from({ length: 24 }, (_, index) => ({
+    id: `workflow-private-${index}`, phase: "completed", request: `Run ${index}`,
+    plan: "Build", updatedAt: new Date(Date.UTC(2026, 7, 24 - index)).toISOString(),
+  }));
+  const workflowRunStore = { list: async () => runs };
+  const first = await buildDashboardState({ store, projectContext, workflowRunStore });
+  const second = await buildDashboardState({
+    store, projectContext, workflowRunStore, workflowHistoryOffset: 10,
+  });
+
+  assert.equal(first.workflowRuns.length, 11);
+  assert.deepEqual(first.workflowHistory, {
+    offset: 0, limit: 10, total: 23, nextOffset: 10, hasMore: true,
+  });
+  assert.equal(second.workflowRuns[0].current, true);
+  assert.equal(second.workflowRuns[1].request, "Run 11");
+  assert.deepEqual(second.workflowHistory, {
+    offset: 10, limit: 10, total: 23, nextOffset: 20, hasMore: true,
+  });
+  assert.doesNotMatch(JSON.stringify([first.workflowRuns, second.workflowRuns]), /workflow-private/iu);
+});
+
+test("projects capability mode, approved scope, slice, baseline policy, and review without ids", async () => {
+  const { store, projectContext } = fixture();
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { list: async () => [{
+      id: "workflow-private", phase: "awaiting_approval", request: "Improve search",
+      plan: "One bounded search slice", updatedAt: "2026-08-22T12:00:00.000Z",
+      capability: {
+        context: { content: { mode: "brownfield", modeReason: "Existing source detected." } },
+        spec: { content: { goal: "Improve search" } },
+        slice: { content: {
+          title: "Bounded search slice", objective: "Improve exact matching",
+          acceptanceChecks: ["Exact matching works"],
+          validationPolicy: { baselineAtBase: true },
+        } },
+        artifacts: [{ kind: "review.recorded", content: { summary: "No review yet" } }],
+      },
+    }] },
+  });
+  assert.deepEqual(state.workflowRuns[0].capability, {
+    mode: "brownfield", modeReason: "Existing source detected.",
+    spec: { goal: "Improve search" },
+    slice: {
+      title: "Bounded search slice", objective: "Improve exact matching",
+      acceptanceChecks: ["Exact matching works"], validationPolicy: { baselineAtBase: true },
+    },
+    review: { summary: "No review yet" },
+  });
+  assert.doesNotMatch(JSON.stringify(state.workflowRuns[0]), /workflow-private/iu);
+});
+
+test("projects a concise Project Cycle card without lifecycle identifiers", async () => {
+  const { store, projectContext } = fixture();
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { list: async () => [{
+      id: "workflow-private", phase: "awaiting_approval", request: "Build a page",
+      plan: "Build", updatedAt: "2026-08-22T12:00:00.000Z",
+      projectCycle: {
+        pack: { name: "greenfield" }, completion: null, nextRoadmap: null,
+        roadmap: { content: { mode: "greenfield", currentCycle: {
+          name: "Walking skeleton", whyNow: "Prove one end-to-end path first.",
+          architectureAssumptions: ["Dependency-light first"], adrRefs: ["docs/ADR-1.md"],
+          exitCriteria: ["Page works"], risksAndDependencies: ["Persistence is deferred"],
+        }, nextSlice: { title: "Build skeleton", objective: "Build a page", acceptanceChecks: ["Page works"] } } },
+      },
+    }] },
+  });
+  assert.deepEqual(state.workflowRuns[0].projectCycle, {
+    mode: "greenfield",
+    current: {
+      name: "Walking skeleton", whyNow: "Prove one end-to-end path first.",
+      architectureAssumptions: ["Dependency-light first"], adrRefs: ["docs/ADR-1.md"],
+      exitCriteria: ["Page works"], risksAndDependencies: ["Persistence is deferred"],
+    },
+    currentSlice: { title: "Build skeleton", objective: "Build a page", acceptanceChecks: ["Page works"] },
+    next: null, completed: null,
+  });
+  assert.doesNotMatch(JSON.stringify(state.workflowRuns[0]), /workflow-private/iu);
 });
 
 test("simple workflow dashboard accepts high-level intents only", () => {
@@ -275,6 +421,25 @@ test("closes live dashboard event streams before stopping the server", async () 
   assert.equal(server.eventStreams.size, 0);
 });
 
+test("dashboard refresh emits only changed projected state and uses heartbeat comments", async () => {
+  let version = 1;
+  const writes = [];
+  const server = new ShipMatesDashboardServer({
+    ...fixture(), projectContext: { load: async () => null }, onCommand: async () => {},
+    buildState: async () => ({ generatedAt: new Date().toISOString(), version }),
+  });
+  server.eventStreams.add({ write(value) { writes.push(value); } });
+
+  assert.equal(await server.refresh(), true);
+  assert.equal(await server.refresh(), false);
+  assert.equal(writes.filter((value) => value.startsWith("event: state")).length, 1);
+  version = 2;
+  assert.equal(await server.refresh(), true);
+  assert.equal(writes.filter((value) => value.startsWith("event: state")).length, 2);
+  assert.equal(await server.refresh({ heartbeat: true }), false);
+  assert.equal(writes.at(-1), ": heartbeat\n\n");
+});
+
 test("project actions acknowledge completed workflow results", async () => {
   const calls = [];
   const result = await executeProjectAction({
@@ -320,6 +485,30 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
     },
     window: { SHIPMATES_REVIEW_STATE: {
       generatedAt: "2026-07-15T12:00:00Z", watchdog: {}, projects: [],
+      workflowRuns: [{
+        current: true, request: "Current bouncing page", phase: "Passed", action: "status",
+        plan: "Build it", presentation: {
+          outcome: "Passed", nextAction: "Review it", why: "Validated", details: [],
+        }, technicalEvidence: ["Implementer verification — node --test: 3 tests passed."],
+        projectCycle: {
+          mode: "greenfield",
+          current: { name: "Walking skeleton", whyNow: "Prove the path first.",
+            architectureAssumptions: ["Dependency-light first"], adrRefs: [],
+            exitCriteria: ["Page works"], risksAndDependencies: ["Persistence deferred"] },
+          currentSlice: { title: "Build skeleton", objective: "Build the page" },
+          next: { nextSlice: { title: "Strengthen the skeleton" } }, completed: { outcome: "passed" },
+        },
+        milestones: [], candidate: {
+          workspacePath: "/isolated/current",
+          pageUrl: "file:///isolated/current/public/balls.html",
+          files: [{ relativePath: "public/balls.html", path: "/isolated/current/public/balls.html", html: true }],
+        },
+      }, {
+        current: false, request: "Older page", phase: "Passed", action: "status",
+        plan: "Build old", presentation: {
+          outcome: "Passed", nextAction: "Review it", why: "Validated", details: [],
+        }, milestones: [], candidate: { workspacePath: "/isolated/old", pageUrl: null, files: [] },
+      }],
       tasks: [{ summary: "Inspection", state: "complete", authority: "read_only",
         presentation, workers: [], files: [], taskProgress: [], humanAction: "review task-1" }],
     } },
@@ -330,6 +519,88 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
   assert.match(element("#tasks").innerHTML, /Human-readable task outcome/u);
   assert.match(element("#tasks").innerHTML, /Work breakdown and detailed evidence/u);
   assert.match(element("#tasks").innerHTML, /Human input required\./u);
+  assert.match(element("#tasks").innerHTML, /Current result/u);
+  assert.match(element("#tasks").innerHTML, /href="file:\/\/\/isolated\/current\/public\/balls\.html"/u);
+  assert.match(element("#tasks").innerHTML, /Created or changed files.*public\/balls\.html/su);
+  assert.match(element("#tasks").innerHTML, /<details class="small mt-2"><summary>Technical evidence<\/summary>.*node --test/su);
+  assert.match(element("#tasks").innerHTML, /Current project cycle: Walking skeleton.*Current slice:.*Build skeleton.*Next proposal:.*not approved or scheduled.*Roadmap and assumptions/su);
+  assert.match(element("#tasks").innerHTML, /earlier workflow result.*History.*Older page/su);
+});
+
+test("workflow History starts collapsed and remains open across live rerenders", async () => {
+  const script = await readFile(path.resolve("src/dashboard/public/dashboard.js"), "utf8");
+  const elements = new Map();
+  let taskClickListener = null;
+  const element = (selector) => {
+    if (!elements.has(selector)) elements.set(selector, {
+      value: "system", dataset: {}, className: "", textContent: "", innerHTML: "",
+      disabled: false, placeholder: "",
+      addEventListener(name, listener) {
+        if (selector === "#tasks" && name === "click") taskClickListener = listener;
+      },
+      querySelector() { return null; },
+    });
+    return elements.get(selector);
+  };
+  const run = (request, current) => ({
+    request, current, phase: "Passed", action: "status", plan: "Build it",
+    presentation: { outcome: "Passed", nextAction: null, why: "Validated", details: [] },
+    milestones: [], candidate: { workspacePath: null, pageUrl: null, files: [] },
+  });
+  const state = {
+    generatedAt: "2026-08-22T12:00:00Z", watchdog: {}, projects: [], tasks: [],
+    workflowRuns: [run("Current", true), run("Earlier", false)],
+    workflowHistory: { offset: 0, limit: 1, total: 3, nextOffset: 1, hasMore: true },
+  };
+  const eventListeners = new Map();
+  class EventSource {
+    addEventListener(name, listener) { eventListeners.set(name, listener); }
+  }
+  vm.runInNewContext(script, {
+    document: {
+      documentElement: element("html"), querySelector: element,
+      querySelectorAll: () => [],
+    },
+    window: {}, localStorage: { getItem: () => "system", setItem() {} },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    fetch: async (url) => {
+      if (url === "/api/state") return { ok: true, json: async () => state };
+      const offset = Number(new URL(`http://local${url}`).searchParams.get("offset"));
+      return { ok: true, json: async () => ({
+        workflowRuns: [run(offset === 1 ? "Older one" : "Oldest", false)],
+        workflowHistory: {
+          offset, limit: 1, total: 3, nextOffset: offset + 1, hasMore: offset < 2,
+        },
+      }) };
+    },
+    EventSource, Date, Set, Number, URL, encodeURIComponent,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const tasks = element("#tasks");
+  assert.match(tasks.innerHTML, /<details class="mt-3" data-workflow-history>/u);
+  assert.doesNotMatch(tasks.innerHTML, /data-workflow-history open/u);
+
+  tasks.querySelector = (selector) => selector === "[data-workflow-history]" ? { open: true } : null;
+  eventListeners.get("state")({ data: JSON.stringify(state) });
+  assert.match(tasks.innerHTML, /<details class="mt-3" data-workflow-history open>/u);
+
+  const clickLoadOlder = async (offset) => taskClickListener({ target: {
+    closest(selector) {
+      return selector === "[data-load-workflow-history]"
+        ? { disabled: false, dataset: { offset: String(offset) } }
+        : null;
+    },
+  } });
+  await clickLoadOlder(1);
+  assert.match(tasks.innerHTML, /Earlier.*Older one/su);
+  assert.match(tasks.innerHTML, /data-offset="2"/u);
+  eventListeners.get("state")({ data: JSON.stringify(state) });
+  assert.match(tasks.innerHTML, /Earlier.*Older one/su);
+  assert.match(tasks.innerHTML, /data-offset="2"/u);
+  await clickLoadOlder(2);
+  assert.match(tasks.innerHTML, /Earlier.*Older one.*Oldest/su);
+  assert.doesNotMatch(tasks.innerHTML, /Load older results/u);
 });
 
 test("accepts bounded human messages and rejects empty or control input", () => {

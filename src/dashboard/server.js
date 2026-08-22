@@ -5,8 +5,12 @@ import express from "express";
 import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
 import { projectOperationalState } from "../projections/operational-state.js";
 import { projectTaskPresentation } from "../projections/task-presentation.js";
-import { projectWorkflowRun, workflowExecutionMilestones } from "../workflow-run/projection.js";
-import { readWorkflowRunVisibility } from "../workflow-run/adapters.js";
+import {
+  projectWorkflowRun, workflowCandidateArtifacts, workflowExecutionMilestones,
+  workflowTechnicalEvidence,
+} from "../workflow-run/projection.js";
+import { readWorkflowRunValidationProgress, readWorkflowRunVisibility } from "../workflow-run/adapters.js";
+import { renderValidationActivity } from "../workflow-run/progress.js";
 
 export class ShipMatesDashboardServer {
   constructor({
@@ -21,8 +25,10 @@ export class ShipMatesDashboardServer {
     onProjectAction = null,
     host = "127.0.0.1",
     port = 4390,
+    heartbeatMs = 15_000,
     assetsDirectory = path.resolve("src/dashboard/public"),
     listen = (app, portNumber, hostName) => app.listen(portNumber, hostName),
+    buildState = buildDashboardState,
   } = {}) {
     if (!store || !projectContext || typeof onCommand !== "function") {
       throw new TypeError("ShipMatesDashboardServer requires store, projectContext, and onCommand");
@@ -38,10 +44,15 @@ export class ShipMatesDashboardServer {
     this.onProjectAction = onProjectAction;
     this.host = host;
     this.port = port;
+    this.heartbeatMs = heartbeatMs;
     this.assetsDirectory = assetsDirectory;
     this.listen = listen;
+    this.buildState = buildState;
     this.server = null;
     this.eventStreams = new Set();
+    this.stateFingerprint = null;
+    this.refreshPromise = null;
+    this.heartbeatTimer = null;
   }
 
   async start() {
@@ -63,15 +74,24 @@ export class ShipMatesDashboardServer {
     ));
     app.get("/api/state", async (_request, response, next) => {
       try {
-        response.json(await buildDashboardState({
-          store: this.store,
-          projectContext: this.projectContext,
-          projectStore: this.projectStore,
-          watchdog: this.watchdog,
-          workflowRunStore: this.workflowRunStore,
-          workflowWorkspaceMaintenance: this.workflowWorkspaceMaintenance,
-        }));
+        response.json(await this.#state());
       } catch (error) {
+        next(error);
+      }
+    });
+    app.get("/api/workflow/history", async (request, response, next) => {
+      try {
+        const offset = workflowHistoryOffset(request.query.offset);
+        const state = await this.#state({ workflowHistoryOffset: offset });
+        response.json({
+          workflowRuns: state.workflowRuns.filter(({ current }) => !current),
+          workflowHistory: state.workflowHistory,
+        });
+      } catch (error) {
+        if (error instanceof DashboardCommandError) {
+          response.status(400).json({ error: error.message });
+          return;
+        }
         next(error);
       }
     });
@@ -83,32 +103,21 @@ export class ShipMatesDashboardServer {
       });
       response.flushHeaders();
       this.eventStreams.add(response);
-      const send = async () => {
-        try {
-          const state = await buildDashboardState({
-            store: this.store,
-            projectContext: this.projectContext,
-            projectStore: this.projectStore,
-            watchdog: this.watchdog,
-            workflowRunStore: this.workflowRunStore,
-            workflowWorkspaceMaintenance: this.workflowWorkspaceMaintenance,
-          });
-          response.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
-        } catch {
-          response.write("event: warning\ndata: {}\n\n");
-        }
-      };
-      void send();
-      const interval = setInterval(send, 1_000);
+      void this.#state().then((state) => {
+        this.stateFingerprint = dashboardStateFingerprint(state);
+        this.#writeState(response, state);
+      })
+        .catch(() => response.write("event: warning\ndata: {}\n\n"));
       request.once("close", () => {
-        clearInterval(interval);
         this.eventStreams.delete(response);
       });
     });
     app.post("/api/commands", async (request, response, next) => {
       try {
         const message = validateDashboardCommand(request.body?.message);
-        setImmediate(() => Promise.resolve(this.onCommand(message)).catch(() => {}));
+        setImmediate(() => Promise.resolve(this.onCommand(message))
+          .catch(() => {})
+          .finally(() => this.refresh()));
         response.status(202).json({ accepted: true, recipient: "Firstmate" });
       } catch (error) {
         if (error instanceof DashboardCommandError) {
@@ -129,6 +138,7 @@ export class ShipMatesDashboardServer {
           projectId: request.params.projectId,
           body: request.body,
         }));
+        void this.refresh();
       } catch (error) {
         if (error instanceof DashboardCommandError) {
           response.status(400).json({ accepted: false, error: error.message });
@@ -145,6 +155,7 @@ export class ShipMatesDashboardServer {
         }
         const intent = validateWorkflowIntent(request.body);
         const result = await this.onWorkflowIntent(intent);
+        void this.refresh();
         response.status(200).json({ accepted: true, recipient: "Firstmate", result: result || null });
       } catch (error) {
         if (error instanceof DashboardCommandError) {
@@ -165,6 +176,9 @@ export class ShipMatesDashboardServer {
         server.once("error", reject);
       });
       this.port = server.address().port;
+      this.heartbeatTimer = setInterval(() => {
+        void this.refresh({ heartbeat: true });
+      }, this.heartbeatMs);
     } catch (error) {
       this.server = null;
       throw error;
@@ -176,6 +190,8 @@ export class ShipMatesDashboardServer {
     const server = this.server;
     this.server = null;
     if (!server) return;
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
     for (const response of this.eventStreams) response.end();
     this.eventStreams.clear();
     await new Promise((resolve, reject) => server.close((error) =>
@@ -183,9 +199,47 @@ export class ShipMatesDashboardServer {
   }
 
   async send(state) {
-    for (const response of this.eventStreams) {
-      response.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
-    }
+    return this.#broadcastIfChanged(state);
+  }
+
+  async refresh({ heartbeat = false } = {}) {
+    if (this.refreshPromise) return this.refreshPromise;
+    this.refreshPromise = (async () => {
+      try {
+        const changed = await this.#broadcastIfChanged(await this.#state());
+        if (!changed && heartbeat) {
+          for (const response of this.eventStreams) response.write(": heartbeat\n\n");
+        }
+        return changed;
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
+    return this.refreshPromise;
+  }
+
+  async #broadcastIfChanged(state, { force = false } = {}) {
+    const fingerprint = dashboardStateFingerprint(state);
+    if (!force && fingerprint === this.stateFingerprint) return false;
+    this.stateFingerprint = fingerprint;
+    for (const response of this.eventStreams) this.#writeState(response, state);
+    return true;
+  }
+
+  #writeState(response, state) {
+    response.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
+  }
+
+  #state(options = {}) {
+    return this.buildState({
+      store: this.store,
+      projectContext: this.projectContext,
+      projectStore: this.projectStore,
+      watchdog: this.watchdog,
+      workflowRunStore: this.workflowRunStore,
+      workflowWorkspaceMaintenance: this.workflowWorkspaceMaintenance,
+      ...options,
+    });
   }
 
   get url() {
@@ -197,6 +251,8 @@ export async function buildDashboardState({
   store, projectContext, projectStore = null, watchdog = null,
   workflowRunStore = null,
   workflowWorkspaceMaintenance = null,
+  workflowHistoryOffset = 0,
+  workflowHistoryLimit = 10,
   reconciliationEngine = new ReconciliationEngine(),
 }) {
   const activeProjectTaskId = await projectContext.load();
@@ -220,13 +276,36 @@ export async function buildDashboardState({
   const selectedProject = projectStore && typeof projectStore.active === "function"
     ? await projectStore.active() : null;
   const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const allWorkflowRuns = workflowRunStore
+    ? [...await workflowRunStore.list()].sort((left, right) =>
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+    : [];
+  const historicalWorkflowRuns = allWorkflowRuns.slice(1);
+  const listedWorkflowRuns = allWorkflowRuns.length ? [
+    allWorkflowRuns[0],
+    ...historicalWorkflowRuns.slice(
+      workflowHistoryOffset,
+      workflowHistoryOffset + workflowHistoryLimit,
+    ),
+  ] : [];
   const workflowRuns = workflowRunStore
-    ? await Promise.all((await workflowRunStore.list()).map(async (run) => {
+    ? await Promise.all(listedWorkflowRuns.map(async (run, index) => {
         const visibility = await readWorkflowRunVisibility({
           stateRoot: workflowRunStore.rootDir,
           operationId: run.validation?.operationId,
         });
-        const projectedRun = visibility ? { ...run, visibility } : run;
+        const validationActivity = await readWorkflowRunValidationProgress({
+          stateRoot: workflowRunStore.rootDir,
+          operationId: run.validation?.operationId,
+        });
+        const projectedRun = {
+          ...run,
+          ...(visibility ? { visibility } : {}),
+          ...(validationActivity ? {
+            validationActivity,
+            validationActivityMessage: renderValidationActivity(validationActivity, { visibility }),
+          } : {}),
+        };
         const presentation = projectWorkflowRun(projectedRun);
         return {
           phase: presentation.phase,
@@ -238,8 +317,25 @@ export async function buildDashboardState({
           request: run.request,
           plan: run.plan,
           updatedAt: run.updatedAt,
+          current: index === 0,
           presentation,
+          candidate: workflowCandidateArtifacts(run),
           milestones: workflowExecutionMilestones(projectedRun),
+          technicalEvidence: workflowTechnicalEvidence(projectedRun),
+          ...(run.capability ? { capability: {
+            mode: run.capability.context?.content?.mode || null,
+            modeReason: run.capability.context?.content?.modeReason || null,
+            spec: run.capability.spec?.content || null,
+            slice: run.capability.slice?.content || null,
+            review: run.capability.artifacts?.find(({ kind }) => kind === "review.recorded")?.content || null,
+          } } : {}),
+          ...(run.projectCycle?.roadmap ? { projectCycle: {
+            mode: run.projectCycle.pack.name,
+            current: run.projectCycle.roadmap.content.currentCycle,
+            currentSlice: run.projectCycle.roadmap.content.nextSlice,
+            next: run.projectCycle.nextRoadmap?.content || null,
+            completed: run.projectCycle.completion?.content || null,
+          } } : {}),
         };
       }))
     : [];
@@ -262,6 +358,13 @@ export async function buildDashboardState({
     })),
     tasks: workflowRunStore ? [] : tasks.slice(0, 30),
     workflowRuns,
+    workflowHistory: {
+      offset: workflowHistoryOffset,
+      limit: workflowHistoryLimit,
+      total: historicalWorkflowRuns.length,
+      nextOffset: workflowHistoryOffset + Math.max(0, listedWorkflowRuns.length - 1),
+      hasMore: workflowHistoryOffset + Math.max(0, listedWorkflowRuns.length - 1) < historicalWorkflowRuns.length,
+    },
     workspaceMaintenance: workspaceMaintenance ? {
       counts: workspaceMaintenance.counts,
       summary: renderWorkspaceSummary(workspaceMaintenance),
@@ -393,6 +496,19 @@ export function validateWorkflowIntent(value) {
     throw new DashboardCommandError("Invalid workflow intent");
   }
   return Object.freeze({ intent: value.intent });
+}
+
+function workflowHistoryOffset(value) {
+  if (value === undefined) return 0;
+  if (typeof value !== "string" || !/^\d{1,6}$/u.test(value)) {
+    throw new DashboardCommandError("Workflow history offset must be a non-negative integer");
+  }
+  return Number(value);
+}
+
+function dashboardStateFingerprint(state) {
+  const { generatedAt: _generatedAt, ...stableState } = state;
+  return JSON.stringify(stableState);
 }
 
 function renderWorkspaceSummary(inventory) {

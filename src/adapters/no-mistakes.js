@@ -169,9 +169,9 @@ export class NoMistakesLocalGate {
         "Validator changed branches or left the worktree dirty",
       );
     }
-    if (!after.headSha.startsWith(parsed.head)) {
+    if (after.branch !== parsed.branch || !after.headSha.startsWith(parsed.head)) {
       throw new NoMistakesGateError(
-        "Validator output head does not match independent Git inspection",
+        "Validator output branch or head does not match independent Git inspection",
       );
     }
 
@@ -230,9 +230,26 @@ export class NoMistakesLocalGate {
     });
   }
 
+  async reconcileTerminal({ taskId, worktreePath, expectedHeadSha, intent }) {
+    let discovered;
+    try {
+      discovered = await this.respond({
+        taskId, worktreePath, expectedHeadSha, intent,
+        action: "approve", expectedRunId: null, observeOnly: true,
+      });
+    } catch (error) {
+      if (/approved validator run is not terminal/iu.test(String(error?.message))) return null;
+      throw error;
+    }
+    if (!discovered.runId || discovered.outcome === null) return null;
+    return this.observe({
+      taskId, worktreePath, expectedHeadSha, intent, runId: discovered.runId,
+    });
+  }
+
   async respond({
     taskId, worktreePath, expectedHeadSha, intent, action,
-    expectedRunId = null, observeOnly = false,
+    expectedRunId = null, observeOnly = false, onProgress = null,
   }) {
     requireNonEmpty(taskId, "taskId");
     requireNonEmpty(intent, "intent");
@@ -252,12 +269,17 @@ export class NoMistakesLocalGate {
     }
     let args = ["axi", "status"];
     const startedAt = this.clock().toISOString();
+    const pendingProgress = [];
+    const reportProgress = (message) => {
+      this.onProgress(message);
+      if (typeof onProgress === "function") pendingProgress.push(Promise.resolve(onProgress(message)));
+    };
     const options = {
       cwd: workingDirectory,
       env: localOnlyEnvironment({ taskRoot: runtimeHome }),
       timeout: this.timeoutMs,
       maxBuffer: 4 * 1024 * 1024,
-      onStderrLine: this.onProgress,
+      onStderrLine: reportProgress,
     };
     let result = await this.runner(this.binaryPath, args, options);
     let parsed = parseAxiOutput(result.stdout);
@@ -276,10 +298,11 @@ export class NoMistakesLocalGate {
         throw new NoMistakesGateError("Pinned validator response switched runs");
       }
     }
+    await Promise.all(pendingProgress);
     const completedAt = this.clock().toISOString();
     const after = await this.#inspect(workingDirectory);
-    if (after.branch !== before.branch || after.dirty || before.headSha !== after.headSha ||
-      !after.headSha.startsWith(parsed.head)) {
+    if (after.branch !== before.branch || after.branch !== parsed.branch || after.dirty ||
+      before.headSha !== after.headSha || !after.headSha.startsWith(parsed.head)) {
       throw new NoMistakesGateError(
         "Validator response changed or no longer matches the exact task worktree",
       );
@@ -479,10 +502,17 @@ function retirableManagedRemote(remotePath) {
 
   const reposPath = path.dirname(resolved);
   const runtimeInstance = path.dirname(reposPath);
-  return path.basename(reposPath) === "repos" &&
-    /^[a-f0-9]{16}$/u.test(path.basename(runtimeInstance)) &&
-    path.basename(path.dirname(runtimeInstance)) === "runtime" &&
-    path.basename(path.dirname(path.dirname(runtimeInstance))) === "no-mistakes";
+  if (path.basename(reposPath) !== "repos" ||
+    !/^[a-f0-9]{16}$/u.test(path.basename(runtimeInstance)) ||
+    !/^[a-f0-9]{8,64}\.git$/u.test(path.basename(resolved))) return false;
+  const runtimeParent = path.dirname(runtimeInstance);
+  const managedStateRuntime = path.basename(runtimeParent) === "runtime" &&
+    path.basename(path.dirname(runtimeParent)) === "no-mistakes";
+  const managedShortRuntime = path.basename(runtimeParent) ===
+    "shipmates-no-mistakes-runtime" && path.resolve(runtimeParent).startsWith(
+      `${path.resolve(tmpdir())}${path.sep}`,
+    );
+  return managedStateRuntime || managedShortRuntime;
 }
 
 function validateSkipSteps(steps) {

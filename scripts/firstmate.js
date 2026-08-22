@@ -511,12 +511,18 @@ async function runInteractiveFirstmate() {
       process.env.SHIPMATES_STATE_DIR || path.join(process.cwd(), ".shipmates"),
     ),
   });
+  let lastSimpleProgressMessage = null;
+  let dashboardServer = null;
   const simpleWorkflowStore = workflowRunEnabled()
     ? new WorkflowRunStore({
         rootDir: interactiveStore.rootDir,
         onEvent: (event, run) => {
           const message = workflowProgressMessage(event, run);
-          if (message) console.log(message);
+          if (message) {
+            lastSimpleProgressMessage = message;
+            console.log(message);
+          }
+          void dashboardServer?.refresh();
         },
       })
     : null;
@@ -671,6 +677,13 @@ async function runInteractiveFirstmate() {
       validator: WorkflowRunValidatorAdapter.localOnly({
         stateRoot: interactiveStore.rootDir, binaryPath: validatorBinary,
         gateOptions: {
+          onWorkflowProgress: (message) => {
+            if (message !== lastSimpleProgressMessage) {
+              lastSimpleProgressMessage = message;
+              console.log(message);
+            }
+            void dashboardServer?.refresh();
+          },
           observer: detachedObserver(new HerdrNoMistakesObserver({
             client: projectAgentClient,
             currentPaneId: currentHerdrPaneId,
@@ -701,10 +714,9 @@ async function runInteractiveFirstmate() {
       store: simpleWorkflowStore,
       controller: simpleWorkflowController,
       context: () => discoverFirstmateContext({ cwd: process.cwd() }),
-      planner: (message, context) => conversation.turn({
+      planner: (message, context) => conversation.planCapability({
         message,
         workingDirectory: context.repoPath,
-        project: { selectedProject: null, projects: [] },
       }),
       maintenance: {
         inventory: (input) => simpleWorkspaceMaintenance.inventory(input),
@@ -804,7 +816,9 @@ async function runInteractiveFirstmate() {
     status: "coordinating",
   }, async () => {
         if (simpleWorkflowConversation && !governedDispatch) {
-          console.log(await simpleWorkflowConversation.handle(message));
+          lastSimpleProgressMessage = null;
+          const response = await simpleWorkflowConversation.handle(message);
+          if (response !== lastSimpleProgressMessage) console.log(response);
           return;
         }
         const governedPlanDispatch = governedDispatch?.planTaskId
@@ -1533,7 +1547,7 @@ async function runInteractiveFirstmate() {
       console.error(`Validation approval recovery blocked safely for ${taskId} (${error.message}).`);
     }
   }
-  const dashboardServer = new ShipMatesDashboardServer({
+  dashboardServer = new ShipMatesDashboardServer({
     store: interactiveStore,
     projectContext,
     projectStore,

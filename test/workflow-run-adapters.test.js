@@ -5,14 +5,32 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  readWorkflowRunVisibility, validationContract, WorkflowRunValidatorAdapter, WorkflowRunWorkerAdapter,
+  readWorkflowRunValidationProgress, readWorkflowRunVisibility, validationContract,
+  WorkflowRunValidatorAdapter, WorkflowRunWorkerAdapter,
 } from "../src/workflow-run/adapters.js";
+import { implementationPrompt } from "../src/workflow-run/worker-contract.js";
 import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { SimpleWorkflowConversation } from "../src/workflow-run/interactive.js";
 import { WorkflowRunStore } from "../src/workflow-run/store.js";
 
 const OPERATION = "a".repeat(24);
 const HEAD = "b".repeat(40);
+
+test("Implementer handoff requires completed uncommitted changes for controller-owned commit", () => {
+  const prompt = implementationPrompt({
+    runId: "workflow-prompt", instruction: "Build a page", plan: "Build then validate",
+    capability: null,
+  });
+  assert.match(prompt, /required handoff is clean uncommitted working-tree changes.*completed report/isu);
+  assert.match(prompt, /First Mate.*create the isolated candidate commit.*exact-head no-mistakes/isu);
+  assert.match(prompt, /no-commit and no-publication rules are not blockers/iu);
+  assert.match(prompt, /report status completed/iu);
+  assert.match(prompt, /Do not.*commit.*run no-mistakes.*shared checkout/iu);
+  assert.doesNotMatch(
+    prompt,
+    /(?:commit the changes|create the candidate commit yourself)/iu,
+  );
+});
 
 test("corrupt visibility evidence is ignored and cannot gate workflow execution", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "workflow-visibility-"));
@@ -103,6 +121,125 @@ test("validator bridge confines no-mistakes to one isolated exact head", async (
   })).status, "passed");
 });
 
+test("validator records human-safe progress while retaining exact-head authority", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-progress-"));
+  const messages = [];
+  const adapter = new WorkflowRunValidatorAdapter({
+    stateRoot: root, onProgress: (message) => messages.push(message),
+    setIntervalFn: () => 1, clearIntervalFn: () => {},
+    gate: { run: async (input) => {
+      await input.onProgress("test command started --secret raw-command");
+      await input.onProgress("lint checks started");
+      return {
+        initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
+        passed: true, outcome: "passed", gate: null,
+      };
+    } },
+  });
+  await adapter.start({
+    operationId: OPERATION, workspacePath: "/isolated/worktree", headSha: HEAD,
+    intent: "Build a page",
+  });
+  assert.match(messages.join("\n"), /preparing the checks.*running the tests.*checking code quality/isu);
+  assert.doesNotMatch(messages.join("\n"), /secret|raw-command|operation|[ab]{24}/iu);
+  assert.equal((await readWorkflowRunValidationProgress({
+    stateRoot: root, operationId: OPERATION,
+  })).status, "passed");
+});
+
+test("concurrent heartbeat and gate progress cannot collide or lose the terminal result", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-concurrent-progress-"));
+  let heartbeat;
+  const diagnostics = [];
+  const adapter = new WorkflowRunValidatorAdapter({
+    stateRoot: root,
+    setIntervalFn: (callback) => { heartbeat = callback; return 1; },
+    clearIntervalFn: () => {},
+    onDiagnostic: (message) => diagnostics.push(message),
+    gate: { run: async (input) => {
+      heartbeat();
+      await Promise.all([
+        input.onProgress("test checks started"),
+        input.onProgress("lint checks started"),
+      ]);
+      return {
+        initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
+        passed: true, outcome: "passed", gate: null,
+      };
+    } },
+  });
+  const input = {
+    operationId: OPERATION, workspacePath: "/isolated/worktree",
+    headSha: HEAD, intent: "Build a page",
+  };
+  assert.equal((await adapter.start(input)).status, "passed");
+  assert.equal((await adapter.observe(input)).status, "passed");
+  assert.equal((await readWorkflowRunValidationProgress({
+    stateRoot: root, operationId: OPERATION,
+  })).status, "passed");
+  assert.deepEqual(diagnostics, []);
+});
+
+test("progress presentation failure is non-authoritative and validation still persists", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-progress-failure-"));
+  const diagnostics = [];
+  const adapter = new WorkflowRunValidatorAdapter({
+    stateRoot: root,
+    onProgress: () => { throw new Error("terminal display unavailable secret=hidden"); },
+    onDiagnostic: (message) => diagnostics.push(message),
+    setIntervalFn: () => 1, clearIntervalFn: () => {},
+    gate: { run: async (input) => {
+      await input.onProgress("test checks started");
+      return {
+        initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
+        passed: true, outcome: "passed", gate: null,
+      };
+    } },
+  });
+  const result = await adapter.start({
+    operationId: OPERATION, workspacePath: "/isolated/worktree",
+    headSha: HEAD, intent: "Build a page",
+  });
+  assert.equal(result.status, "passed");
+  assert.deepEqual(diagnostics, [
+    "Validation progress evidence could not be updated.",
+    "Validation progress evidence could not be updated.",
+  ]);
+  assert.doesNotMatch(diagnostics.join(" "), /secret|hidden/iu);
+});
+
+test("restart adopts one exact pinned terminal validator result without rerunning", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-recovery-"));
+  const directory = path.join(root, "workflow-run-operations", OPERATION);
+  await mkdir(directory, { recursive: true });
+  const request = {
+    schemaVersion: 1, operationId: OPERATION, workspacePath: "/isolated/worktree",
+    headSha: HEAD, validationContract: validationContract("Build a page"),
+  };
+  await writeFile(path.join(directory, "validation-request.json"), JSON.stringify(request));
+  let reconciliations = 0;
+  const adapter = new WorkflowRunValidatorAdapter({
+    stateRoot: root,
+    gate: { run: async () => { throw new Error("must not rerun validation"); },
+      reconcileTerminal: async ({ expectedHeadSha, intent }) => {
+      reconciliations += 1;
+      assert.equal(expectedHeadSha, HEAD);
+      assert.equal(intent, request.validationContract);
+      return {
+        runId: "run-pinned", initialHeadSha: HEAD, finalHeadSha: HEAD,
+        headChanged: false, passed: true, outcome: "passed", gate: null,
+      };
+    } },
+  });
+  const input = {
+    operationId: OPERATION, workspacePath: "/isolated/worktree",
+    headSha: HEAD, intent: "Build a page",
+  };
+  assert.equal((await adapter.observe(input)).status, "passed");
+  assert.equal((await adapter.observe(input)).status, "passed");
+  assert.equal(reconciliations, 1);
+});
+
 test("validator mismatch and ambiguous outcomes fail closed", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-block-"));
   const adapter = new WorkflowRunValidatorAdapter({
@@ -191,7 +328,7 @@ test("feature-flag conversation gives one plan approval and leaks no ids", async
   const completed = await conversation.handle("I approve the plan");
   assert.match(completed, /Status: Passed/u);
   assert.match(completed, /Implementer created the code/iu);
-  assert.match(completed, /No-mistakes tested and validated this exact isolated candidate/iu);
+  assert.match(completed, /No-mistakes tested this exact isolated candidate, and it passed/iu);
   assert.doesNotMatch(completed, /workflow-|internal-secret|task id/iu);
   assert.equal((await store.list()).length, 1);
 });
@@ -316,11 +453,10 @@ test("terminal result follow-ups use durable simple-workflow evidence without pl
     assert.match(answer, /site\/index\.html, site\/app\.js/u);
     assert.match(answer, /Durable preview evidence: \/evidence\/page\.png/u);
     assert.doesNotMatch(answer, /localhost:8000|private-result|workflow-|task id/iu);
-    assert.match(answer, /No generated project tests were recorded/u);
-    assert.match(answer, /No individual test-case count was recorded/u);
-    assert.match(answer, /completed 2 validation checks: test, lint/u);
+    assert.doesNotMatch(answer, /No generated project tests were recorded|No individual test-case count/u);
+    assert.match(answer, /completed 2 checks: tests and lint/u);
     assert.match(answer, /Implementer created the code/iu);
-    assert.match(answer, /No-mistakes tested and validated this exact isolated candidate/iu);
+    assert.match(answer, /No-mistakes tested this exact isolated candidate, and it passed/iu);
     assert.match(answer, /newer workflow is blocked safely/iu);
   }
   const current = await conversation.handle("show status");

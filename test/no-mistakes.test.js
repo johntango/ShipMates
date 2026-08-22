@@ -156,7 +156,7 @@ test("rebinds a stale ShipMates-managed remote from a recycled worktree", async 
   const stateRoot = path.join(tmpdir(), "shipmates-firstmate-current", "no-mistakes");
   const staleRemote = path.join(
     tmpdir(), "shipmates-firstmate-prior", "no-mistakes", "runtime",
-    "0123456789abcdef", "repos", "gate.git",
+    "0123456789abcdef", "repos", "d64a03ad8249.git",
   );
   const baseRunner = fakeRunner({ calls, output: passingOutput() });
   const runner = async (command, args, options) => {
@@ -198,6 +198,89 @@ test("rebinds a stale ShipMates-managed remote from a recycled worktree", async 
         createHash("sha256").update(preferredRoot).digest("hex").slice(0, 16),
       );
   assert.equal(init.options.env.NM_HOME, expectedRoot);
+});
+
+test("rebinds the legacy short-runtime remote used by recycled ShipMates worktrees", async () => {
+  const calls = [];
+  const stateRoot = path.join(tmpdir(), "shipmates-current-short", "no-mistakes");
+  const staleRemote = path.join(
+    tmpdir(), "shipmates-no-mistakes-runtime", "0123456789abcdef", "repos", "d64a03ad8249.git",
+  );
+  const baseRunner = fakeRunner({ calls, output: passingOutput() });
+  const runner = async (command, args, options) => {
+    const joined = args.join(" ");
+    if (command === "git" && joined === "remote get-url no-mistakes") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: `${staleRemote}\n`, stderr: "" };
+    }
+    if (command === "git" && joined === "remote remove no-mistakes") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (command === "git" && joined === "remote get-url origin") {
+      calls.push({ command, args, options });
+      return { exitCode: 0, stdout: "git@github.com:owner/repo.git\n", stderr: "" };
+    }
+    return baseRunner(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes", stateRoot, runner,
+    clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  await gate.run({
+    taskId: "validation-short-runtime", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate the recycled worktree",
+  });
+
+  assert.equal(calls.some(({ args }) => args.join(" ") === "remote remove no-mistakes"), true);
+  assert.equal(calls.some(({ args }) => args[0] === "init"), true);
+});
+
+test("rejects lookalike short-runtime remotes outside the system temporary root", async () => {
+  const runner = async (command, args, options) => {
+    if (command === "git" && args.join(" ") === "remote get-url no-mistakes") {
+      return {
+        exitCode: 0,
+        stdout: "/opt/shipmates-no-mistakes-runtime/0123456789abcdef/repos/d64a03ad8249.git\n",
+        stderr: "",
+      };
+    }
+    return fakeRunner({ output: passingOutput() })(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes",
+    stateRoot: path.join(tmpdir(), "shipmates-current", "no-mistakes"),
+    runner, clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  await assert.rejects(gate.run({
+    taskId: "validation-lookalike", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate safely",
+  }), /outside the managed validation state/u);
+});
+
+test("rejects a malformed repository name inside the legacy short-runtime shape", async () => {
+  const runner = async (command, args, options) => {
+    if (command === "git" && args.join(" ") === "remote get-url no-mistakes") {
+      return {
+        exitCode: 0,
+        stdout: `${path.join(tmpdir(), "shipmates-no-mistakes-runtime", "0123456789abcdef", "repos", "gate.git")}\n`,
+        stderr: "",
+      };
+    }
+    return fakeRunner({ output: passingOutput() })(command, args, options);
+  };
+  const gate = new NoMistakesLocalGate({
+    binaryPath: "/private/tmp/no-mistakes",
+    stateRoot: path.join(tmpdir(), "shipmates-current", "no-mistakes"),
+    runner, clock: () => NOW, ...PIN_OPTIONS,
+  });
+
+  await assert.rejects(gate.run({
+    taskId: "validation-malformed", worktreePath: "/private/tmp/worktree",
+    expectedHeadSha: HEAD, intent: "Validate safely",
+  }), /outside the managed validation state/u);
 });
 
 test("continues to reject an arbitrary external no-mistakes remote", async () => {

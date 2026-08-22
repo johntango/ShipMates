@@ -20,6 +20,19 @@ Choose exactly one action:
   requiredAuthority to read_only for inspection or local_write for implementation. Do not dispatch it yet.
 The response is what the human sees. Do not expose internal JSON, schemas, or authority labels.`;
 
+const CAPABILITY_PLANNING_INSTRUCTIONS = `You are First Mate's stateless capability planner.
+Classify only the current request and repository context. Do not infer or require a legacy ShipMates
+project, task, prior dispatch, or conversational history. Choose exactly one action:
+- dispatch with requiredAuthority local_write when one bounded local implementation is ready;
+- plan with one or more read_only/local_write tasks when the bounded local implementation benefits
+  from a short plan;
+- dispatch with requiredAuthority external_write or destructive when the requested outcome requires
+  publication, an external mutation, deletion, or another destructive operation;
+- plan with requiredAuthority null; authority belongs on each plan task, where every task must be
+  explicitly read_only or local_write;
+- answer only when the request is not an actionable implementation request.
+This turn only proposes typed capability work. It never grants authority or starts work.`;
+
 export class FirstmateCodexConversation {
   constructor({
     rootDir = path.resolve(".shipmates"),
@@ -34,14 +47,32 @@ export class FirstmateCodexConversation {
   }
 
   async turn({ message, workingDirectory, project }) {
+    return this.#turn({
+      message, workingDirectory,
+      promptContext: `Project registry context:\n${JSON.stringify(project)}`,
+      instructions: FIRSTMATE_INSTRUCTIONS,
+      resume: true,
+    });
+  }
+
+  async planCapability({ message, workingDirectory }) {
+    return this.#turn({
+      message, workingDirectory,
+      promptContext: "Capability planning is scoped to the current repository and request only.",
+      instructions: CAPABILITY_PLANNING_INSTRUCTIONS,
+      resume: false,
+    });
+  }
+
+  async #turn({ message, workingDirectory, promptContext, instructions, resume }) {
     if (typeof message !== "string" || !message.trim()) throw new TypeError("Firstmate message is required");
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    const session = await this.#session();
+    const session = resume ? await this.#session() : null;
     const turnId = `turn-${Date.now()}`;
     const reportPath = path.join(this.directory, `${turnId}.json`);
     const eventsPath = path.join(this.directory, `${turnId}.jsonl`);
     const stderrPath = path.join(this.directory, `${turnId}.stderr.log`);
-    const prompt = `${session ? "Continue the existing conversation." : FIRSTMATE_INSTRUCTIONS}\n\nProject registry context:\n${JSON.stringify(project)}\n\nHuman message:\n${message}`;
+    const prompt = `${session ? "Continue the existing conversation." : instructions}\n\n${promptContext}\n\nHuman message:\n${message}`;
     const args = ["exec", "--sandbox", "read-only", "--color", "never", "--json",
       "--output-schema", this.schemaPath, "--output-last-message", reportPath,
       "--cd", path.resolve(workingDirectory)];
@@ -57,7 +88,9 @@ export class FirstmateCodexConversation {
       throw new Error("Firstmate Codex turn did not complete");
     }
     const decision = validateDecision(JSON.parse(await readFile(reportPath, "utf8")));
-    await this.#saveSession({ schemaVersion: 1, threadId, updatedAt: new Date().toISOString() });
+    if (resume) {
+      await this.#saveSession({ schemaVersion: 1, threadId, updatedAt: new Date().toISOString() });
+    }
     return decision;
   }
 
