@@ -28,6 +28,10 @@
     return "done";
   };
   const render = (state) => {
+    const tasksElement = document.querySelector("#tasks");
+    const workflowHistoryOpen = Boolean(
+      tasksElement.querySelector?.("[data-workflow-history]")?.open,
+    );
     document.querySelector("#updated").textContent = `Updated ${new Date(state.generatedAt).toLocaleTimeString()}`;
     const alerts = state.watchdog?.alerts || [];
     const historical = state.watchdog?.historical || [];
@@ -77,7 +81,7 @@
       </article>`;
     const currentRun = simpleRuns.find((run) => run.current) || simpleRuns[0] || null;
     const historicalRuns = currentRun ? simpleRuns.filter((run) => run !== currentRun) : [];
-    const simpleRunCards = `${currentRun ? simpleRunCard(currentRun, "Current result") : ""}${historicalRuns.length ? `<details class="mt-3"><summary>${historicalRuns.length} earlier workflow result${historicalRuns.length === 1 ? "" : "s"} — History</summary><div class="vstack gap-3 mt-3">${historicalRuns.map((run) => simpleRunCard(run, "History")).join("")}</div></details>` : ""}`;
+    const simpleRunCards = `${currentRun ? simpleRunCard(currentRun, "Current result") : ""}${historicalRuns.length ? `<details class="mt-3" data-workflow-history${workflowHistoryOpen ? " open" : ""}><summary>${historicalRuns.length} earlier workflow result${historicalRuns.length === 1 ? "" : "s"} — History</summary><div class="vstack gap-3 mt-3">${historicalRuns.map((run) => simpleRunCard(run, "History")).join("")}</div></details>` : ""}`;
     const legacyTaskCards = state.tasks.map((task) => `
       <article class="card shadow-sm task-card" data-state="${taskTone(task)}">
         <div class="card-body">
@@ -103,7 +107,7 @@
           ${task.validation ? `<div class="alert ${task.validation.passed ? "alert-success" : "alert-warning"} py-2 mt-3 mb-0">Validation ${task.validation.passed ? "passed" : "did not pass"}: ${escape(task.validation.outcome || "unknown")}</div>` : ""}
         </div>
       </article>`).join("");
-    document.querySelector("#tasks").innerHTML = maintenanceCard + simpleRunCards + legacyTaskCards || '<div class="alert alert-secondary">No tasks recorded yet.</div>';
+    tasksElement.innerHTML = maintenanceCard + simpleRunCards + legacyTaskCards || '<div class="alert alert-secondary">No tasks recorded yet.</div>';
     const projects = state.projects || [];
     document.querySelector("#projects").innerHTML = projects.map((project) => {
       const percent = project.progress.total

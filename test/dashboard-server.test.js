@@ -418,6 +418,50 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
   assert.match(element("#tasks").innerHTML, /earlier workflow result.*History.*Older page/su);
 });
 
+test("workflow History starts collapsed and remains open across live rerenders", async () => {
+  const script = await readFile(path.resolve("src/dashboard/public/dashboard.js"), "utf8");
+  const elements = new Map();
+  const element = (selector) => {
+    if (!elements.has(selector)) elements.set(selector, {
+      value: "system", dataset: {}, className: "", textContent: "", innerHTML: "",
+      disabled: false, placeholder: "", addEventListener() {}, querySelector() { return null; },
+    });
+    return elements.get(selector);
+  };
+  const run = (request, current) => ({
+    request, current, phase: "Passed", action: "status", plan: "Build it",
+    presentation: { outcome: "Passed", nextAction: null, why: "Validated", details: [] },
+    milestones: [], candidate: { workspacePath: null, pageUrl: null, files: [] },
+  });
+  const state = {
+    generatedAt: "2026-08-22T12:00:00Z", watchdog: {}, projects: [], tasks: [],
+    workflowRuns: [run("Current", true), run("Earlier", false)],
+  };
+  const eventListeners = new Map();
+  class EventSource {
+    addEventListener(name, listener) { eventListeners.set(name, listener); }
+  }
+  vm.runInNewContext(script, {
+    document: {
+      documentElement: element("html"), querySelector: element,
+      querySelectorAll: () => [],
+    },
+    window: {}, localStorage: { getItem: () => "system", setItem() {} },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    fetch: async () => ({ json: async () => state }),
+    EventSource, Date, Set, Number, encodeURIComponent,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const tasks = element("#tasks");
+  assert.match(tasks.innerHTML, /<details class="mt-3" data-workflow-history>/u);
+  assert.doesNotMatch(tasks.innerHTML, /data-workflow-history open/u);
+
+  tasks.querySelector = (selector) => selector === "[data-workflow-history]" ? { open: true } : null;
+  eventListeners.get("state")({ data: JSON.stringify(state) });
+  assert.match(tasks.innerHTML, /<details class="mt-3" data-workflow-history open>/u);
+});
+
 test("accepts bounded human messages and rejects empty or control input", () => {
   assert.equal(validateDashboardCommand("  show me the files  "), "show me the files");
   for (const message of [" ", "bad\u0000command", "x".repeat(4_001)]) {
