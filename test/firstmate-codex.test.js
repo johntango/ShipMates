@@ -1,10 +1,35 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { FirstmateCodexConversation } from "../src/adapters/firstmate-codex.js";
+
+test("Codex output schema uses the supported flat shape for plans", async () => {
+  const schema = JSON.parse(await readFile(
+    new URL("../schemas/firstmate-conversation.schema.json", import.meta.url), "utf8",
+  ));
+  const unsupportedComposition = new Set(["allOf", "oneOf", "if", "then", "else", "not"]);
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      assert.equal(unsupportedComposition.has(key), false, `unsupported response schema keyword: ${key}`);
+      visit(child);
+    }
+  };
+  visit(schema);
+  assert.equal(schema.type, "object");
+  assert.equal(schema.additionalProperties, false);
+  assert.ok(schema.properties.action.enum.includes("plan"));
+  assert.ok(schema.properties.requiredAuthority.enum.includes(null));
+  assert.deepEqual(schema.properties.tasks.items.properties.requiredAuthority.enum, [
+    "read_only", "local_write",
+  ]);
+  for (const field of ["action", "requiredAuthority", "objective", "tasks"]) {
+    assert.ok(schema.required.includes(field));
+  }
+});
 
 test("continues one durable conversational Codex thread", async () => {
   const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-codex-"));
