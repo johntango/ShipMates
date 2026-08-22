@@ -36,6 +36,42 @@ test("continues one durable conversational Codex thread", async () => {
   assert.ok(calls[1].args.includes("thread-001"));
 });
 
+test("capability planning ignores and preserves stale legacy conversation state", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-capability-stateless-"));
+  const calls = [];
+  const runProcess = async (call) => {
+    calls.push(call);
+    const threadId = calls.length === 1 ? "thread-legacy" :
+      calls.length === 2 ? "thread-capability" : "thread-legacy";
+    await writeFile(call.eventsPath, `${JSON.stringify({ type: "thread.started", thread_id: threadId })}\n${JSON.stringify({ type: "turn.completed" })}\n`);
+    const reportPath = call.args[call.args.indexOf("--output-last-message") + 1];
+    await writeFile(reportPath, JSON.stringify(calls.length === 2 ? {
+      response: "A bounded local implementation is ready.", action: "dispatch",
+      controlType: null, taskId: null, instruction: "Build the page", planTaskId: null,
+      requiredAuthority: "local_write", objective: null, tasks: [],
+    } : {
+      response: "Legacy conversation response.", action: "answer",
+      controlType: null, taskId: null, instruction: null, planTaskId: null,
+      requiredAuthority: null, objective: null, tasks: [],
+    }));
+    return { exitCode: 0 };
+  };
+  const conversation = new FirstmateCodexConversation({ rootDir, runProcess });
+  const workingDirectory = process.cwd();
+
+  await conversation.turn({ message: "Remember legacy work", workingDirectory, project: {} });
+  const capability = await conversation.planCapability({
+    message: "Build a local page", workingDirectory,
+  });
+  await conversation.turn({ message: "Continue legacy work", workingDirectory, project: {} });
+
+  assert.equal(capability.requiredAuthority, "local_write");
+  assert.equal(calls[1].args.includes("resume"), false);
+  assert.doesNotMatch(calls[1].args.at(-1), /Project registry context|Continue the existing conversation/iu);
+  assert.ok(calls[2].args.includes("resume"));
+  assert.ok(calls[2].args.includes("thread-legacy"));
+});
+
 test("returns an existing-task control action without an implementation instruction", async () => {
   const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-control-"));
   const runProcess = async (call) => {

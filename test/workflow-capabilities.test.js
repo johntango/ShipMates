@@ -172,6 +172,38 @@ test("capability responses avoid duplicate summaries and render a readable plan"
   assert.match(plan, /Detailed typed artifact remains available/iu);
 });
 
+test("spec refuses expanded authority without persisting a plan", async () => {
+  for (const requiredAuthority of ["external_write", "destructive"]) {
+    const root = await mkdtemp(path.join(tmpdir(), `shipmates-capability-${requiredAuthority}-`));
+    const store = new WorkflowRunStore({ rootDir: root, idFactory: () => requiredAuthority });
+    const conversation = new SimpleWorkflowConversation({
+      store, controller: {}, context: async () => ({ repoPath: root, baseSha: HEAD }),
+      planner: async () => ({
+        action: "dispatch", requiredAuthority,
+        instruction: "Unsafe request", tasks: [],
+      }),
+    });
+
+    const response = await conversation.handle("/spec Publish and delete the project");
+    assert.match(response, /requires publication, destructive work, or authority beyond local implementation/iu);
+    assert.equal((await store.list()).length, 0);
+  }
+});
+
+test("spec reports planner routing failure separately from authority refusal", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "shipmates-capability-routing-"));
+  const store = new WorkflowRunStore({ rootDir: root, idFactory: () => "routing" });
+  const conversation = new SimpleWorkflowConversation({
+    store, controller: {}, context: async () => ({ repoPath: root, baseSha: HEAD }),
+    planner: async () => ({ action: "answer", response: "Legacy state is stale", tasks: [] }),
+  });
+
+  const response = await conversation.handle("/spec Build a local page");
+  assert.match(response, /could not produce a local implementation specification/iu);
+  assert.doesNotMatch(response, /publication, destructive work, or authority beyond/iu);
+  assert.equal((await store.list()).length, 0);
+});
+
 test("review credits the controller-preserved candidate commit without repeating worker no-commit wording", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "shipmates-review-candidate-"));
   const store = new WorkflowRunStore({ rootDir: root, idFactory: () => "review-candidate" });

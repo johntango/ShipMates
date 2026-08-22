@@ -705,10 +705,9 @@ async function runInteractiveFirstmate() {
       store: simpleWorkflowStore,
       controller: simpleWorkflowController,
       context: () => discoverFirstmateContext({ cwd: process.cwd() }),
-      planner: (message, context) => conversation.turn({
+      planner: (message, context) => conversation.planCapability({
         message,
         workingDirectory: context.repoPath,
-        project: { selectedProject: null, projects: [] },
       }),
       maintenance: {
         inventory: (input) => simpleWorkspaceMaintenance.inventory(input),

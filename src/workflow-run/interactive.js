@@ -203,8 +203,11 @@ export class SimpleWorkflowConversation {
     this.planningPromise = (async () => {
       const repository = await this.context();
       const decision = await this.planner(request, repository);
+      if (decision.action === "answer" || decision.action === "control") {
+        return "Blocked safely: First Mate could not produce a local implementation specification from that request. No plan was saved; clarify the local change you want to make.";
+      }
       if (!isLocalImplementation(decision)) {
-        return "Blocked safely: /spec can advise local work, but it cannot expand authority or authorize publication.";
+        return "Blocked safely: this request requires publication, destructive work, or authority beyond local implementation. /spec did not save or approve a plan.";
       }
       const plan = shortPlan(decision);
       const capabilityBundle = await prepareCapabilityBundle({ repository, request, modeOverride });
