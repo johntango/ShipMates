@@ -98,6 +98,24 @@ test("completion records evidence and one next proposal without scheduling work"
   assert.equal((await store.events(run.id)).filter(({ type }) => type === "worker.launch_requested").length, 1);
   assert.equal((await controller.advance(run.id)).phase, "completed");
   assert.equal(launches, 1);
+
+  const beforeStatus = await store.events(run.id);
+  const conversation = new SimpleWorkflowConversation({
+    store, controller,
+    context: async () => ({ repoPath: root, baseSha: HEAD }),
+    planner: async () => { throw new Error("status must not invoke the planner"); },
+  });
+  for (const phrase of [
+    "status update please", "please give me a status update",
+    "current status please", "give me an update",
+  ]) {
+    const status = await conversation.handle(phrase);
+    assert.match(status, /Status: Passed/iu);
+    assert.match(status, /Proposed next slice: Strengthen the proven skeleton.*not approved or scheduled/isu);
+    assert.doesNotMatch(status, /workflow-|operation id|task id/iu);
+  }
+  assert.deepEqual(await store.events(run.id), beforeStatus);
+  assert.equal(launches, 1);
 });
 
 test("restart after terminal completion adopts cycle evidence without rerunning work", async () => {

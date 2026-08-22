@@ -247,7 +247,8 @@ function humanEvidence(run) {
     lines.push("Checked: No-mistakes tested this exact isolated candidate, and it passed.");
     lines.push(...compactValidationEvidence(run.validation.report));
     if (run.projectCycle?.nextRoadmap) {
-      lines.push("Next project cycle: one follow-up slice is proposed for review; it has not been approved or scheduled.");
+      const proposed = run.projectCycle.nextRoadmap.content.nextSlice;
+      lines.push(`Proposed next slice: ${proposed.title} — ${proposed.objective} It is not approved or scheduled.`);
     }
   }
   if (run.phase === "awaiting_validation_decision") {

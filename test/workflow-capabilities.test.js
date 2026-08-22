@@ -54,6 +54,12 @@ test("command and natural-language routing is bounded to high-level intents", ()
     assert.equal(parseCapabilityIntent(`/${command}`).command, command);
   }
   assert.equal(parseCapabilityIntent("show the current status").command, "status");
+  for (const phrase of [
+    "status update please", "please give me a status update",
+    "current status please", "give me an update",
+  ]) {
+    assert.equal(parseCapabilityIntent(phrase).command, "status");
+  }
   assert.equal(parseCapabilityIntent("review the quality").command, "review");
   assert.equal(parseCapabilityIntent("preview a delivery request").command, "ship");
   assert.equal(parseCapabilityIntent("show technical evidence").command, "details");
@@ -63,6 +69,7 @@ test("command and natural-language routing is bounded to high-level intents", ()
     command: "spec", argument: "a small page",
   });
   assert.equal(parseCapabilityIntent("build a page"), null);
+  assert.equal(parseCapabilityIntent("Build a status update page"), null);
 });
 
 test("typed artifacts share one WorkflowRun and survive restart idempotently", async () => {

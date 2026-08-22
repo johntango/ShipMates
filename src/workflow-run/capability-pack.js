@@ -153,7 +153,7 @@ export function parseCapabilityIntent(input) {
   const text = String(input || "").replaceAll(/\s+/gu, " ").trim();
   const explicit = text.match(/^\/(spec|plan|roadmap|cycle|build|test|review|ship|status|details|clean|wipe-clean)(?:\s+(.*))?$/iu);
   if (explicit) return { command: explicit[1].toLowerCase(), argument: explicit[2]?.trim() || "" };
-  if (/^(?:show|what(?:'s| is)|tell me) (?:the )?(?:current )?status[.!]?$/iu.test(text)) return { command: "status", argument: "" };
+  if (isStatusIntent(text)) return { command: "status", argument: "" };
   if (/^(?:show|explain) (?:the )?(?:technical )?(?:details|evidence)[.!]?$/iu.test(text) ||
     /^show task evidence[.!]?$/iu.test(text)) return { command: "details", argument: "" };
   if (/^(?:show|explain) (?:the )?(?:current )?(?:specification|spec)[.!]?$/iu.test(text)) return { command: "spec", argument: "" };
@@ -166,6 +166,11 @@ export function parseCapabilityIntent(input) {
   if (/^(?:prepare|preview|show) (?:a )?(?:delivery|ship|shipping) (?:request|plan|preview)?[.!]?$/iu.test(text)) return { command: "ship", argument: "" };
   if (/^(?:run|show) (?:the )?(?:tests?|validation)[.!]?$/iu.test(text)) return { command: "test", argument: "" };
   return null;
+}
+
+export function isStatusIntent(input) {
+  const text = String(input || "").replaceAll(/\s+/gu, " ").trim();
+  return /^(?:please\s+)?(?:status(?:\s+update)?|current\s+status|(?:show|tell|give)(?:\s+me)?\s+(?:(?:the|a)\s+)?(?:current\s+)?status(?:\s+update)?|give\s+me\s+(?:an?\s+)?update|what(?:'s|\s+is)\s+(?:the\s+)?(?:current\s+)?status)(?:\s+please)?[.!?]?$/iu.test(text);
 }
 
 export function renderCapabilitySummary(run) {

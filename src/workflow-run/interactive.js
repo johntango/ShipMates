@@ -1,6 +1,6 @@
 import { renderWorkflowRun } from "./projection.js";
 import {
-  artifact, parseCapabilityIntent, prepareCapabilityBundle, renderCapabilitySummary,
+  artifact, isStatusIntent, parseCapabilityIntent, prepareCapabilityBundle, renderCapabilitySummary,
 } from "./capability-pack.js";
 import { renderProjectRoadmap } from "./project-cycle-pack.js";
 
@@ -318,7 +318,7 @@ function isValidationApproval(value) {
 
 function isWorkflowFollowUp(value) {
   const message = String(value).replaceAll(/\s+/gu, " ").trim();
-  if (/^(?:show\s+)?status[.!]?$/iu.test(message)) return true;
+  if (isStatusIntent(message)) return true;
   if (!/^(?:can\s+you\s+)?(?:show|tell|give|where|what|which|how|did|is|are)\b/iu.test(message)) {
     return false;
   }
@@ -327,7 +327,7 @@ function isWorkflowFollowUp(value) {
 
 function isCompletedResultFollowUp(value) {
   const message = String(value).replaceAll(/\s+/gu, " ").trim();
-  if (/^(?:show\s+)?status[.!]?$/iu.test(message)) return false;
+  if (isStatusIntent(message)) return false;
   return /\b(?:result|outcome|happened|finish(?:ed)?|complete(?:d)?|pass(?:ed)?|page|url|preview|files?|artifacts?|creat(?:e|ed)|changed|tests?|validation)\b/iu.test(message);
 }
 
