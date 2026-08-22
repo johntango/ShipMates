@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  readWorkflowRunVisibility, validationContract, WorkflowRunValidatorAdapter, WorkflowRunWorkerAdapter,
+  readWorkflowRunValidationProgress, readWorkflowRunVisibility, validationContract,
+  WorkflowRunValidatorAdapter, WorkflowRunWorkerAdapter,
 } from "../src/workflow-run/adapters.js";
 import { implementationPrompt } from "../src/workflow-run/worker-contract.js";
 import { WorkflowRunController } from "../src/workflow-run/controller.js";
@@ -117,6 +118,32 @@ test("validator bridge confines no-mistakes to one isolated exact head", async (
   assert.equal((await adapter.observe({
     operationId: OPERATION, workspacePath: "/isolated/worktree", headSha: HEAD,
     intent: "Build a page",
+  })).status, "passed");
+});
+
+test("validator records human-safe progress while retaining exact-head authority", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-progress-"));
+  const messages = [];
+  const adapter = new WorkflowRunValidatorAdapter({
+    stateRoot: root, onProgress: (message) => messages.push(message),
+    setIntervalFn: () => 1, clearIntervalFn: () => {},
+    gate: { run: async (input) => {
+      await input.onProgress("test command started --secret raw-command");
+      await input.onProgress("lint checks started");
+      return {
+        initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
+        passed: true, outcome: "passed", gate: null,
+      };
+    } },
+  });
+  await adapter.start({
+    operationId: OPERATION, workspacePath: "/isolated/worktree", headSha: HEAD,
+    intent: "Build a page",
+  });
+  assert.match(messages.join("\n"), /preparing the checks.*running the tests.*checking code quality/isu);
+  assert.doesNotMatch(messages.join("\n"), /secret|raw-command|operation|[ab]{24}/iu);
+  assert.equal((await readWorkflowRunValidationProgress({
+    stateRoot: root, operationId: OPERATION,
   })).status, "passed");
 });
 

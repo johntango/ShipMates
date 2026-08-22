@@ -677,6 +677,13 @@ async function runInteractiveFirstmate() {
       validator: WorkflowRunValidatorAdapter.localOnly({
         stateRoot: interactiveStore.rootDir, binaryPath: validatorBinary,
         gateOptions: {
+          onWorkflowProgress: (message) => {
+            if (message !== lastSimpleProgressMessage) {
+              lastSimpleProgressMessage = message;
+              console.log(message);
+            }
+            void dashboardServer?.refresh();
+          },
           observer: detachedObserver(new HerdrNoMistakesObserver({
             client: projectAgentClient,
             currentPaneId: currentHerdrPaneId,

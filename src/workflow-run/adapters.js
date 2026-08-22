@@ -4,6 +4,7 @@ import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { FAST_LOCAL_SKIP_STEPS, NoMistakesLocalGate } from "../adapters/no-mistakes.js";
+import { ValidationProgressReporter, validationActivity } from "./progress.js";
 
 export class WorkflowRunWorkerAdapter {
   constructor({ stateRoot, workerScript, processPath = process.execPath, spawnProcess = spawn,
@@ -66,12 +67,18 @@ export class WorkflowRunWorkerAdapter {
 }
 
 export class WorkflowRunValidatorAdapter {
-  constructor({ stateRoot, gate } = {}) {
+  constructor({ stateRoot, gate, onProgress = () => {}, clock = () => new Date(),
+    heartbeatMs, setIntervalFn = setInterval, clearIntervalFn = clearInterval } = {}) {
     if (!stateRoot || !gate || typeof gate.run !== "function") {
       throw new TypeError("WorkflowRunValidatorAdapter requires stateRoot and gate");
     }
     this.stateRoot = path.resolve(stateRoot);
     this.gate = gate;
+    this.onProgress = onProgress;
+    this.clock = clock;
+    this.heartbeatMs = heartbeatMs;
+    this.setIntervalFn = setIntervalFn;
+    this.clearIntervalFn = clearIntervalFn;
   }
 
   static localOnly({ stateRoot, binaryPath, gateOptions = {} }) {
@@ -83,6 +90,11 @@ export class WorkflowRunValidatorAdapter {
         skipSteps: FAST_LOCAL_SKIP_STEPS,
         ...gateOptions,
       }),
+      onProgress: gateOptions.onWorkflowProgress,
+      clock: gateOptions.clock,
+      heartbeatMs: gateOptions.heartbeatMs,
+      setIntervalFn: gateOptions.setIntervalFn,
+      clearIntervalFn: gateOptions.clearIntervalFn,
     });
   }
 
@@ -91,14 +103,36 @@ export class WorkflowRunValidatorAdapter {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const request = validationRequest({ operationId, workspacePath, headSha, intent });
     if (!await writeExclusive(path.join(directory, "validation-request.json"), request)) return null;
-    const report = await this.gate.run({
-      taskId: `workflow-${operationId}`,
-      worktreePath: request.workspacePath,
-      expectedHeadSha: request.headSha,
-      intent: request.validationContract,
-    });
-    const result = validationResult(report, request.headSha);
-    await writeAtomic(path.join(directory, "validation-result.json"), result);
+    const progressPath = path.join(directory, "validation-progress.json");
+    const reporter = new ValidationProgressReporter({ clock: this.clock, heartbeatMs: this.heartbeatMs });
+    let activity = validationActivity("Starting validation", null, { clock: this.clock });
+    const publish = async (message = null) => {
+      if (message !== null) activity = validationActivity(message, activity, { clock: this.clock });
+      await writeAtomic(progressPath, activity);
+      const visibility = await readWorkflowRunVisibility({ stateRoot: this.stateRoot, operationId });
+      const human = reporter.message(activity, { visibility });
+      if (human) this.onProgress(human);
+    };
+    await publish();
+    const heartbeat = this.setIntervalFn(() => { void publish(); }, this.heartbeatMs || 60_000);
+    let result;
+    try {
+      const report = await this.gate.run({
+        taskId: `workflow-${operationId}`,
+        worktreePath: request.workspacePath,
+        expectedHeadSha: request.headSha,
+        intent: request.validationContract,
+        onProgress: publish,
+      });
+      result = validationResult(report, request.headSha);
+      await writeAtomic(path.join(directory, "validation-result.json"), result);
+      await writeAtomic(progressPath, { ...activity, status: result.status, updatedAt: this.clock().toISOString() });
+    } catch (error) {
+      await writeAtomic(progressPath, { ...activity, status: "failed", updatedAt: this.clock().toISOString() });
+      throw error;
+    } finally {
+      this.clearIntervalFn(heartbeat);
+    }
     const visibility = await readWorkflowRunVisibility({
       stateRoot: this.stateRoot, operationId,
     });
@@ -129,19 +163,42 @@ export class WorkflowRunValidatorAdapter {
     if (existing?.validatorRunId !== validatorRunId || existing?.headSha !== headSha) {
       throw new WorkflowRunAdapterError("Validation decision does not match the pinned validator review");
     }
-    const report = await this.gate.respond({
-      taskId: `workflow-${operationId}`,
-      worktreePath: request.workspacePath,
-      expectedHeadSha: request.headSha,
-      intent: request.validationContract,
-      action: "approve",
-      expectedRunId: validatorRunId,
-    });
-    const result = validationResult(report, request.headSha);
-    if (result.status === "awaiting_decision") {
-      throw new WorkflowRunAdapterError("Pinned validator run remained nonterminal after approval");
+    const progressPath = path.join(directory, "validation-progress.json");
+    const reporter = new ValidationProgressReporter({ clock: this.clock, heartbeatMs: this.heartbeatMs });
+    let activity = await readJson(progressPath) || validationActivity("review", null, { clock: this.clock });
+    activity = { ...activity, status: "running", stage: "review", updatedAt: this.clock().toISOString() };
+    const publish = async (message = null) => {
+      if (message !== null) activity = validationActivity(message, activity, { clock: this.clock });
+      await writeAtomic(progressPath, activity);
+      const visibility = await readWorkflowRunVisibility({ stateRoot: this.stateRoot, operationId });
+      const human = reporter.message(activity, { visibility });
+      if (human) this.onProgress(human);
+    };
+    await publish();
+    const heartbeat = this.setIntervalFn(() => { void publish(); }, this.heartbeatMs || 60_000);
+    let result;
+    try {
+      const report = await this.gate.respond({
+        taskId: `workflow-${operationId}`,
+        worktreePath: request.workspacePath,
+        expectedHeadSha: request.headSha,
+        intent: request.validationContract,
+        action: "approve",
+        expectedRunId: validatorRunId,
+        onProgress: publish,
+      });
+      result = validationResult(report, request.headSha);
+      if (result.status === "awaiting_decision") {
+        throw new WorkflowRunAdapterError("Pinned validator run remained nonterminal after approval");
+      }
+      await writeAtomic(path.join(directory, "validation-result.json"), result);
+      await writeAtomic(progressPath, { ...activity, status: result.status, updatedAt: this.clock().toISOString() });
+    } catch (error) {
+      await writeAtomic(progressPath, { ...activity, status: "failed", updatedAt: this.clock().toISOString() });
+      throw error;
+    } finally {
+      this.clearIntervalFn(heartbeat);
     }
-    await writeAtomic(path.join(directory, "validation-result.json"), result);
     const visibility = await readWorkflowRunVisibility({
       stateRoot: this.stateRoot, operationId,
     });
@@ -169,6 +226,17 @@ export async function readWorkflowRunVisibility({ stateRoot, operationId }) {
     state: value.state.slice(0, 40),
     summary: value.summary.replaceAll(/\s+/gu, " ").trim().slice(0, 200),
   });
+}
+
+export async function readWorkflowRunValidationProgress({ stateRoot, operationId }) {
+  if (!stateRoot || typeof operationId !== "string" || !/^[a-f0-9]{24}$/u.test(operationId)) return null;
+  try {
+    const value = await readJson(path.join(path.resolve(stateRoot), "workflow-run-operations", operationId,
+      "validation-progress.json"));
+    if (!value || value.schemaVersion !== 1 || !new Set(["running", "passed", "failed", "awaiting_decision"]).has(value.status) ||
+      !new Set(["starting", "checks", "test", "lint", "review"]).has(value.stage)) return null;
+    return value;
+  } catch { return null; }
 }
 
 export function validationContract(intent) {

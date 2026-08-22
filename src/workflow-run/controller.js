@@ -177,6 +177,9 @@ function operation(runId, purpose) {
 
 function safeReason(error) {
   const message = String(error?.message || "");
+  if (errorChainHasCode(error, "ETIMEDOUT")) {
+    return "No-mistakes validation exceeded its safe time limit; the isolated candidate was preserved unchanged.";
+  }
   if (/Implementer/iu.test(message)) {
     return "The Implementer stopped before producing a verified candidate.";
   }
@@ -193,6 +196,13 @@ function safeReason(error) {
     return "No-mistakes validation could not be verified for the exact isolated candidate.";
   }
   return "A required local workflow step could not be verified safely.";
+}
+
+function errorChainHasCode(error, code) {
+  for (let current = error; current; current = current.cause) {
+    if (current.code === code) return true;
+  }
+  return false;
 }
 
 function defaultTransientError(error) {

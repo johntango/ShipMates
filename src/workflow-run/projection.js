@@ -44,7 +44,7 @@ export function workflowExecutionMilestones(run) {
     {
       label: "No-mistakes", status: validatorStatus,
       summary: validatorStatus === "Passed" ? `No-mistakes passed the exact isolated candidate.${baseline.length ? ` ${baseline.join(" ")}` : ""}${compactValidationEvidence(run.validation.report).length ? ` ${compactValidationEvidence(run.validation.report).join(" ")}` : ""}` :
-        validatorStatus === "Validating" ? "No-mistakes is checking the exact isolated candidate." :
+        validatorStatus === "Validating" ? run.validationActivityMessage || validationActivitySummary(run.validationActivity) :
           validatorStatus === "Awaiting your approval" ? "Validation found a risk requiring your decision." :
             validatorStatus === "Blocked safely" ? "Validation stopped without changing or publishing the candidate." :
               "Validation is queued until implementation completes.",
@@ -133,7 +133,7 @@ function evidenceStatus(run) {
     return [
       "Validating",
       "No action needed; First Mate is monitoring no-mistakes for the exact candidate result.",
-      "The Implementer finished, and no-mistakes is validating that exact isolated candidate.",
+      run.validationActivityMessage || validationActivitySummary(run.validationActivity),
     ];
   }
   if (run.worker || new Set(["approved", "launching", "implementing"]).has(run.phase)) {
@@ -164,6 +164,14 @@ function evidenceStatus(run) {
     "Ask First Mate to inspect the stored evidence before continuing.",
     "The durable workflow evidence does not identify a safe current phase.",
   ];
+}
+
+function validationActivitySummary(activity) {
+  const stage = activity?.stage === "test" ? "running the tests" :
+    activity?.stage === "lint" ? "checking code quality" :
+      activity?.stage === "review" ? "reviewing the exact isolated candidate" :
+        activity?.stage === "starting" ? "preparing the checks" : "running the checks";
+  return `Still working — no-mistakes is ${stage}. No action is needed.`;
 }
 
 export function validationEvidenceSummary(report) {
@@ -311,6 +319,9 @@ function workerVerificationEvidence(tests) {
 }
 
 function blockedNextAction(blocker) {
+  if (/exceeded its safe time limit|timed out/iu.test(blocker || "")) {
+    return "Keep the isolated candidate unchanged, check local validator availability, then retry validation only.";
+  }
   if (/validation remote/iu.test(blocker || "")) {
     return "Inspect or repair the isolated workspace's managed validator binding; keep the candidate unchanged until that safety check succeeds.";
   }

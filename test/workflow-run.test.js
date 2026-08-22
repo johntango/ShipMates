@@ -355,6 +355,19 @@ test("adapter failures stop safely without exposing raw diagnostics", async () =
   assert.match(projectWorkflowRun(blocked).nextAction, /Review the stated cause/iu);
 });
 
+test("validation timeout blocks with a plain safe next action", async () => {
+  const rendered = renderWorkflowRun({
+    phase: "blocked", retries: [],
+    blocker: "No-mistakes validation exceeded its safe time limit; the isolated candidate was preserved unchanged.",
+    worker: { status: "completed", workspacePath: "/tmp/candidate", headSha: HEAD,
+      report: { status: "completed" } },
+    validation: { status: "requested", headSha: HEAD },
+  });
+  assert.match(rendered, /^Status: Blocked safely\nNext: Keep the isolated candidate unchanged.*retry validation only/isu);
+  assert.match(rendered, /safe time limit/iu);
+  assert.doesNotMatch(rendered, /ETIMEDOUT|operation|command/iu);
+});
+
 test("one transient setup failure is retried durably without duplicate work", async () => {
   const { store, run } = await createRun();
   let launches = 0;

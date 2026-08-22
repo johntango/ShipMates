@@ -9,7 +9,8 @@ import {
   projectWorkflowRun, workflowCandidateArtifacts, workflowExecutionMilestones,
   workflowTechnicalEvidence,
 } from "../workflow-run/projection.js";
-import { readWorkflowRunVisibility } from "../workflow-run/adapters.js";
+import { readWorkflowRunValidationProgress, readWorkflowRunVisibility } from "../workflow-run/adapters.js";
+import { renderValidationActivity } from "../workflow-run/progress.js";
 
 export class ShipMatesDashboardServer {
   constructor({
@@ -293,7 +294,18 @@ export async function buildDashboardState({
           stateRoot: workflowRunStore.rootDir,
           operationId: run.validation?.operationId,
         });
-        const projectedRun = visibility ? { ...run, visibility } : run;
+        const validationActivity = await readWorkflowRunValidationProgress({
+          stateRoot: workflowRunStore.rootDir,
+          operationId: run.validation?.operationId,
+        });
+        const projectedRun = {
+          ...run,
+          ...(visibility ? { visibility } : {}),
+          ...(validationActivity ? {
+            validationActivity,
+            validationActivityMessage: renderValidationActivity(validationActivity, { visibility }),
+          } : {}),
+        };
         const presentation = projectWorkflowRun(projectedRun);
         return {
           phase: presentation.phase,

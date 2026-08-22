@@ -232,7 +232,7 @@ export class NoMistakesLocalGate {
 
   async respond({
     taskId, worktreePath, expectedHeadSha, intent, action,
-    expectedRunId = null, observeOnly = false,
+    expectedRunId = null, observeOnly = false, onProgress = null,
   }) {
     requireNonEmpty(taskId, "taskId");
     requireNonEmpty(intent, "intent");
@@ -252,12 +252,17 @@ export class NoMistakesLocalGate {
     }
     let args = ["axi", "status"];
     const startedAt = this.clock().toISOString();
+    const pendingProgress = [];
+    const reportProgress = (message) => {
+      this.onProgress(message);
+      if (typeof onProgress === "function") pendingProgress.push(Promise.resolve(onProgress(message)));
+    };
     const options = {
       cwd: workingDirectory,
       env: localOnlyEnvironment({ taskRoot: runtimeHome }),
       timeout: this.timeoutMs,
       maxBuffer: 4 * 1024 * 1024,
-      onStderrLine: this.onProgress,
+      onStderrLine: reportProgress,
     };
     let result = await this.runner(this.binaryPath, args, options);
     let parsed = parseAxiOutput(result.stdout);
@@ -276,6 +281,7 @@ export class NoMistakesLocalGate {
         throw new NoMistakesGateError("Pinned validator response switched runs");
       }
     }
+    await Promise.all(pendingProgress);
     const completedAt = this.clock().toISOString();
     const after = await this.#inspect(workingDirectory);
     if (after.branch !== before.branch || after.dirty || before.headSha !== after.headSha ||

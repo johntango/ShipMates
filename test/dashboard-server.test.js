@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import vm from "node:vm";
@@ -63,6 +64,29 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
   assert.deepEqual(state.tasks, []);
   assert.deepEqual(state.projects, []);
   assert.doesNotMatch(JSON.stringify(state.workflowRuns), /workflow-secret/u);
+});
+
+test("projects current durable validation activity in plain language", async () => {
+  const { store, projectContext } = fixture();
+  const rootDir = await mkdtemp(path.join(tmpdir(), "workflow-dashboard-progress-"));
+  const operationId = "a".repeat(24);
+  const operationRoot = path.join(rootDir, "workflow-run-operations", operationId);
+  await mkdir(operationRoot, { recursive: true });
+  await writeFile(path.join(operationRoot, "validation-progress.json"), JSON.stringify({
+    schemaVersion: 1, status: "running", stage: "lint",
+    startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  }));
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { rootDir, list: async () => [{
+      phase: "validating", request: "Build a page", plan: "Build and validate",
+      updatedAt: new Date().toISOString(), worker: { status: "completed" },
+      validation: { operationId, status: "requested" },
+    }] },
+  });
+  assert.match(state.workflowRuns[0].presentation.why, /Still working.*checking code quality.*No action/iu);
+  assert.match(state.workflowRuns[0].milestones[2].summary, /Still working.*checking code quality/iu);
+  assert.doesNotMatch(JSON.stringify(state.workflowRuns[0]), new RegExp(operationId, "u"));
 });
 
 test("projects completed simple workflow authorship, validation, and durable page", async () => {
