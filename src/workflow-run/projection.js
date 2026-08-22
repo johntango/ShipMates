@@ -1,11 +1,13 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { renderCapabilitySummary } from "./capability-pack.js";
+
 export function projectWorkflowRun(run) {
   const [phase, nextAction, why] = evidenceStatus(run);
   return Object.freeze({
     outcome: phase, nextAction, why, phase,
-    details: [...visibilityEvidence(run), ...terminalEvidence(run)],
+    details: [...renderCapabilitySummary(run), ...visibilityEvidence(run), ...terminalEvidence(run)],
   });
 }
 
@@ -24,6 +26,7 @@ export function workflowExecutionMilestones(run) {
   else if (run.validation?.status === "awaiting_decision") validatorStatus = "Awaiting your approval";
   else if (run.validation) validatorStatus = "Validating";
   const checks = run.validation?.report ? validationEvidenceSummary(run.validation.report) : [];
+  const baseline = run.validation?.report ? baselineEvidenceSummary(run.validation.report) : [];
   return Object.freeze([
     {
       label: "Plan", status: planApproved ? "Approved" : "Awaiting your approval",
@@ -41,7 +44,7 @@ export function workflowExecutionMilestones(run) {
     },
     {
       label: "No-mistakes", status: validatorStatus,
-      summary: validatorStatus === "Passed" ? `Exact-candidate validation passed.${checks.length ? ` ${checks.join(" ")}` : ""}` :
+      summary: validatorStatus === "Passed" ? `Exact-candidate validation passed.${baseline.length ? ` ${baseline.join(" ")}` : ""}${checks.length ? ` ${checks.join(" ")}` : ""}` :
         validatorStatus === "Validating" ? "No-mistakes is validating the exact isolated candidate." :
           validatorStatus === "Awaiting your approval" ? "Validation found a risk requiring your decision." :
             validatorStatus === "Blocked safely" ? "Validation stopped without changing or publishing the candidate." :
@@ -161,6 +164,19 @@ export function validationEvidenceSummary(report) {
   ];
 }
 
+export function baselineEvidenceSummary(report) {
+  const baseline = report?.baseline;
+  const candidate = report?.candidate;
+  if (!baseline || !candidate) return [];
+  const existing = Number.isSafeInteger(baseline.failures) ? baseline.failures : null;
+  const introduced = Number.isSafeInteger(candidate.introducedFailures) ? candidate.introducedFailures : null;
+  if (existing === null || introduced === null) return [];
+  return [
+    `Base-head baseline recorded ${existing} existing failure${existing === 1 ? "" : "s"}.`,
+    `Candidate validation recorded ${introduced} introduced regression${introduced === 1 ? "" : "s"}.`,
+  ];
+}
+
 function terminalEvidence(run) {
   if (!new Set(["awaiting_validation_decision", "completed", "blocked"]).has(run.phase) &&
     !run.retries?.length) return [];
@@ -192,6 +208,7 @@ function terminalEvidence(run) {
   const artifacts = durableArtifacts(run);
   if (artifacts.length) lines.push(`Durable preview evidence: ${artifacts.join(", ")}`);
   if (run.validation?.report) lines.push(...validationEvidenceSummary(run.validation.report));
+  if (run.validation?.report) lines.push(...baselineEvidenceSummary(run.validation.report));
   return lines;
 }
 

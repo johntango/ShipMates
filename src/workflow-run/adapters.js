@@ -24,7 +24,8 @@ export class WorkflowRunWorkerAdapter {
     const request = {
       schemaVersion: 1, operationId, runId: run.id, repoPath: run.repoPath,
       baseHeadSha: run.baseHeadSha, instruction: run.request,
-      plan: run.plan, artifactDirectory: path.join(directory, "codex"),
+      plan: run.plan, capability: run.capability || null,
+      artifactDirectory: path.join(directory, "codex"),
     };
     if (!await writeExclusive(path.join(directory, "request.json"), request)) return null;
     const child = this.spawnProcess(this.processPath, [this.workerScript, path.join(directory, "request.json")], {

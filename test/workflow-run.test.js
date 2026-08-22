@@ -7,7 +7,7 @@ import test from "node:test";
 import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { workflowRunEnabled } from "../src/workflow-run/feature.js";
 import {
-  projectWorkflowRun, renderWorkflowRun, validationEvidenceSummary,
+  baselineEvidenceSummary, projectWorkflowRun, renderWorkflowRun, validationEvidenceSummary,
   workflowExecutionMilestones,
 } from "../src/workflow-run/projection.js";
 import { reduceWorkflowRun } from "../src/workflow-run/reducer.js";
@@ -104,6 +104,16 @@ test("validation evidence distinguishes generated tests, test cases, and checks"
     "No individual test-case count was recorded.",
     "No-mistakes completed 1 validation check: test.",
   ]);
+});
+
+test("brownfield evidence separates base failures from candidate regressions", () => {
+  assert.deepEqual(baselineEvidenceSummary({
+    baseline: { failures: 3 }, candidate: { failures: 3, introducedFailures: 0 },
+  }), [
+    "Base-head baseline recorded 3 existing failures.",
+    "Candidate validation recorded 0 introduced regressions.",
+  ]);
+  assert.deepEqual(baselineEvidenceSummary({ outcome: "passed" }), []);
 });
 
 test("derives actual execution milestones from durable evidence, not plan prose", () => {

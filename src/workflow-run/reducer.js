@@ -1,3 +1,5 @@
+import { artifact as verifiedArtifact, packDigest } from "./capability-pack.js";
+
 const TERMINAL = new Set(["completed", "blocked"]);
 
 export class WorkflowRunError extends Error {
@@ -45,11 +47,52 @@ function applyEvent(run, event) {
     };
   }
   if (event.runId !== run.id) throw new WorkflowRunError("WorkflowRun event has the wrong run id");
-  if (TERMINAL.has(run.phase) && !event.type.startsWith("workspace.")) {
+  if (TERMINAL.has(run.phase) && !event.type.startsWith("workspace.") &&
+    !new Set(["review.recorded", "ship.previewed", "slice.followup_proposed"]).has(event.type)) {
     throw new WorkflowRunError(`Cannot advance a ${run.phase} WorkflowRun`);
   }
   const next = { ...run, updatedAt: event.at };
   switch (event.type) {
+    case "capability.selected":
+      if (run.capability) throw new WorkflowRunError("WorkflowRun capability selection cannot change");
+      if (!event.data.pack?.name || !event.data.pack?.version || !event.data.pack?.digest) {
+        throw new WorkflowRunError("Capability selection requires a versioned pack digest");
+      }
+      if (packDigest(event.data.pack) !== event.data.pack.digest) {
+        throw new WorkflowRunError("Capability pack digest does not match its schema content");
+      }
+      next.capability = { pack: event.data.pack, artifacts: [] };
+      return next;
+    case "context.captured":
+    case "spec.proposed":
+    case "spec.approved":
+    case "slice.selected":
+    case "slice.followup_proposed":
+    case "review.recorded":
+    case "ship.previewed": {
+      if (!run.capability || event.data.artifact?.kind !== event.type ||
+        !/^[0-9a-f]{64}$/u.test(event.data.artifact?.digest || "")) {
+        throw new WorkflowRunError("Capability artifact must match the selected pack and event type");
+      }
+      let verified;
+      try { verified = verifiedArtifact(event.type, event.data.artifact.content); }
+      catch (cause) { throw new WorkflowRunError("Capability artifact schema is invalid", { cause }); }
+      if (verified.digest !== event.data.artifact.digest ||
+        event.data.artifact.schemaVersion !== verified.schemaVersion) {
+        throw new WorkflowRunError("Capability artifact digest does not match its content");
+      }
+      const field = event.type.startsWith("context.") ? "context" :
+        event.type.startsWith("spec.") ? "spec" :
+          event.type === "slice.selected" ? "slice" : null;
+      next.capability = {
+        ...run.capability,
+        ...(field ? { [field]: event.data.artifact } : {}),
+        artifacts: [...run.capability.artifacts.filter(({ digest }) => digest !== event.data.artifact.digest), event.data.artifact],
+      };
+      if (event.type === "spec.approved") next.capability.specApprovedAt = event.at;
+      if (event.type === "slice.followup_proposed") next.capability.followupSlice = event.data.artifact;
+      return next;
+    }
     case "workspace.lease_bound":
       requireWorkspaceBinding(run, event.data);
       if (run.workspace?.status === "returned") {
@@ -99,6 +142,10 @@ function applyEvent(run, event) {
     case "workflow.approved":
       requirePhase(run, "awaiting_approval", event);
       if (run.authority !== "local_write") throw new WorkflowRunError("Stage 1 only approves local_write runs");
+      if (run.capability && (!run.capability.context || !run.capability.spec || !run.capability.slice ||
+        !run.capability.specApprovedAt)) {
+        throw new WorkflowRunError("Capability workflow approval requires captured context, approved spec, and selected slice");
+      }
       next.phase = "approved";
       next.approvedAt = event.at;
       return next;

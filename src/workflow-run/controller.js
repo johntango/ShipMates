@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { artifact } from "./capability-pack.js";
 import { WorkflowRunError } from "./reducer.js";
 
 export class WorkflowRunController {
@@ -12,6 +13,11 @@ export class WorkflowRunController {
   }
 
   async approve(runId) {
+    const run = await this.store.get(runId);
+    if (run.capability && !run.capability.specApprovedAt) {
+      const approved = artifact("spec.approved", run.capability.spec.content);
+      await this.store.append(runId, "spec.approved", { artifact: approved }, `artifact:${approved.digest}`);
+    }
     await this.store.append(runId, "workflow.approved", {}, "approved");
     return this.advance(runId);
   }

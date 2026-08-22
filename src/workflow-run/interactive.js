@@ -1,4 +1,7 @@
 import { renderWorkflowRun } from "./projection.js";
+import {
+  artifact, parseCapabilityIntent, prepareCapabilityBundle, renderCapabilitySummary,
+} from "./capability-pack.js";
 
 export class SimpleWorkflowConversation {
   constructor({ store, controller, planner, context, maintenance = null } = {}) {
@@ -17,6 +20,8 @@ export class SimpleWorkflowConversation {
   async handle(message) {
     const maintenance = await this.#maintenance(message);
     if (maintenance !== null) return maintenance;
+    const capabilityIntent = parseCapabilityIntent(message);
+    if (capabilityIntent) return this.#capability(capabilityIntent);
     if (isValidationApproval(message)) {
       const active = await this.#active();
       if (!active || active.phase !== "awaiting_validation_decision") {
@@ -63,7 +68,7 @@ export class SimpleWorkflowConversation {
     if (!this.maintenance) return null;
     const normalized = String(message).replaceAll(/\s+/gu, " ").trim();
     const repository = async () => this.context();
-    if (/^(?:show|check) (?:the )?(?:workspace|cleanup) (?:status|inventory)[.!]?$/iu.test(normalized)) {
+    if (/^(?:\/status\s+workspaces?|show|check) (?:the )?(?:workspace|cleanup) (?:status|inventory)[.!]?$/iu.test(normalized)) {
       const context = await repository();
       return this.maintenance.render(await this.maintenance.inventory({ repoPath: context.repoPath }));
     }
@@ -71,11 +76,11 @@ export class SimpleWorkflowConversation {
       const context = await repository();
       return this.maintenance.renderClean(await this.maintenance.clean({ repoPath: context.repoPath, dryRun: true }));
     }
-    if (/^clean project[.!]?$/iu.test(normalized)) {
+    if (/^(?:\/clean|clean project)[.!]?$/iu.test(normalized)) {
       const context = await repository();
       return this.maintenance.renderClean(await this.maintenance.clean({ repoPath: context.repoPath }));
     }
-    const wipe = normalized.match(/^wipe-clean project (.+)$/iu);
+    const wipe = normalized.match(/^(?:\/wipe-clean|wipe-clean project) (.+)$/iu);
     if (wipe) {
       const context = await repository();
       return this.maintenance.renderWipe(await this.maintenance.previewWipe({
@@ -108,13 +113,16 @@ export class SimpleWorkflowConversation {
       return "Blocked safely: this simple path only accepts local implementation. Read-only, publication, destructive, and expanded-authority work use a separate explicit path.";
     }
     const plan = shortPlan(decision);
+    const capabilityBundle = await prepareCapabilityBundle({ repository, request: message });
     const run = await this.store.create({
       request: message, plan, repoPath: repository.repoPath,
       baseHeadSha: repository.baseSha, authority: "local_write",
+      capabilityBundle,
     });
     const lines = [
       "Proposed plan:",
       plan,
+      ...renderCapabilitySummary(run),
     ];
     if (this.approvalQueued) {
       lines.push(
@@ -134,6 +142,127 @@ export class SimpleWorkflowConversation {
     return (await this.store.list()).find(({ phase }) =>
       !new Set(["completed", "blocked"]).has(phase));
   }
+
+  async #capability({ command, argument }) {
+    if (command === "clean" || command === "wipe-clean") {
+      return this.#maintenance(command === "clean" ? "/clean" : `/wipe-clean ${argument}`);
+    }
+    const runs = await this.store.list();
+    const active = runs.find(({ phase }) => !new Set(["completed", "blocked"]).has(phase));
+    const latest = runs[0] || null;
+    if (command === "spec" && !active && argument) {
+      const override = argument.match(/^--mode\s+(brownfield|greenfield)\s+(.+)$/iu);
+      const request = override?.[2] || argument;
+      return this.#prepareCapabilityRequest(request, override?.[1]?.toLowerCase() || null);
+    }
+    if (!latest) {
+      return command === "spec"
+        ? "Describe the goal after /spec. First Mate will capture read-only context and propose one bounded slice."
+        : "No local capability workflow has been recorded yet. Start with /spec followed by the goal.";
+    }
+    if (command === "status") return [renderWorkflowRun(latest), ...renderCapabilitySummary(latest)].join("\n");
+    if (command === "spec") return renderArtifact("Specification", latest.capability?.spec);
+    if (command === "plan") {
+      if (argument && latest.phase === "completed" && latest.capability?.slice?.content) {
+        const proposed = artifact("slice.followup_proposed", {
+          ...latest.capability.slice.content,
+          title: "Proposed follow-up slice",
+          objective: argument,
+          acceptanceChecks: ["The follow-up behavior is observable in a new isolated candidate.", "Exact-head local validation passes."],
+        });
+        const updated = await this.store.append(latest.id, "slice.followup_proposed", {
+          artifact: proposed,
+        }, `artifact:${proposed.digest}`);
+        return [
+          renderArtifact("Proposed follow-up slice", updated.capability.followupSlice),
+          "This later slice is not approved or scheduled. It requires its own scoped approval before implementation.",
+        ].join("\n");
+      }
+      return renderArtifact("Selected slice", latest.capability?.slice);
+    }
+    if (command === "build") {
+      if (!active) return "No approved slice is waiting to build. Use /spec to propose a new bounded slice.";
+      if (active.phase === "awaiting_approval") {
+        return `${renderWorkflowRun(active)}\nApprove the displayed specification and slice once; /build never bypasses approval.`;
+      }
+      return renderWorkflowRun(await this.controller.advance(active.id));
+    }
+    if (command === "test") {
+      if (!active) return `${renderWorkflowRun(latest)}\nNo validation was started or rerun by this status request.`;
+      return renderWorkflowRun(await this.controller.advance(active.id));
+    }
+    if (command === "review") return this.#review(latest);
+    if (command === "ship") return this.#shipPreview(latest);
+    return "That capability command is not available in the current workflow phase.";
+  }
+
+  async #prepareCapabilityRequest(request, modeOverride) {
+    if (this.planningPromise) return "Firstmate is still preparing the current short plan. No second request was started.";
+    const active = await this.#active();
+    if (active) return `${renderWorkflowRun(active)}\nFinish or resolve this workflow before starting another.`;
+    this.planningPromise = (async () => {
+      const repository = await this.context();
+      const decision = await this.planner(request, repository);
+      if (!isLocalImplementation(decision)) {
+        return "Blocked safely: /spec can advise local work, but it cannot expand authority or authorize publication.";
+      }
+      const plan = shortPlan(decision);
+      const capabilityBundle = await prepareCapabilityBundle({ repository, request, modeOverride });
+      const run = await this.store.create({
+        request, plan, repoPath: repository.repoPath, baseHeadSha: repository.baseSha,
+        authority: "local_write", capabilityBundle,
+      });
+      return [
+        "Specification and bounded slice proposed.", ...renderCapabilitySummary(run),
+        "No files have changed. Reply “I approve the plan” once to authorize only this first slice.",
+        renderWorkflowRun(run),
+      ].join("\n");
+    })();
+    try { return await this.planningPromise; }
+    finally { this.planningPromise = null; }
+  }
+
+  async #review(run) {
+    const summary = run.phase === "completed"
+      ? "Quality review: the exact isolated candidate passed its selected validation policy."
+      : run.phase === "blocked"
+        ? "Quality review: the workflow is blocked safely; no delivery is recommended."
+        : "Quality review: implementation or exact-head validation is not terminal yet.";
+    const evidence = [
+      `Current phase: ${run.phase}.`,
+      run.worker?.report?.summary || "No terminal Implementer report is available.",
+      run.validation?.report?.outcome ? `Validation outcome: ${run.validation.report.outcome}.` : "No terminal validation outcome is available.",
+    ];
+    if (run.capability) {
+      const record = artifact("review.recorded", {
+        schemaVersion: 1, summary, evidence, mutatesState: false, externalDelivery: false,
+      });
+      await this.store.append(run.id, "review.recorded", { artifact: record }, `artifact:${record.digest}`);
+    }
+    return `${summary}\n${evidence.join("\n")}\nThis review is advisory and did not modify the candidate or workflow authority.`;
+  }
+
+  async #shipPreview(run) {
+    const summary = run.phase === "completed"
+      ? "Delivery preview: the validated isolated candidate could be proposed for a separate delivery approval."
+      : "Delivery preview blocked: only a completed exact-head validated candidate can be considered.";
+    const evidence = [
+      "No push, pull request, merge, publication, or shared-checkout change was performed.",
+      run.worker?.workspacePath ? "The candidate remains in its isolated workspace." : "No verified candidate workspace is available.",
+    ];
+    if (run.capability) {
+      const record = artifact("ship.previewed", {
+        schemaVersion: 1, summary, evidence, mutatesState: false, externalDelivery: false,
+      });
+      await this.store.append(run.id, "ship.previewed", { artifact: record }, `artifact:${record.digest}`);
+    }
+    return `${summary}\n${evidence.join("\n")}\nA future explicit delivery approval is required before any external action.`;
+  }
+}
+
+function renderArtifact(label, value) {
+  if (!value?.content) return `${label}: no typed artifact has been recorded.`;
+  return `${label}:\n${JSON.stringify(value.content, null, 2)}\nThis is advisory evidence inside the current WorkflowRun; it grants no authority.`;
 }
 
 function isApproval(value) {

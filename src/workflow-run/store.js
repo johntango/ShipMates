@@ -13,14 +13,23 @@ export class WorkflowRunStore {
     this.onEvent = typeof onEvent === "function" ? onEvent : null;
   }
 
-  async create({ request, plan, repoPath, baseHeadSha, authority = "local_write" }) {
+  async create({ request, plan, repoPath, baseHeadSha, authority = "local_write", capabilityBundle = null }) {
     const runId = `workflow-${this.idFactory()}`;
     const event = this.event(runId, "workflow.created", {
       request, plan, repoPath: path.resolve(repoPath), baseHeadSha, authority,
     }, "created");
-    await this.#write(runId, [event], { exclusive: true });
-    const run = reduceWorkflowRun([event]);
-    await this.#notify(event, run);
+    const events = [event];
+    if (capabilityBundle) {
+      events.push(
+        this.event(runId, "capability.selected", { pack: capabilityBundle.pack }, "capability-selected"),
+        this.event(runId, "context.captured", { artifact: capabilityBundle.context }, `artifact:${capabilityBundle.context.digest}`),
+        this.event(runId, "spec.proposed", { artifact: capabilityBundle.spec }, `artifact:${capabilityBundle.spec.digest}`),
+        this.event(runId, "slice.selected", { artifact: capabilityBundle.slice }, `artifact:${capabilityBundle.slice.digest}`),
+      );
+    }
+    await this.#write(runId, events, { exclusive: true });
+    const run = reduceWorkflowRun(events);
+    for (const created of events) await this.#notify(created, run);
     return run;
   }
 
