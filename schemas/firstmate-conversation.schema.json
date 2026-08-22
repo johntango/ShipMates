@@ -28,5 +28,24 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "action": { "const": "dispatch" } },
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "requiredAuthority": {
+            "type": "string",
+            "enum": ["read_only", "local_write", "external_write", "destructive"]
+          }
+        }
+      },
+      "else": {
+        "properties": { "requiredAuthority": { "type": "null" } }
+      }
+    }
+  ],
   "required": ["response", "action", "controlType", "taskId", "instruction", "planTaskId", "requiredAuthority", "objective", "tasks"]
 }

@@ -109,3 +109,25 @@ test("requires authority classification before returning a dispatch", async () =
   });
   assert.equal(decision.requiredAuthority, "read_only");
 });
+
+test("rejects a top-level authority classification on a plan", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "firstmate-plan-authority-"));
+  const runProcess = async (call) => {
+    await writeFile(call.eventsPath, `${JSON.stringify({ type: "thread.started", thread_id: "thread-plan-authority" })}\n${JSON.stringify({ type: "turn.completed" })}\n`);
+    const reportPath = call.args[call.args.indexOf("--output-last-message") + 1];
+    await writeFile(reportPath, JSON.stringify({
+      response: "Plan the local change.", action: "plan", controlType: null, taskId: null,
+      instruction: null, planTaskId: null, requiredAuthority: "local_write",
+      objective: "Build a reading list", tasks: [{
+        id: "build", title: "Build the page", description: "Implement the reading list",
+        requiredAuthority: "local_write", dependsOn: [],
+      }],
+    }));
+    return { exitCode: 0 };
+  };
+  const conversation = new FirstmateCodexConversation({ rootDir, runProcess });
+  await assert.rejects(
+    conversation.planCapability({ message: "Build a reading list", workingDirectory: process.cwd() }),
+    /authority classification is only valid for dispatch/iu,
+  );
+});

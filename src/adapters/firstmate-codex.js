@@ -28,6 +28,8 @@ project, task, prior dispatch, or conversational history. Choose exactly one act
   from a short plan;
 - dispatch with requiredAuthority external_write or destructive when the requested outcome requires
   publication, an external mutation, deletion, or another destructive operation;
+- plan with requiredAuthority null; authority belongs on each plan task, where every task must be
+  explicitly read_only or local_write;
 - answer only when the request is not an actionable implementation request.
 This turn only proposes typed capability work. It never grants authority or starts work.`;
 
