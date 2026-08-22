@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -6,6 +9,7 @@ import {
   matchesExpectedAxiRun,
   parseAxiRunId,
   projectNoMistakesHerdrStatus,
+  retainedValidationSummary,
 } from "../src/adapters/herdr-no-mistakes.js";
 
 test("parses quoted and unquoted AXI run identifiers without retaining quotes", () => {
@@ -71,6 +75,50 @@ test("projects terminal no-mistakes outcomes into dashboard pass and failure sta
   const failed = projectNoMistakesHerdrStatus("outcome: failed\n", { elapsedMs: 9_000 });
   assert.equal(failed.state, "blocked");
   assert.equal(failed.customStatus, "failed · 9s");
+  assert.equal(retainedValidationSummary(projectNoMistakesHerdrStatus("outcome: passed\n")),
+    "Validation passed. This pane is retained as read-only evidence.");
+});
+
+test("persists best-effort pane visibility without exposing it as authority", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "herdr-visibility-"));
+  const operationId = "a".repeat(24);
+  const calls = [];
+  const observer = new HerdrNoMistakesObserver({
+    client: {
+      list: async () => [], split: async () => ({ paneId: "w1:p4" }),
+      reportAgent: async () => {}, run: async (value) => calls.push(value),
+    },
+    currentPaneId: "w1:p1", watcherScript: "/watcher.js", displayTaskId: false,
+    visibilityRoot: root,
+  });
+  assert.equal(await observer.started({
+    taskId: `workflow-${operationId}`, binaryPath: "/validator", runtimeHome: "/state",
+    worktreePath: "/worktree", expectedHeadSha: "a".repeat(40),
+  }), "w1:p4");
+  const target = path.join(root, operationId, "herdr-visibility.json");
+  const receipt = JSON.parse(await readFile(target, "utf8"));
+  assert.equal(receipt.available, true);
+  assert.equal(receipt.state, "attach_started");
+  assert.equal(receipt.summary, "Validation is visible in Herder.");
+  assert.match(calls[0].command, new RegExp(target.replaceAll("/", "\\/"), "u"));
+});
+
+test("records unavailable visibility but never turns it into a validation failure", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "herdr-unavailable-"));
+  const operationId = "b".repeat(24);
+  const observer = new HerdrNoMistakesObserver({
+    client: { list: async () => { throw new Error("offline"); } },
+    currentPaneId: "w1:p1", watcherScript: "/watcher.js",
+    visibilityRoot: root, onWarning: () => {},
+  });
+  assert.equal(await observer.started({
+    taskId: `workflow-${operationId}`, worktreePath: "/worktree",
+  }), null);
+  const receipt = JSON.parse(await readFile(
+    path.join(root, operationId, "herdr-visibility.json"), "utf8"));
+  assert.equal(receipt.available, false);
+  assert.equal(receipt.state, "attach_failed");
+  assert.equal(receipt.summary, "Herder visibility unavailable; validation continues.");
 });
 
 test("opens a dedicated Herdr pane for the live no-mistakes TUI", async () => {

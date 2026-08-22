@@ -5,12 +5,14 @@ import {
   parseAxiRunId,
   matchesExpectedAxiRun,
   projectNoMistakesHerdrStatus,
+  retainedValidationSummary,
+  writeHerdrVisibilityReceipt,
 } from "../src/adapters/herdr-no-mistakes.js";
 import { HerdrPaneClient } from "../src/adapters/herdr-pane.js";
 
 const execFileAsync = promisify(execFile);
 const [
-  binaryPath, runtimeHome, worktreePath, paneId, source, agent, expectedHeadSha,
+  binaryPath, runtimeHome, worktreePath, paneId, source, agent, expectedHeadSha, visibilityPath,
 ] = process.argv.slice(2);
 if (!binaryPath || !runtimeHome || !worktreePath || !paneId || !source || !agent ||
     !expectedHeadSha) {
@@ -87,3 +89,12 @@ process.exitCode = await new Promise((resolve, reject) => {
 });
 clearInterval(reporter);
 await inspectAndReport().catch(() => {});
+const retained = retainedValidationSummary(lastProjection);
+console.log(`\n${retained}`);
+await writeHerdrVisibilityReceipt(visibilityPath, {
+  available: true,
+  state: lastProjection?.state === "idle" ? "passed" :
+    lastProjection?.terminal ? "blocked" : "finished",
+  paneId,
+  summary: retained,
+});

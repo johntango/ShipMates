@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
-  validationContract, WorkflowRunValidatorAdapter, WorkflowRunWorkerAdapter,
+  readWorkflowRunVisibility, validationContract, WorkflowRunValidatorAdapter, WorkflowRunWorkerAdapter,
 } from "../src/workflow-run/adapters.js";
 import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { SimpleWorkflowConversation } from "../src/workflow-run/interactive.js";
@@ -13,6 +13,14 @@ import { WorkflowRunStore } from "../src/workflow-run/store.js";
 
 const OPERATION = "a".repeat(24);
 const HEAD = "b".repeat(40);
+
+test("corrupt visibility evidence is ignored and cannot gate workflow execution", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-visibility-"));
+  const directory = path.join(root, "workflow-run-operations", OPERATION);
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, "herdr-visibility.json"), "not json");
+  assert.equal(await readWorkflowRunVisibility({ stateRoot: root, operationId: OPERATION }), null);
+});
 
 test("production worker bridge launches once and adopts a durable clean result", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "workflow-adapter-"));
@@ -172,7 +180,7 @@ test("feature-flag conversation gives one plan approval and leaks no ids", async
   assert.match(proposed, /Proposed plan/u);
   assert.doesNotMatch(proposed, /workflow-|internal-secret|task id/iu);
   const completed = await conversation.handle("I approve the plan");
-  assert.match(completed, /Outcome: Passed/u);
+  assert.match(completed, /Status: Passed/u);
   assert.match(completed, /Implementer created the code/iu);
   assert.match(completed, /No-mistakes tested and validated this exact isolated candidate/iu);
   assert.doesNotMatch(completed, /workflow-|internal-secret|task id/iu);
@@ -217,7 +225,7 @@ test("queues an early natural approval until the short plan is durable", async (
   });
   const completed = await planning;
   assert.match(completed, /approval.*applied/iu);
-  assert.match(completed, /Outcome: Passed/u);
+  assert.match(completed, /Status: Passed/u);
   assert.equal(launches, 1);
   assert.equal((await store.list())[0].phase, "completed");
 });
@@ -293,7 +301,7 @@ test("terminal result follow-ups use durable simple-workflow evidence without pl
     "what files did it create?", "show me the preview artifacts", "what tests ran?",
   ]) {
     const answer = await conversation.handle(question);
-    assert.match(answer, /Outcome: Passed/u);
+    assert.match(answer, /Status: Passed/u);
     assert.match(answer, /isolated workspace.*not been copied or merged/iu);
     assert.match(answer, /file:\/\/\/isolated\/candidate\/site\/index\.html/u);
     assert.match(answer, /site\/index\.html, site\/app\.js/u);
@@ -307,7 +315,7 @@ test("terminal result follow-ups use durable simple-workflow evidence without pl
     assert.match(answer, /newer workflow is blocked safely/iu);
   }
   const current = await conversation.handle("show status");
-  assert.match(current, /Outcome: Blocked safely/u);
+  assert.match(current, /Status: Blocked safely/u);
   assert.doesNotMatch(current, /private-result|workflow-|task id/iu);
   assert.equal(plannerCalls, callsBefore);
   assert.equal((await store.list())[0].eventCount, before);

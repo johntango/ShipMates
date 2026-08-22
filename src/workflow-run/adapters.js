@@ -94,7 +94,10 @@ export class WorkflowRunValidatorAdapter {
     });
     const result = validationResult(report, request.headSha);
     await writeAtomic(path.join(directory, "validation-result.json"), result);
-    return result;
+    const visibility = await readWorkflowRunVisibility({
+      stateRoot: this.stateRoot, operationId,
+    });
+    return visibility ? { ...result, visibility } : result;
   }
 
   async observe({ operationId, workspacePath, headSha, intent }) {
@@ -134,12 +137,33 @@ export class WorkflowRunValidatorAdapter {
       throw new WorkflowRunAdapterError("Pinned validator run remained nonterminal after approval");
     }
     await writeAtomic(path.join(directory, "validation-result.json"), result);
-    return result;
+    const visibility = await readWorkflowRunVisibility({
+      stateRoot: this.stateRoot, operationId,
+    });
+    return visibility ? { ...result, visibility } : result;
   }
 }
 
 export class WorkflowRunAdapterError extends Error {
   constructor(message, options = {}) { super(message, options); this.name = "WorkflowRunAdapterError"; }
+}
+
+export async function readWorkflowRunVisibility({ stateRoot, operationId }) {
+  if (!stateRoot || typeof operationId !== "string" || !/^[a-f0-9]{24}$/u.test(operationId)) {
+    return null;
+  }
+  const target = path.join(path.resolve(stateRoot), "workflow-run-operations", operationId,
+    "herdr-visibility.json");
+  let value;
+  try { value = await readJson(target); }
+  catch { return null; }
+  if (!value || value.schemaVersion !== 1 || typeof value.available !== "boolean" ||
+    typeof value.state !== "string" || typeof value.summary !== "string") return null;
+  return Object.freeze({
+    available: value.available,
+    state: value.state.slice(0, 40),
+    summary: value.summary.replaceAll(/\s+/gu, " ").trim().slice(0, 200),
+  });
 }
 
 export function validationContract(intent) {

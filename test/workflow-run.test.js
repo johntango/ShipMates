@@ -8,6 +8,7 @@ import { WorkflowRunController } from "../src/workflow-run/controller.js";
 import { workflowRunEnabled } from "../src/workflow-run/feature.js";
 import {
   projectWorkflowRun, renderWorkflowRun, validationEvidenceSummary,
+  workflowExecutionMilestones,
 } from "../src/workflow-run/projection.js";
 import { reduceWorkflowRun } from "../src/workflow-run/reducer.js";
 import { WorkflowRunStore } from "../src/workflow-run/store.js";
@@ -54,11 +55,18 @@ test("approval to completion uses one worker and one exact-head validator", asyn
   const completed = await controller.approve(run.id);
   assert.equal(completed.phase, "completed");
   assert.deepEqual(calls, { launches: 1, validations: 1 });
+  const eventTypes = (await store.events(run.id)).map(({ type }) => type);
+  assert.equal(eventTypes.filter((type) => type === "workflow.approved").length, 1);
+  assert.equal(eventTypes.filter((type) => type === "worker.launch_requested").length, 1);
+  assert.equal(eventTypes.filter((type) => type === "validation.requested").length, 1);
+  assert.equal(eventTypes.filter((type) => type === "workflow.completed").length, 1);
+  assert.doesNotMatch(eventTypes.join(" "), /dispatch|reconcile|task/iu);
   assert.deepEqual(projectWorkflowRun(completed), {
-    outcome: "Passed", nextAction: null,
+    outcome: "Passed", nextAction: "Review the isolated candidate. Sharing it remains a separate explicit decision.",
     why: "The Implementer created the code, and no-mistakes tested and validated that exact isolated candidate.",
-    phase: "completed",
+    phase: "Passed",
     details: [
+      "Herder visibility was unavailable; validation continued independently.",
       "Created by: The Implementer created the code in this candidate.",
       "Validated by: No-mistakes tested and validated this exact isolated candidate.",
       "Delivery: The candidate is preserved in its isolated workspace; it has not been copied or merged into the shared checkout.",
@@ -68,6 +76,7 @@ test("approval to completion uses one worker and one exact-head validator", asyn
     ],
   });
   const rendered = renderWorkflowRun(completed);
+  assert.match(rendered, /^Status: Passed/u);
   assert.match(rendered, /Implementer created the code/iu);
   assert.match(rendered, /No-mistakes tested and validated this exact isolated candidate/iu);
   assert.doesNotMatch(rendered, /workflow-test|operation id|task id/iu);
@@ -97,6 +106,38 @@ test("validation evidence distinguishes generated tests, test cases, and checks"
   ]);
 });
 
+test("derives actual execution milestones from durable evidence, not plan prose", () => {
+  const waiting = {
+    phase: "awaiting_approval", plan: "1. Inspect\n2. Build", worker: null, validation: null,
+  };
+  assert.deepEqual(workflowExecutionMilestones(waiting).map(({ label, status }) =>
+    [label, status]), [
+    ["Plan", "Awaiting your approval"], ["Implementer", "Queued"], ["No-mistakes", "Queued"],
+  ]);
+  const working = {
+    ...waiting, phase: "implementing", worker: { status: "launched", receipt: { pid: 1 } },
+  };
+  assert.equal(workflowExecutionMilestones(working)[1].status, "Working");
+  assert.equal(workflowExecutionMilestones({ ...working, phase: "blocked" })[1].status,
+    "Blocked safely");
+  const completed = {
+    ...working, phase: "completed",
+    worker: { status: "completed", headSha: HEAD, report: {
+      status: "completed", files: ["site/index.html", "site/app.js"],
+    } },
+    validation: { status: "passed", headSha: HEAD, report: {
+      executedTestCaseCount: 4,
+      steps: [{ step: "test", status: "completed" }, { step: "lint", status: "completed" }],
+    } },
+  };
+  const milestones = workflowExecutionMilestones(completed);
+  assert.equal(milestones[0].status, "Approved");
+  assert.match(milestones[1].summary, /site\/index\.html, site\/app\.js/u);
+  assert.equal(milestones[2].status, "Passed");
+  assert.match(milestones[2].summary, /executed 4 test cases.*2 validation checks/isu);
+  assert.doesNotMatch(JSON.stringify(milestones), /workflow-|task id|operation/iu);
+});
+
 test("restart after launch intent observes the operation without a duplicate worker", async () => {
   const { store, run } = await createRun();
   await store.append(run.id, "workflow.approved", {}, "approved");
@@ -114,6 +155,34 @@ test("restart after launch intent observes the operation without a duplicate wor
   });
   assert.equal((await controller.advance(run.id)).phase, "completed");
   assert.equal(launches, 0);
+});
+
+test("restart reattaches a live Implementer before adopting its terminal report", async () => {
+  const { store, run } = await createRun();
+  await store.append(run.id, "workflow.approved", {}, "approved");
+  await store.append(run.id, "worker.launch_requested", { operationId: "worker-live" }, "worker-launch-requested");
+  await store.append(run.id, "worker.launched", {
+    operationId: "worker-live", receipt: { pid: 91 },
+  }, "worker-launched");
+  let observations = 0;
+  const worker = {
+    launch: async () => { throw new Error("must not launch"); },
+    observe: async ({ receipt }) => {
+      observations += 1;
+      assert.deepEqual(receipt, { pid: 91 });
+      return observations === 1 ? { receipt } : { receipt, completed: {
+        workspacePath: "/tmp/reattached", headSha: HEAD,
+        report: { status: "completed" },
+      } };
+    },
+  };
+  const controller = new WorkflowRunController({ store, worker, validator: passingValidator() });
+  const live = await controller.advance(run.id);
+  assert.equal(live.phase, "implementing");
+  assert.equal(projectWorkflowRun(live).phase, "Working");
+  assert.equal((await controller.advance(run.id)).phase, "completed");
+  assert.equal(observations, 2);
+  assert.equal((await store.events(run.id)).filter(({ type }) => type === "worker.launched").length, 1);
 });
 
 test("restart after worker report starts validation once", async () => {
@@ -178,6 +247,76 @@ test("adapter failures stop safely without exposing raw diagnostics", async () =
   assert.equal(blocked.phase, "blocked");
   assert.equal(projectWorkflowRun(blocked).outcome, "Blocked safely");
   assert.doesNotMatch(blocked.blocker, /secret path/u);
+  assert.match(projectWorkflowRun(blocked).nextAction, /Resolve the stated issue/iu);
+});
+
+test("one transient setup failure is retried durably without duplicate work", async () => {
+  const { store, run } = await createRun();
+  let launches = 0;
+  const temporary = Object.assign(new Error("temporary private detail"), { code: "EBUSY" });
+  const controller = new WorkflowRunController({
+    store,
+    worker: {
+      observe: async () => null,
+      launch: async () => {
+        launches += 1;
+        if (launches === 1) throw temporary;
+        return { receipt: { pid: 8 }, completed: {
+          workspacePath: "/tmp/retried", headSha: HEAD,
+          report: { status: "completed" },
+        } };
+      },
+    },
+    validator: passingValidator(),
+  });
+  const completed = await controller.approve(run.id);
+  assert.equal(completed.phase, "completed");
+  assert.equal(launches, 2);
+  assert.equal(completed.retries.length, 1);
+  assert.equal(completed.retries[0].component, "worker");
+  assert.equal((await controller.advance(run.id)).eventCount, completed.eventCount);
+  assert.equal(launches, 2);
+});
+
+test("a repeated transient setup failure blocks safely with a sanitized explanation", async () => {
+  const { store, run } = await createRun();
+  let launches = 0;
+  const controller = new WorkflowRunController({
+    store,
+    worker: {
+      observe: async () => null,
+      launch: async () => {
+        launches += 1;
+        throw Object.assign(new Error("/private/secret/runtime"), { code: "ETIMEDOUT" });
+      },
+    },
+    validator: passingValidator(),
+  });
+  const blocked = await controller.approve(run.id);
+  assert.equal(blocked.phase, "blocked");
+  assert.equal(launches, 2);
+  assert.equal(blocked.retries.length, 1);
+  assert.doesNotMatch(renderWorkflowRun(blocked), /private\/secret|ETIMEDOUT|operation/iu);
+  assert.match(renderWorkflowRun(blocked), /^Status: Blocked safely/u);
+});
+
+test("human phase projection follows durable evidence instead of a stale planned label", () => {
+  const base = { phase: "awaiting_approval", worker: null, validation: null, retries: [] };
+  assert.equal(projectWorkflowRun({ ...base, phase: "planning" }).phase, "Planning");
+  assert.equal(projectWorkflowRun(base).phase, "Awaiting your approval");
+  assert.equal(projectWorkflowRun({
+    ...base, worker: { status: "launched", receipt: { pid: 1 } },
+  }).phase, "Working");
+  assert.equal(projectWorkflowRun({
+    ...base, worker: { status: "completed", headSha: HEAD },
+  }).phase, "Validating");
+  assert.equal(projectWorkflowRun({
+    ...base, phase: "completed",
+    worker: { status: "completed", headSha: HEAD },
+    validation: { status: "passed", headSha: HEAD },
+  }).phase, "Passed");
+  assert.equal(projectWorkflowRun({ ...base, phase: "blocked", blocker: "Stopped safely." }).phase,
+    "Blocked safely");
 });
 
 test("one high-level validation decision reconciles the pinned run without rerunning", async () => {
@@ -215,7 +354,10 @@ test("one high-level validation decision reconciles the pinned run without rerun
   const awaiting = await controller.approve(run.id);
   assert.equal(awaiting.phase, "awaiting_validation_decision");
   assert.equal(projectWorkflowRun(awaiting).nextAction,
-    "Review the validation concern, then approve validation or stop.");
+    "Choose whether to accept this validation risk or stop safely.");
+  assert.match(projectWorkflowRun(awaiting).details.join("\n"),
+    /Decision needed:.*Choices:.*Default:/su);
+  assert.doesNotMatch(renderWorkflowRun(awaiting), /validator-pinned|operation|task id/iu);
   const validating = await controller.approveValidation(run.id);
   assert.equal(validating.phase, "validating");
   const completed = await controller.advance(run.id);

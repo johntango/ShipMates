@@ -37,6 +37,7 @@ function applyEvent(run, event) {
       authority: event.data.authority,
       worker: null,
       validation: null,
+      retries: [],
       outcome: null,
       blocker: null,
       updatedAt: event.at,
@@ -93,7 +94,10 @@ function applyEvent(run, event) {
       if (event.data.headSha !== run.validation.headSha) {
         throw new WorkflowRunError("Observed validation head does not match the requested head");
       }
-      next.validation = { ...run.validation, status: event.data.status, report: event.data.report };
+      next.validation = {
+        ...run.validation, status: event.data.status, report: event.data.report,
+        ...(event.data.visibility ? { visibility: event.data.visibility } : {}),
+      };
       if (event.data.status === "passed") {
         next.phase = "validated";
       } else if (event.data.status === "failed") {
@@ -126,6 +130,23 @@ function applyEvent(run, event) {
       next.phase = "validating";
       next.validation = { ...run.validation, status: "decision_approved", decisionAt: event.at };
       return next;
+    case "operation.retry_recorded": {
+      const operation = activeOperation(run);
+      if (!operation || event.data.operationId !== operation.operationId ||
+        !new Set(["worker", "validator"]).has(event.data.component)) {
+        throw new WorkflowRunError("Safe retry must match the active durable operation");
+      }
+      if (run.retries.some(({ operationId }) => operationId === event.data.operationId)) {
+        throw new WorkflowRunError("A durable operation can be retried only once");
+      }
+      next.retries = [...run.retries, {
+        operationId: event.data.operationId,
+        component: event.data.component,
+        reason: event.data.reason,
+        at: event.at,
+      }];
+      return next;
+    }
     case "workflow.completed":
       requirePhase(run, "validated", event);
       next.phase = "completed";
@@ -135,10 +156,19 @@ function applyEvent(run, event) {
     case "workflow.blocked":
       next.phase = "blocked";
       next.blocker = event.data.reason;
+      next.blockedFrom = run.phase;
       return next;
     default:
       throw new WorkflowRunError(`Unsupported WorkflowRun event: ${event.type}`);
   }
+}
+
+function activeOperation(run) {
+  if (new Set(["launching", "implementing"]).has(run.phase)) return run.worker;
+  if (new Set(["validating", "awaiting_validation_decision"]).has(run.phase)) {
+    return run.validation;
+  }
+  return null;
 }
 
 function validateEvent(event) {

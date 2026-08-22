@@ -3,11 +3,12 @@ import { createHash } from "node:crypto";
 import { WorkflowRunError } from "./reducer.js";
 
 export class WorkflowRunController {
-  constructor({ store, worker, validator } = {}) {
+  constructor({ store, worker, validator, isTransientError = defaultTransientError } = {}) {
     if (!store || !worker || !validator) throw new TypeError("WorkflowRunController requires store, worker, and validator");
     this.store = store;
     this.worker = worker;
     this.validator = validator;
+    this.isTransientError = isTransientError;
   }
 
   async approve(runId) {
@@ -48,9 +49,12 @@ export class WorkflowRunController {
         continue;
       }
       if (run.phase === "launching") {
-        const result = await recoverOrStart(this.worker, "launch", run.worker.operationId, {
-          operationId: run.worker.operationId, run,
-        });
+        const result = await this.#recoverWithRetry(
+          run, "worker", run.worker.operationId,
+          () => recoverOrStart(this.worker, "launch", run.worker.operationId, {
+            operationId: run.worker.operationId, run,
+          }),
+        );
         if (!result) return this.#block(run, "Worker launch could not be proven after interruption");
         await this.store.append(run.id, "worker.launched", {
           operationId: run.worker.operationId, receipt: result.receipt,
@@ -59,7 +63,12 @@ export class WorkflowRunController {
         continue;
       }
       if (run.phase === "implementing") {
-        const result = await this.worker.observe({ operationId: run.worker.operationId, receipt: run.worker.receipt, run });
+        const result = await this.#recoverWithRetry(
+          run, "worker", run.worker.operationId,
+          () => this.worker.observe({
+            operationId: run.worker.operationId, receipt: run.worker.receipt, run,
+          }),
+        );
         if (!result?.completed) return run;
         await this.#recordWorker(run.id, run.worker.operationId, result.completed);
         continue;
@@ -79,11 +88,14 @@ export class WorkflowRunController {
           intent: run.validation.intent,
           run,
         };
-        const result = run.validation.status === "decision_approved"
-          ? await this.validator.decide({
-              ...input, validatorRunId: run.validation.validatorRunId, decision: "approve",
-            })
-          : await recoverOrStart(this.validator, "start", run.validation.operationId, input);
+        const result = await this.#recoverWithRetry(
+          run, "validator", run.validation.operationId,
+          () => run.validation.status === "decision_approved"
+            ? this.validator.decide({
+                ...input, validatorRunId: run.validation.validatorRunId, decision: "approve",
+              })
+            : recoverOrStart(this.validator, "start", run.validation.operationId, input),
+        );
         if (!result) return this.#block(run, "Validation result could not be proven after interruption");
         if (result.status === "awaiting_decision") {
           if (result.headSha !== run.validation.headSha) {
@@ -101,7 +113,7 @@ export class WorkflowRunController {
         if (result.headSha !== run.validation.headSha) return this.#block(run, "Validator reported a different Git head");
         await this.store.append(run.id, "validation.observed", {
           operationId: run.validation.operationId, status: result.status,
-          headSha: result.headSha, report: result.report,
+          headSha: result.headSha, report: result.report, visibility: result.visibility || null,
         }, "validation-observed");
         continue;
       }
@@ -121,6 +133,20 @@ export class WorkflowRunController {
     }, "worker-completed");
   }
 
+  async #recoverWithRetry(run, component, operationId, action) {
+    try {
+      return await action();
+    } catch (error) {
+      if (!this.isTransientError(error)) throw error;
+      const current = await this.store.get(run.id);
+      if (current.retries.some((retry) => retry.operationId === operationId)) throw error;
+      await this.store.append(run.id, "operation.retry_recorded", {
+        operationId, component, reason: transientReason(component),
+      }, `retry:${operationId}`);
+      return action();
+    }
+  }
+
   async #block(run, reason) {
     return this.store.append(run.id, "workflow.blocked", { reason }, `blocked:${operation(run.id, reason)}`);
   }
@@ -137,7 +163,26 @@ function operation(runId, purpose) {
 }
 
 function safeReason(error) {
-  const name = typeof error?.name === "string" && /^[A-Za-z][A-Za-z0-9]*$/u.test(error.name)
-    ? error.name : "WorkflowError";
-  return `Workflow stopped before another side effect (${name})`;
+  const message = String(error?.message || "");
+  if (/Implementer/iu.test(message)) {
+    return "The Implementer stopped before producing a verified candidate.";
+  }
+  if (/validat|no-mistakes/iu.test(message)) {
+    return "No-mistakes validation could not be verified for the exact isolated candidate.";
+  }
+  return "A required local workflow step could not be verified safely.";
+}
+
+function defaultTransientError(error) {
+  const safeCodes = new Set(["EAGAIN", "EBUSY", "ECONNRESET", "EMFILE", "ENFILE", "ETIMEDOUT"]);
+  for (let current = error; current; current = current.cause) {
+    if (current.transient === true || safeCodes.has(current.code)) return true;
+  }
+  return false;
+}
+
+function transientReason(component) {
+  return component === "worker"
+    ? "The local Implementer setup was temporarily unavailable."
+    : "The local validator setup was temporarily unavailable.";
 }
