@@ -53,6 +53,7 @@ test("projects simple workflows without exposing diagnostic identifiers", async 
       why: "The short plan is ready; no files have changed.", phase: "Awaiting your approval", details: [],
     },
     candidate: { workspacePath: null, files: [], pageUrl: null },
+    technicalEvidence: [],
     milestones: [
       { label: "Plan", status: "Awaiting your approval", summary: "The approved scope is ready; no implementation has started." },
       { label: "Implementer", status: "Queued", summary: "Implementation has not started." },
@@ -98,12 +99,12 @@ test("projects completed simple workflow authorship, validation, and durable pag
   });
   assert.match(run.presentation.why, /Implementer created.*no-mistakes tested and validated/iu);
   assert.match(run.presentation.details.join("\n"), /file:\/\/\/isolated\/candidate\/site\/index\.html/u);
-  assert.match(run.presentation.details.join("\n"), /generated 0 project tests.*executed 3 test cases/isu);
+  assert.match(run.presentation.details.join("\n"), /generated no new project tests.*ran 3 recorded test cases/isu);
   assert.deepEqual(run.milestones.map(({ label, status }) => [label, status]), [
     ["Plan", "Approved"], ["Implementer", "Completed"], ["No-mistakes", "Passed"],
   ]);
   assert.match(run.milestones[1].summary, /site\/index\.html/u);
-  assert.match(run.milestones[2].summary, /executed 3 test cases/iu);
+  assert.match(run.milestones[2].summary, /ran 3 recorded test cases/iu);
   assert.doesNotMatch(JSON.stringify(run), /workflow-secret|localhost/iu);
 });
 
@@ -434,7 +435,8 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
         current: true, request: "Current bouncing page", phase: "Passed", action: "status",
         plan: "Build it", presentation: {
           outcome: "Passed", nextAction: "Review it", why: "Validated", details: [],
-        }, milestones: [], candidate: {
+        }, technicalEvidence: ["Implementer verification — node --test: 3 tests passed."],
+        milestones: [], candidate: {
           workspacePath: "/isolated/current",
           pageUrl: "file:///isolated/current/public/balls.html",
           files: [{ relativePath: "public/balls.html", path: "/isolated/current/public/balls.html", html: true }],
@@ -458,6 +460,7 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
   assert.match(element("#tasks").innerHTML, /Current result/u);
   assert.match(element("#tasks").innerHTML, /href="file:\/\/\/isolated\/current\/public\/balls\.html"/u);
   assert.match(element("#tasks").innerHTML, /Created or changed files.*public\/balls\.html/su);
+  assert.match(element("#tasks").innerHTML, /<details class="small mt-2"><summary>Technical evidence<\/summary>.*node --test/su);
   assert.match(element("#tasks").innerHTML, /earlier workflow result.*History.*Older page/su);
 });
 

@@ -208,7 +208,7 @@ test("feature-flag conversation gives one plan approval and leaks no ids", async
   const completed = await conversation.handle("I approve the plan");
   assert.match(completed, /Status: Passed/u);
   assert.match(completed, /Implementer created the code/iu);
-  assert.match(completed, /No-mistakes tested and validated this exact isolated candidate/iu);
+  assert.match(completed, /No-mistakes tested this exact isolated candidate, and it passed/iu);
   assert.doesNotMatch(completed, /workflow-|internal-secret|task id/iu);
   assert.equal((await store.list()).length, 1);
 });
@@ -333,11 +333,10 @@ test("terminal result follow-ups use durable simple-workflow evidence without pl
     assert.match(answer, /site\/index\.html, site\/app\.js/u);
     assert.match(answer, /Durable preview evidence: \/evidence\/page\.png/u);
     assert.doesNotMatch(answer, /localhost:8000|private-result|workflow-|task id/iu);
-    assert.match(answer, /No generated project tests were recorded/u);
-    assert.match(answer, /No individual test-case count was recorded/u);
-    assert.match(answer, /completed 2 validation checks: test, lint/u);
+    assert.doesNotMatch(answer, /No generated project tests were recorded|No individual test-case count/u);
+    assert.match(answer, /completed 2 checks: tests and lint/u);
     assert.match(answer, /Implementer created the code/iu);
-    assert.match(answer, /No-mistakes tested and validated this exact isolated candidate/iu);
+    assert.match(answer, /No-mistakes tested this exact isolated candidate, and it passed/iu);
     assert.match(answer, /newer workflow is blocked safely/iu);
   }
   const current = await conversation.handle("show status");

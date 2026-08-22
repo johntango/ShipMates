@@ -7,6 +7,7 @@ import { projectOperationalState } from "../projections/operational-state.js";
 import { projectTaskPresentation } from "../projections/task-presentation.js";
 import {
   projectWorkflowRun, workflowCandidateArtifacts, workflowExecutionMilestones,
+  workflowTechnicalEvidence,
 } from "../workflow-run/projection.js";
 import { readWorkflowRunVisibility } from "../workflow-run/adapters.js";
 
@@ -308,6 +309,7 @@ export async function buildDashboardState({
           presentation,
           candidate: workflowCandidateArtifacts(run),
           milestones: workflowExecutionMilestones(projectedRun),
+          technicalEvidence: workflowTechnicalEvidence(projectedRun),
           ...(run.capability ? { capability: {
             mode: run.capability.context?.content?.mode || null,
             modeReason: run.capability.context?.content?.modeReason || null,

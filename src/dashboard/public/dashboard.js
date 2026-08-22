@@ -86,6 +86,7 @@
             ${run.presentation.nextAction ? `<div><strong>Next action:</strong> ${escape(run.presentation.nextAction)}</div>` : '<div><strong>Next action:</strong> None.</div>'}
             <div class="small mt-1"><strong>Why:</strong> ${escape(run.presentation.why)}</div>
             ${run.presentation.details?.length ? `<div class="small mt-2">${run.presentation.details.map((detail) => `<div>${escape(detail)}</div>`).join("")}</div>` : ""}
+            ${run.technicalEvidence?.length ? `<details class="small mt-2"><summary>Technical evidence</summary><div class="mt-2">${run.technicalEvidence.map((detail) => `<div>${escape(detail)}</div>`).join("")}</div></details>` : ""}
             ${run.action === "approve" ? '<button class="btn btn-success btn-sm mt-2" data-workflow-intent="approve">Approve plan</button>' : run.action === "approve_validation" ? '<button class="btn btn-warning btn-sm mt-2" data-workflow-intent="approve_validation">Review decision</button>' : ""}
           </div>
           ${run.candidate?.pageUrl ? `<div class="mt-3"><a class="btn btn-primary btn-sm" href="${escape(run.candidate.pageUrl)}">Open candidate page</a></div>` : ""}

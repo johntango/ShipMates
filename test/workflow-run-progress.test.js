@@ -50,17 +50,17 @@ test("renders validation, review, completion, and blocked transitions in plain l
     validation: { report: {
       generatedTestCount: 0, executedTestCaseCount: 4,
       steps: [{ step: "test", status: "completed" }],
-    } },
+    }, status: "passed", headSha: "a".repeat(40) },
     worker: {
-      workspacePath: "/isolated/candidate",
+      workspacePath: "/isolated/candidate", status: "completed", headSha: "a".repeat(40),
       report: { status: "completed", files: ["site/index.html"] },
     },
     phase: "completed",
   });
-  assert.match(completion, /Implementer created the code.*No-mistakes tested and validated/isu);
+  assert.match(completion, /Implementer created the code.*No-mistakes tested.*passed/isu);
   assert.match(completion, /Candidate page: file:\/\/\/isolated\/candidate\/site\/index\.html/iu);
-  assert.ok(completion.indexOf("Candidate page:") < completion.indexOf("Created by:"));
-  assert.match(completion, /generated 0 project tests.*executed 4 test cases.*1 validation check/isu);
+  assert.ok(completion.indexOf("Candidate page:") < completion.indexOf("Created:"));
+  assert.match(completion, /1 check: tests.*generated no new project tests.*ran 4 recorded test cases/isu);
   assert.match(workflowProgressMessage({ type: "workflow.blocked" }), /^Status: Blocked safely/u);
   assert.equal(workflowProgressMessage({ type: "worker.launch_requested" }), null);
 });

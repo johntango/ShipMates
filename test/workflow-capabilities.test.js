@@ -50,12 +50,14 @@ test("greenfield detection and pre-approval override are explicit", async () => 
 });
 
 test("command and natural-language routing is bounded to high-level intents", () => {
-  for (const command of ["spec", "plan", "build", "test", "review", "ship", "status", "clean", "wipe-clean"]) {
+  for (const command of ["spec", "plan", "build", "test", "review", "ship", "status", "details", "clean", "wipe-clean"]) {
     assert.equal(parseCapabilityIntent(`/${command}`).command, command);
   }
   assert.equal(parseCapabilityIntent("show the current status").command, "status");
   assert.equal(parseCapabilityIntent("review the quality").command, "review");
   assert.equal(parseCapabilityIntent("preview a delivery request").command, "ship");
+  assert.equal(parseCapabilityIntent("show technical evidence").command, "details");
+  assert.equal(parseCapabilityIntent("show task evidence").command, "details");
   assert.equal(parseCapabilityIntent("build a page"), null);
 });
 
@@ -150,6 +152,44 @@ test("review and ship are advisory evidence and never launch work or delivery", 
     "review.recorded", "ship.previewed",
   ]);
   assert.doesNotMatch(await conversation.handle("/status"), /workflow-|operation id|task id/iu);
+});
+
+test("details exposes technical evidence on request without launching or changing workflow state", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "shipmates-capability-details-"));
+  const store = new WorkflowRunStore({ rootDir: root, idFactory: () => "details" });
+  const run = await store.create({
+    request: "Build a page", plan: "Build and validate", repoPath: root, baseHeadSha: HEAD,
+  });
+  await store.append(run.id, "workflow.approved", {}, "approved");
+  await store.append(run.id, "worker.launch_requested", { operationId: "worker" }, "worker-request");
+  await store.append(run.id, "worker.launched", { operationId: "worker", receipt: {} }, "worker-launched");
+  await store.append(run.id, "worker.completed", {
+    operationId: "worker", workspacePath: root, headSha: HEAD,
+    report: { status: "completed", files: ["balls.html"], tests: [
+      { command: "node --test test/balls.test.js", result: "3 tests passed" },
+    ] },
+  }, "worker-completed");
+  await store.append(run.id, "validation.requested", {
+    operationId: "validator", headSha: HEAD, intent: "Build a page",
+  }, "validation-requested");
+  await store.append(run.id, "validation.observed", {
+    operationId: "validator", headSha: HEAD, status: "passed",
+    report: { steps: [{ step: "test", status: "completed" }] },
+  }, "validation-observed");
+  await store.append(run.id, "workflow.completed", {}, "completed");
+  const conversation = new SimpleWorkflowConversation({
+    store,
+    controller: { advance: async () => { throw new Error("must not launch"); } },
+    context: async () => ({ repoPath: root, baseSha: HEAD }),
+    planner: async () => { throw new Error("must not plan"); },
+  });
+  const before = await store.events(run.id);
+  const normal = await conversation.handle("/status");
+  assert.doesNotMatch(normal, /node --test|No individual test-case count/iu);
+  const details = await conversation.handle("/details");
+  assert.match(details, /Technical evidence:.*node --test test\/balls\.test\.js.*3 tests passed/isu);
+  assert.match(await conversation.handle("show technical evidence"), /Technical evidence:/u);
+  assert.deepEqual(await store.events(run.id), before);
 });
 
 test("capability responses avoid duplicate summaries and render a readable plan", async () => {

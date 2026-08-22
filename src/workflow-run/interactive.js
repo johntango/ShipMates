@@ -161,6 +161,7 @@ export class SimpleWorkflowConversation {
         : "No local capability workflow has been recorded yet. Start with /spec followed by the goal.";
     }
     if (command === "status") return renderWorkflowRun(latest);
+    if (command === "details") return renderWorkflowRun(latest, { technical: true });
     if (command === "spec") return renderArtifact("Specification", latest.capability?.spec);
     if (command === "plan") {
       if (argument && latest.phase === "completed" && latest.capability?.slice?.content) {

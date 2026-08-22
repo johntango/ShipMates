@@ -146,9 +146,11 @@ export function packDigest(value) {
 
 export function parseCapabilityIntent(input) {
   const text = String(input || "").replaceAll(/\s+/gu, " ").trim();
-  const explicit = text.match(/^\/(spec|plan|build|test|review|ship|status|clean|wipe-clean)(?:\s+(.*))?$/iu);
+  const explicit = text.match(/^\/(spec|plan|build|test|review|ship|status|details|clean|wipe-clean)(?:\s+(.*))?$/iu);
   if (explicit) return { command: explicit[1].toLowerCase(), argument: explicit[2]?.trim() || "" };
   if (/^(?:show|what(?:'s| is)|tell me) (?:the )?(?:current )?status[.!]?$/iu.test(text)) return { command: "status", argument: "" };
+  if (/^(?:show|explain) (?:the )?(?:technical )?(?:details|evidence)[.!]?$/iu.test(text) ||
+    /^show task evidence[.!]?$/iu.test(text)) return { command: "details", argument: "" };
   if (/^(?:show|explain) (?:the )?(?:current )?(?:specification|spec)[.!]?$/iu.test(text)) return { command: "spec", argument: "" };
   if (/^(?:show|explain) (?:the )?(?:current )?(?:plan|slice)[.!]?$/iu.test(text)) return { command: "plan", argument: "" };
   if (/^(?:start|continue) (?:the )?(?:approved )?(?:build|implementation)[.!]?$/iu.test(text)) return { command: "build", argument: "" };
