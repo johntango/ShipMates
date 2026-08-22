@@ -15,6 +15,7 @@ export class ShipMatesDashboardServer {
     projectStore = null,
     watchdog = null,
     workflowRunStore = null,
+    workflowWorkspaceMaintenance = null,
     onWorkflowIntent = null,
     onCommand,
     onProjectAction = null,
@@ -31,6 +32,7 @@ export class ShipMatesDashboardServer {
     this.projectStore = projectStore;
     this.watchdog = watchdog;
     this.workflowRunStore = workflowRunStore;
+    this.workflowWorkspaceMaintenance = workflowWorkspaceMaintenance;
     this.onWorkflowIntent = onWorkflowIntent;
     this.onCommand = onCommand;
     this.onProjectAction = onProjectAction;
@@ -67,6 +69,7 @@ export class ShipMatesDashboardServer {
           projectStore: this.projectStore,
           watchdog: this.watchdog,
           workflowRunStore: this.workflowRunStore,
+          workflowWorkspaceMaintenance: this.workflowWorkspaceMaintenance,
         }));
       } catch (error) {
         next(error);
@@ -88,6 +91,7 @@ export class ShipMatesDashboardServer {
             projectStore: this.projectStore,
             watchdog: this.watchdog,
             workflowRunStore: this.workflowRunStore,
+            workflowWorkspaceMaintenance: this.workflowWorkspaceMaintenance,
           });
           response.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
         } catch {
@@ -192,6 +196,7 @@ export class ShipMatesDashboardServer {
 export async function buildDashboardState({
   store, projectContext, projectStore = null, watchdog = null,
   workflowRunStore = null,
+  workflowWorkspaceMaintenance = null,
   reconciliationEngine = new ReconciliationEngine(),
 }) {
   const activeProjectTaskId = await projectContext.load();
@@ -238,6 +243,9 @@ export async function buildDashboardState({
         };
       }))
     : [];
+  const workspaceMaintenance = workflowWorkspaceMaintenance
+    ? await workflowWorkspaceMaintenance.inventory()
+    : null;
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -254,6 +262,11 @@ export async function buildDashboardState({
     })),
     tasks: workflowRunStore ? [] : tasks.slice(0, 30),
     workflowRuns,
+    workspaceMaintenance: workspaceMaintenance ? {
+      counts: workspaceMaintenance.counts,
+      summary: renderWorkspaceSummary(workspaceMaintenance),
+      action: "clean",
+    } : null,
   };
 }
 
@@ -376,10 +389,18 @@ export function validateProjectAction(value) {
 }
 
 export function validateWorkflowIntent(value) {
-  if (!value || !new Set(["approve", "approve_validation", "status"]).has(value.intent)) {
+  if (!value || !new Set(["approve", "approve_validation", "status", "workspace_status", "clean"]).has(value.intent)) {
     throw new DashboardCommandError("Invalid workflow intent");
   }
   return Object.freeze({ intent: value.intent });
+}
+
+function renderWorkspaceSummary(inventory) {
+  const active = inventory.counts.active || 0;
+  const candidates = inventory.counts["retained candidate"] || 0;
+  const reclaimable = inventory.counts["safely reclaimable"] || 0;
+  const preserved = inventory.counts["preserved for review"] || 0;
+  return `${active} active; ${candidates} retained candidate; ${reclaimable} safely reclaimable; ${preserved} preserved for review.`;
 }
 
 export async function executeProjectAction({ onProjectAction, projectId, body }) {

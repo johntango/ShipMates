@@ -37,6 +37,7 @@ function applyEvent(run, event) {
       authority: event.data.authority,
       worker: null,
       validation: null,
+      workspace: null,
       retries: [],
       outcome: null,
       blocker: null,
@@ -44,9 +45,57 @@ function applyEvent(run, event) {
     };
   }
   if (event.runId !== run.id) throw new WorkflowRunError("WorkflowRun event has the wrong run id");
-  if (TERMINAL.has(run.phase)) throw new WorkflowRunError(`Cannot advance a ${run.phase} WorkflowRun`);
+  if (TERMINAL.has(run.phase) && !event.type.startsWith("workspace.")) {
+    throw new WorkflowRunError(`Cannot advance a ${run.phase} WorkflowRun`);
+  }
   const next = { ...run, updatedAt: event.at };
   switch (event.type) {
+    case "workspace.lease_bound":
+      requireWorkspaceBinding(run, event.data);
+      if (run.workspace?.status === "returned") {
+        throw new WorkflowRunError("A returned WorkflowRun workspace cannot be rebound");
+      }
+      if (run.workspace && !sameWorkspaceBinding(run.workspace.binding, event.data)) {
+        throw new WorkflowRunError("WorkflowRun workspace binding cannot change");
+      }
+      next.workspace = { ...(run.workspace || {}), status: "leased", binding: event.data };
+      return next;
+    case "workspace.return_requested":
+      requireWorkspaceBinding(run, event.data.binding);
+      if (!TERMINAL.has(run.phase) || run.workspace?.status !== "leased" ||
+        !sameWorkspaceBinding(run.workspace.binding, event.data.binding) ||
+        event.data.proof?.kind !== "no-mutation" || event.data.proof?.verified !== true ||
+        event.data.proof?.worktreePath !== event.data.binding.worktreePath ||
+        event.data.proof?.headSha !== event.data.binding.baseHeadSha) {
+        throw new WorkflowRunError("Workspace return must match its durable lease binding");
+      }
+      next.workspace = {
+        ...run.workspace, status: "returning",
+        returnIntent: { reason: event.data.reason, proof: event.data.proof, requestedAt: event.at },
+      };
+      return next;
+    case "workspace.abandonment_recorded":
+      if (TERMINAL.has(run.phase) || run.workspace?.status !== "leased" ||
+        event.data.worktreePath !== run.workspace.binding.worktreePath ||
+        event.data.headSha !== run.workspace.binding.baseHeadSha ||
+        event.data.clean !== true || event.data.noLiveProcess !== true) {
+        throw new WorkflowRunError("Workspace abandonment requires exact clean inactive lease evidence");
+      }
+      next.phase = "blocked";
+      next.blocker = "The inactive local workflow expired and its unchanged workspace was safely reclaimed.";
+      next.blockedFrom = run.phase;
+      next.workspace = { ...run.workspace, abandonedAt: event.at };
+      return next;
+    case "workspace.returned":
+      if (run.workspace?.status !== "returning" ||
+        event.data.worktreePath !== run.workspace.binding.worktreePath) {
+        throw new WorkflowRunError("Workspace return result must match its durable intent");
+      }
+      next.workspace = {
+        ...run.workspace, status: "returned",
+        returnedAt: event.at, returnProof: event.data.proof,
+      };
+      return next;
     case "workflow.approved":
       requirePhase(run, "awaiting_approval", event);
       if (run.authority !== "local_write") throw new WorkflowRunError("Stage 1 only approves local_write runs");
@@ -191,4 +240,17 @@ function requireHead(value) {
   if (typeof value !== "string" || !/^[0-9a-f]{40}$/u.test(value)) {
     throw new WorkflowRunError("WorkflowRun requires an exact Git head SHA");
   }
+}
+
+function requireWorkspaceBinding(run, binding) {
+  if (!binding || binding.runId !== run.id || binding.repoPath !== run.repoPath ||
+    binding.baseHeadSha !== run.baseHeadSha || typeof binding.worktreePath !== "string" ||
+    !binding.worktreePath.startsWith("/")) {
+    throw new WorkflowRunError("Workspace lease does not match its WorkflowRun authority");
+  }
+}
+
+function sameWorkspaceBinding(left, right) {
+  return left?.runId === right?.runId && left?.repoPath === right?.repoPath &&
+    left?.worktreePath === right?.worktreePath && left?.baseHeadSha === right?.baseHeadSha;
 }

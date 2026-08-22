@@ -37,6 +37,13 @@
       <div class="vstack gap-2">${alerts.map((alert) => `<div><strong>${escape(alert.projectName)} — ${escape(alert.taskName)}</strong><br><span>${escape(alert.status)} (${escape(alert.ageMinutes)} minutes).</span><br><span class="small">${escape(alert.remedy)}</span></div>`).join("")}</div>
     </section>` : ""}${historical.length ? `<details class="alert alert-secondary mb-4"><summary>${historical.length} historical ledger record${historical.length === 1 ? "" : "s"} need cleanup (not live processes)</summary><div class="vstack gap-2 mt-3">${historical.map((item) => `<div><strong>${escape(item.projectName)} — ${escape(item.taskName)}</strong><br><span class="small">Recorded ${escape(item.state)} · ${escape(item.ageMinutes)} minutes old. ${escape(item.remedy)}</span></div>`).join("")}</div></details>` : ""}`;
     const simpleRuns = state.workflowRuns || [];
+    const maintenance = state.workspaceMaintenance;
+    const maintenanceCard = maintenance ? `<article class="card shadow-sm task-card">
+      <div class="card-body"><h2 class="h5">Workspace maintenance</h2>
+      <p class="mb-2">${escape(maintenance.summary)}</p>
+      <p class="small text-body-secondary">Clean is safe maintenance. It preserves candidates, history, dirty or uncertain work, and the shared checkout. Wipe-clean is a separate named and confirmed reset.</p>
+      <button class="btn btn-outline-primary btn-sm" data-workflow-intent="clean">Clean safely</button></div>
+    </article>` : "";
     const simpleRunCards = simpleRuns.map((run) => `
       <article class="card shadow-sm task-card" data-state="${run.presentation.outcome === "Passed" ? "done" : run.presentation.outcome === "Blocked safely" ? "working" : "attention"}">
         <div class="card-body">
@@ -80,7 +87,7 @@
           ${task.validation ? `<div class="alert ${task.validation.passed ? "alert-success" : "alert-warning"} py-2 mt-3 mb-0">Validation ${task.validation.passed ? "passed" : "did not pass"}: ${escape(task.validation.outcome || "unknown")}</div>` : ""}
         </div>
       </article>`).join("");
-    document.querySelector("#tasks").innerHTML = simpleRunCards + legacyTaskCards || '<div class="alert alert-secondary">No tasks recorded yet.</div>';
+    document.querySelector("#tasks").innerHTML = maintenanceCard + simpleRunCards + legacyTaskCards || '<div class="alert alert-secondary">No tasks recorded yet.</div>';
     const projects = state.projects || [];
     document.querySelector("#projects").innerHTML = projects.map((project) => {
       const percent = project.progress.total

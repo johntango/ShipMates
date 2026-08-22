@@ -64,6 +64,34 @@ export class WorkflowRunStore {
     }
   }
 
+  async archiveRuns({ runIds, archiveName, manifest }) {
+    if (!Array.isArray(runIds) || !runIds.length ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{2,120}$/u.test(archiveName)) {
+      throw new WorkflowRunError("Invalid WorkflowRun archive request");
+    }
+    const archiveRoot = path.join(this.rootDir, "workflow-archives", archiveName);
+    await mkdir(path.join(archiveRoot, "runs"), { recursive: true, mode: 0o700 });
+    await mkdir(path.join(archiveRoot, "operations"), { recursive: true, mode: 0o700 });
+    const manifestPath = path.join(archiveRoot, "manifest.json");
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+      flag: "wx", mode: 0o600,
+    }).catch((error) => { if (error.code !== "EEXIST") throw error; });
+    for (const runId of runIds) {
+      const run = await this.get(runId);
+      await moveIfPresent(
+        path.join(this.rootDir, "workflow-runs", runId),
+        path.join(archiveRoot, "runs", runId),
+      );
+      for (const operationId of [run.worker?.operationId, run.validation?.operationId].filter(Boolean)) {
+        await moveIfPresent(
+          path.join(this.rootDir, "workflow-run-operations", operationId),
+          path.join(archiveRoot, "operations", operationId),
+        );
+      }
+    }
+    return Object.freeze({ archiveRoot, manifestPath });
+  }
+
   event(runId, type, data, key = this.idFactory()) {
     return { id: `${runId}:${key}`, runId, type, at: this.clock().toISOString(), data };
   }
@@ -105,5 +133,14 @@ export class WorkflowRunStore {
   #file(runId) {
     if (!/^workflow-[A-Za-z0-9_-]+$/u.test(runId)) throw new WorkflowRunError("Invalid WorkflowRun id");
     return path.join(this.rootDir, "workflow-runs", runId, "events.json");
+  }
+}
+
+async function moveIfPresent(source, destination) {
+  try { await rename(source, destination); }
+  catch (error) {
+    if (error.code === "ENOENT") return;
+    if (error.code === "EEXIST") return;
+    throw error;
   }
 }

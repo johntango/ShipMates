@@ -1,7 +1,7 @@
 import { renderWorkflowRun } from "./projection.js";
 
 export class SimpleWorkflowConversation {
-  constructor({ store, controller, planner, context } = {}) {
+  constructor({ store, controller, planner, context, maintenance = null } = {}) {
     if (!store || !controller || typeof planner !== "function" || typeof context !== "function") {
       throw new TypeError("SimpleWorkflowConversation requires store, controller, planner, and context");
     }
@@ -9,11 +9,14 @@ export class SimpleWorkflowConversation {
     this.controller = controller;
     this.planner = planner;
     this.context = context;
+    this.maintenance = maintenance;
     this.planningPromise = null;
     this.approvalQueued = false;
   }
 
   async handle(message) {
+    const maintenance = await this.#maintenance(message);
+    if (maintenance !== null) return maintenance;
     if (isValidationApproval(message)) {
       const active = await this.#active();
       if (!active || active.phase !== "awaiting_validation_decision") {
@@ -54,6 +57,42 @@ export class SimpleWorkflowConversation {
     this.planningPromise = this.#prepare(message);
     try { return await this.planningPromise; }
     finally { this.planningPromise = null; this.approvalQueued = false; }
+  }
+
+  async #maintenance(message) {
+    if (!this.maintenance) return null;
+    const normalized = String(message).replaceAll(/\s+/gu, " ").trim();
+    const repository = async () => this.context();
+    if (/^(?:show|check) (?:the )?(?:workspace|cleanup) (?:status|inventory)[.!]?$/iu.test(normalized)) {
+      const context = await repository();
+      return this.maintenance.render(await this.maintenance.inventory({ repoPath: context.repoPath }));
+    }
+    if (/^(?:preview|dry-run) clean project[.!]?$/iu.test(normalized)) {
+      const context = await repository();
+      return this.maintenance.renderClean(await this.maintenance.clean({ repoPath: context.repoPath, dryRun: true }));
+    }
+    if (/^clean project[.!]?$/iu.test(normalized)) {
+      const context = await repository();
+      return this.maintenance.renderClean(await this.maintenance.clean({ repoPath: context.repoPath }));
+    }
+    const wipe = normalized.match(/^wipe-clean project (.+)$/iu);
+    if (wipe) {
+      const context = await repository();
+      return this.maintenance.renderWipe(await this.maintenance.previewWipe({
+        projectName: wipe[1].trim(), repoPath: context.repoPath,
+      }));
+    }
+    const confirm = normalized.match(/^WIPE-CLEAN ([A-Za-z0-9][A-Za-z0-9._ -]{1,80}) ([a-f0-9]{12})$/u);
+    if (confirm) {
+      const context = await repository();
+      return this.maintenance.renderWipeResult(await this.maintenance.wipe({
+        projectName: confirm[1], repoPath: context.repoPath, confirmation: normalized,
+      }));
+    }
+    if (/\bwipe(?:-| )?clean\b/iu.test(normalized)) {
+      return "Wipe-clean was not started. Name the project explicitly, for example: wipe-clean project ShipMates. First Mate will show a dry-run manifest before any confirmation is accepted.";
+    }
+    return null;
   }
 
   async #prepare(message) {

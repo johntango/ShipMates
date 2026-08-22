@@ -126,6 +126,10 @@ import { WorkflowRunWorkerAdapter, WorkflowRunValidatorAdapter } from "../src/wo
 import { SimpleWorkflowConversation } from "../src/workflow-run/interactive.js";
 import { renderWorkflowRun } from "../src/workflow-run/projection.js";
 import { workflowProgressMessage } from "../src/workflow-run/progress.js";
+import {
+  renderCleanReport, renderWipeManifest, renderWipeResult, renderWorkspaceInventory,
+  WorkflowWorkspaceMaintenance,
+} from "../src/workflow-run/workspace-maintenance.js";
 
 const rawArgs = process.argv.slice(2);
 if (rawArgs[0] === "--delivery") {
@@ -647,6 +651,7 @@ async function runInteractiveFirstmate() {
   const conversation = new FirstmateCodexConversation({ rootDir: interactiveStore.rootDir });
   let simpleWorkflowController = null;
   let simpleWorkflowConversation = null;
+  let simpleWorkspaceMaintenance = null;
   if (simpleWorkflowStore) {
     const validatorBinary = await resolvePinnedNoMistakesBinary({
       explicitPath: process.env.NO_MISTAKES_BIN || null,
@@ -677,6 +682,21 @@ async function runInteractiveFirstmate() {
         },
       }),
     });
+    simpleWorkspaceMaintenance = new WorkflowWorkspaceMaintenance({
+      store: simpleWorkflowStore,
+      manager: new TreehouseWorktreeManager({
+        binary: await resolvePinnedTreehouseBinary({
+          explicitPath: process.env.TREEHOUSE_BIN || null,
+        }),
+      }),
+    });
+    try {
+      await simpleWorkspaceMaintenance.clean({
+        repoPath: (await discoverFirstmateContext({ cwd: process.cwd() })).repoPath,
+      });
+    } catch (error) {
+      console.error(`Workspace maintenance blocked safely (${error.name || "Error"}); preserved all leases.`);
+    }
     simpleWorkflowConversation = new SimpleWorkflowConversation({
       store: simpleWorkflowStore,
       controller: simpleWorkflowController,
@@ -686,6 +706,16 @@ async function runInteractiveFirstmate() {
         workingDirectory: context.repoPath,
         project: { selectedProject: null, projects: [] },
       }),
+      maintenance: {
+        inventory: (input) => simpleWorkspaceMaintenance.inventory(input),
+        clean: (input) => simpleWorkspaceMaintenance.clean(input),
+        previewWipe: (input) => simpleWorkspaceMaintenance.previewWipe(input),
+        wipe: (input) => simpleWorkspaceMaintenance.wipe(input),
+        render: renderWorkspaceInventory,
+        renderClean: renderCleanReport,
+        renderWipe: renderWipeManifest,
+        renderWipeResult,
+      },
     });
   }
   const dashboardReview = new DashboardLavishReview({ stateRoot: interactiveStore.rootDir });
@@ -1509,7 +1539,15 @@ async function runInteractiveFirstmate() {
     projectStore,
     watchdog,
     workflowRunStore: simpleWorkflowStore,
+    workflowWorkspaceMaintenance: simpleWorkspaceMaintenance,
     onWorkflowIntent: simpleWorkflowController ? async ({ intent }) => {
+      if (intent === "workspace_status" || intent === "clean") {
+        const context = await discoverFirstmateContext({ cwd: process.cwd() });
+        const result = intent === "clean"
+          ? await simpleWorkspaceMaintenance.clean({ repoPath: context.repoPath })
+          : await simpleWorkspaceMaintenance.inventory({ repoPath: context.repoPath });
+        return { presentation: intent === "clean" ? renderCleanReport(result) : renderWorkspaceInventory(result) };
+      }
       const active = (await simpleWorkflowStore.list()).find(({ phase }) =>
         !new Set(["completed", "blocked"]).has(phase));
       if (!active) return { presentation: "No simple local workflow is active." };
