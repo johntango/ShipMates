@@ -169,9 +169,9 @@ export class NoMistakesLocalGate {
         "Validator changed branches or left the worktree dirty",
       );
     }
-    if (!after.headSha.startsWith(parsed.head)) {
+    if (after.branch !== parsed.branch || !after.headSha.startsWith(parsed.head)) {
       throw new NoMistakesGateError(
-        "Validator output head does not match independent Git inspection",
+        "Validator output branch or head does not match independent Git inspection",
       );
     }
 
@@ -230,6 +230,23 @@ export class NoMistakesLocalGate {
     });
   }
 
+  async reconcileTerminal({ taskId, worktreePath, expectedHeadSha, intent }) {
+    let discovered;
+    try {
+      discovered = await this.respond({
+        taskId, worktreePath, expectedHeadSha, intent,
+        action: "approve", expectedRunId: null, observeOnly: true,
+      });
+    } catch (error) {
+      if (/approved validator run is not terminal/iu.test(String(error?.message))) return null;
+      throw error;
+    }
+    if (!discovered.runId || discovered.outcome === null) return null;
+    return this.observe({
+      taskId, worktreePath, expectedHeadSha, intent, runId: discovered.runId,
+    });
+  }
+
   async respond({
     taskId, worktreePath, expectedHeadSha, intent, action,
     expectedRunId = null, observeOnly = false, onProgress = null,
@@ -284,8 +301,8 @@ export class NoMistakesLocalGate {
     await Promise.all(pendingProgress);
     const completedAt = this.clock().toISOString();
     const after = await this.#inspect(workingDirectory);
-    if (after.branch !== before.branch || after.dirty || before.headSha !== after.headSha ||
-      !after.headSha.startsWith(parsed.head)) {
+    if (after.branch !== before.branch || after.branch !== parsed.branch || after.dirty ||
+      before.headSha !== after.headSha || !after.headSha.startsWith(parsed.head)) {
       throw new NoMistakesGateError(
         "Validator response changed or no longer matches the exact task worktree",
       );

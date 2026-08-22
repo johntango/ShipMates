@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -68,7 +68,8 @@ export class WorkflowRunWorkerAdapter {
 
 export class WorkflowRunValidatorAdapter {
   constructor({ stateRoot, gate, onProgress = () => {}, clock = () => new Date(),
-    heartbeatMs, setIntervalFn = setInterval, clearIntervalFn = clearInterval } = {}) {
+    heartbeatMs, setIntervalFn = setInterval, clearIntervalFn = clearInterval,
+    onDiagnostic = () => {} } = {}) {
     if (!stateRoot || !gate || typeof gate.run !== "function") {
       throw new TypeError("WorkflowRunValidatorAdapter requires stateRoot and gate");
     }
@@ -79,6 +80,7 @@ export class WorkflowRunValidatorAdapter {
     this.heartbeatMs = heartbeatMs;
     this.setIntervalFn = setIntervalFn;
     this.clearIntervalFn = clearIntervalFn;
+    this.onDiagnostic = onDiagnostic;
   }
 
   static localOnly({ stateRoot, binaryPath, gateOptions = {} }) {
@@ -95,6 +97,7 @@ export class WorkflowRunValidatorAdapter {
       heartbeatMs: gateOptions.heartbeatMs,
       setIntervalFn: gateOptions.setIntervalFn,
       clearIntervalFn: gateOptions.clearIntervalFn,
+      onDiagnostic: gateOptions.onWorkflowDiagnostic,
     });
   }
 
@@ -104,15 +107,12 @@ export class WorkflowRunValidatorAdapter {
     const request = validationRequest({ operationId, workspacePath, headSha, intent });
     if (!await writeExclusive(path.join(directory, "validation-request.json"), request)) return null;
     const progressPath = path.join(directory, "validation-progress.json");
-    const reporter = new ValidationProgressReporter({ clock: this.clock, heartbeatMs: this.heartbeatMs });
-    let activity = validationActivity("Starting validation", null, { clock: this.clock });
-    const publish = async (message = null) => {
-      if (message !== null) activity = validationActivity(message, activity, { clock: this.clock });
-      await writeAtomic(progressPath, activity);
-      const visibility = await readWorkflowRunVisibility({ stateRoot: this.stateRoot, operationId });
-      const human = reporter.message(activity, { visibility });
-      if (human) this.onProgress(human);
-    };
+    const progress = progressPublisher({
+      progressPath, stateRoot: this.stateRoot, operationId, clock: this.clock,
+      heartbeatMs: this.heartbeatMs, onProgress: this.onProgress,
+      onDiagnostic: this.onDiagnostic, initialMessage: "Starting validation",
+    });
+    const publish = progress.publish;
     await publish();
     const heartbeat = this.setIntervalFn(() => { void publish(); }, this.heartbeatMs || 60_000);
     let result;
@@ -126,9 +126,9 @@ export class WorkflowRunValidatorAdapter {
       });
       result = validationResult(report, request.headSha);
       await writeAtomic(path.join(directory, "validation-result.json"), result);
-      await writeAtomic(progressPath, { ...activity, status: result.status, updatedAt: this.clock().toISOString() });
+      await progress.finish(result.status);
     } catch (error) {
-      await writeAtomic(progressPath, { ...activity, status: "failed", updatedAt: this.clock().toISOString() });
+      await progress.finish("failed");
       throw error;
     } finally {
       this.clearIntervalFn(heartbeat);
@@ -147,7 +147,30 @@ export class WorkflowRunValidatorAdapter {
     if (JSON.stringify(request) !== JSON.stringify(expected)) {
       throw new WorkflowRunAdapterError("Stored validation authority does not match the current workflow");
     }
-    return readJson(path.join(directory, "validation-result.json"));
+    const resultPath = path.join(directory, "validation-result.json");
+    const existing = await readJson(resultPath);
+    if (existing) return existing;
+    if (typeof this.gate.reconcileTerminal !== "function") return null;
+    const report = await this.gate.reconcileTerminal({
+      taskId: `workflow-${operationId}`, worktreePath: request.workspacePath,
+      expectedHeadSha: request.headSha, intent: request.validationContract,
+    });
+    if (!report) return null;
+    const result = validationResult(report, request.headSha);
+    if (!new Set(["passed", "failed"]).has(result.status) || !report.runId) return null;
+    const binding = {
+      schemaVersion: 1, validatorRunId: report.runId, headSha: request.headSha,
+      intentSha256: createHash("sha256").update(request.validationContract).digest("hex"),
+    };
+    const bindingPath = path.join(directory, "validation-run.json");
+    if (!await writeExclusive(bindingPath, binding)) {
+      const stored = await readJson(bindingPath);
+      if (JSON.stringify(stored) !== JSON.stringify(binding)) {
+        throw new WorkflowRunAdapterError("Pinned validator recovery does not match the stored validation run");
+      }
+    }
+    await writeAtomic(resultPath, result);
+    return result;
   }
 
   async decide({ operationId, workspacePath, headSha, intent, validatorRunId, decision }) {
@@ -164,16 +187,13 @@ export class WorkflowRunValidatorAdapter {
       throw new WorkflowRunAdapterError("Validation decision does not match the pinned validator review");
     }
     const progressPath = path.join(directory, "validation-progress.json");
-    const reporter = new ValidationProgressReporter({ clock: this.clock, heartbeatMs: this.heartbeatMs });
-    let activity = await readJson(progressPath) || validationActivity("review", null, { clock: this.clock });
-    activity = { ...activity, status: "running", stage: "review", updatedAt: this.clock().toISOString() };
-    const publish = async (message = null) => {
-      if (message !== null) activity = validationActivity(message, activity, { clock: this.clock });
-      await writeAtomic(progressPath, activity);
-      const visibility = await readWorkflowRunVisibility({ stateRoot: this.stateRoot, operationId });
-      const human = reporter.message(activity, { visibility });
-      if (human) this.onProgress(human);
-    };
+    const progress = progressPublisher({
+      progressPath, stateRoot: this.stateRoot, operationId, clock: this.clock,
+      heartbeatMs: this.heartbeatMs, onProgress: this.onProgress,
+      onDiagnostic: this.onDiagnostic, initialMessage: "review",
+      initialActivity: await readJson(progressPath),
+    });
+    const publish = progress.publish;
     await publish();
     const heartbeat = this.setIntervalFn(() => { void publish(); }, this.heartbeatMs || 60_000);
     let result;
@@ -192,9 +212,9 @@ export class WorkflowRunValidatorAdapter {
         throw new WorkflowRunAdapterError("Pinned validator run remained nonterminal after approval");
       }
       await writeAtomic(path.join(directory, "validation-result.json"), result);
-      await writeAtomic(progressPath, { ...activity, status: result.status, updatedAt: this.clock().toISOString() });
+      await progress.finish(result.status);
     } catch (error) {
-      await writeAtomic(progressPath, { ...activity, status: "failed", updatedAt: this.clock().toISOString() });
+      await progress.finish("failed");
       throw error;
     } finally {
       this.clearIntervalFn(heartbeat);
@@ -330,9 +350,44 @@ async function writeExclusive(target, value) {
 }
 
 async function writeAtomic(target, value) {
-  const temporary = `${target}.${process.pid}.tmp`;
+  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await rename(temporary, target);
+}
+
+function progressPublisher({ progressPath, stateRoot, operationId, clock, heartbeatMs,
+  onProgress, onDiagnostic, initialMessage, initialActivity = null }) {
+  const reporter = new ValidationProgressReporter({ clock, heartbeatMs });
+  let activity = initialActivity || validationActivity(initialMessage, null, { clock });
+  if (initialActivity) {
+    activity = { ...activity, status: "running", stage: "review", updatedAt: clock().toISOString() };
+  }
+  let pending = Promise.resolve();
+  const enqueue = (work) => {
+    const next = pending.then(work);
+    pending = next.catch((error) => {
+      try { onDiagnostic("Validation progress evidence could not be updated."); } catch {}
+      return undefined;
+    });
+    return pending;
+  };
+  return {
+    publish(message = null) {
+      return enqueue(async () => {
+        if (message !== null) activity = validationActivity(message, activity, { clock });
+        await writeAtomic(progressPath, activity);
+        const visibility = await readWorkflowRunVisibility({ stateRoot, operationId });
+        const human = reporter.message(activity, { visibility });
+        if (human) onProgress(human);
+      });
+    },
+    finish(status) {
+      return enqueue(async () => {
+        activity = { ...activity, status, updatedAt: clock().toISOString() };
+        await writeAtomic(progressPath, activity);
+      });
+    },
+  };
 }
 
 async function readJson(target) {

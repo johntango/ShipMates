@@ -147,6 +147,99 @@ test("validator records human-safe progress while retaining exact-head authority
   })).status, "passed");
 });
 
+test("concurrent heartbeat and gate progress cannot collide or lose the terminal result", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-concurrent-progress-"));
+  let heartbeat;
+  const diagnostics = [];
+  const adapter = new WorkflowRunValidatorAdapter({
+    stateRoot: root,
+    setIntervalFn: (callback) => { heartbeat = callback; return 1; },
+    clearIntervalFn: () => {},
+    onDiagnostic: (message) => diagnostics.push(message),
+    gate: { run: async (input) => {
+      heartbeat();
+      await Promise.all([
+        input.onProgress("test checks started"),
+        input.onProgress("lint checks started"),
+      ]);
+      return {
+        initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
+        passed: true, outcome: "passed", gate: null,
+      };
+    } },
+  });
+  const input = {
+    operationId: OPERATION, workspacePath: "/isolated/worktree",
+    headSha: HEAD, intent: "Build a page",
+  };
+  assert.equal((await adapter.start(input)).status, "passed");
+  assert.equal((await adapter.observe(input)).status, "passed");
+  assert.equal((await readWorkflowRunValidationProgress({
+    stateRoot: root, operationId: OPERATION,
+  })).status, "passed");
+  assert.deepEqual(diagnostics, []);
+});
+
+test("progress presentation failure is non-authoritative and validation still persists", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-progress-failure-"));
+  const diagnostics = [];
+  const adapter = new WorkflowRunValidatorAdapter({
+    stateRoot: root,
+    onProgress: () => { throw new Error("terminal display unavailable secret=hidden"); },
+    onDiagnostic: (message) => diagnostics.push(message),
+    setIntervalFn: () => 1, clearIntervalFn: () => {},
+    gate: { run: async (input) => {
+      await input.onProgress("test checks started");
+      return {
+        initialHeadSha: HEAD, finalHeadSha: HEAD, headChanged: false,
+        passed: true, outcome: "passed", gate: null,
+      };
+    } },
+  });
+  const result = await adapter.start({
+    operationId: OPERATION, workspacePath: "/isolated/worktree",
+    headSha: HEAD, intent: "Build a page",
+  });
+  assert.equal(result.status, "passed");
+  assert.deepEqual(diagnostics, [
+    "Validation progress evidence could not be updated.",
+    "Validation progress evidence could not be updated.",
+  ]);
+  assert.doesNotMatch(diagnostics.join(" "), /secret|hidden/iu);
+});
+
+test("restart adopts one exact pinned terminal validator result without rerunning", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-recovery-"));
+  const directory = path.join(root, "workflow-run-operations", OPERATION);
+  await mkdir(directory, { recursive: true });
+  const request = {
+    schemaVersion: 1, operationId: OPERATION, workspacePath: "/isolated/worktree",
+    headSha: HEAD, validationContract: validationContract("Build a page"),
+  };
+  await writeFile(path.join(directory, "validation-request.json"), JSON.stringify(request));
+  let reconciliations = 0;
+  const adapter = new WorkflowRunValidatorAdapter({
+    stateRoot: root,
+    gate: { run: async () => { throw new Error("must not rerun validation"); },
+      reconcileTerminal: async ({ expectedHeadSha, intent }) => {
+      reconciliations += 1;
+      assert.equal(expectedHeadSha, HEAD);
+      assert.equal(intent, request.validationContract);
+      return {
+        runId: "run-pinned", initialHeadSha: HEAD, finalHeadSha: HEAD,
+        headChanged: false, passed: true, outcome: "passed", gate: null,
+      };
+    } },
+  });
+  const input = {
+    operationId: OPERATION, workspacePath: "/isolated/worktree",
+    headSha: HEAD, intent: "Build a page",
+  };
+  assert.equal((await adapter.observe(input)).status, "passed");
+  assert.equal((await adapter.observe(input)).status, "passed");
+  assert.equal(reconciliations, 1);
+});
+
 test("validator mismatch and ambiguous outcomes fail closed", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "workflow-validator-block-"));
   const adapter = new WorkflowRunValidatorAdapter({
