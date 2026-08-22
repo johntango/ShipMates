@@ -329,6 +329,13 @@ export async function buildDashboardState({
             slice: run.capability.slice?.content || null,
             review: run.capability.artifacts?.find(({ kind }) => kind === "review.recorded")?.content || null,
           } } : {}),
+          ...(run.projectCycle?.roadmap ? { projectCycle: {
+            mode: run.projectCycle.pack.name,
+            current: run.projectCycle.roadmap.content.currentCycle,
+            currentSlice: run.projectCycle.roadmap.content.nextSlice,
+            next: run.projectCycle.nextRoadmap?.content || null,
+            completed: run.projectCycle.completion?.content || null,
+          } } : {}),
         };
       }))
     : [];

@@ -2,6 +2,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { renderCapabilitySummary } from "./capability-pack.js";
+import { renderProjectRoadmap } from "./project-cycle-pack.js";
 
 export function projectWorkflowRun(run) {
   const [phase, nextAction, why] = evidenceStatus(run);
@@ -234,7 +235,7 @@ export function baselineEvidenceSummary(report) {
 
 function humanEvidence(run) {
   if (!new Set(["awaiting_validation_decision", "completed", "blocked"]).has(run.phase) &&
-    !run.retries?.length) return renderCapabilitySummary(run);
+    !run.retries?.length) return [...renderCapabilitySummary(run), ...projectCycleSummary(run)];
   const candidate = workflowCandidateArtifacts(run);
   const files = candidate.files.map(({ relativePath }) => relativePath);
   const lines = [];
@@ -245,6 +246,9 @@ function humanEvidence(run) {
   if (run.phase === "completed" && run.validation?.report) {
     lines.push("Checked: No-mistakes tested this exact isolated candidate, and it passed.");
     lines.push(...compactValidationEvidence(run.validation.report));
+    if (run.projectCycle?.nextRoadmap) {
+      lines.push("Next project cycle: one follow-up slice is proposed for review; it has not been approved or scheduled.");
+    }
   }
   if (run.phase === "awaiting_validation_decision") {
     lines.push("Decision needed: validation found a risk that needs your judgment.");
@@ -264,7 +268,20 @@ function humanEvidence(run) {
   const artifacts = durableArtifacts(run);
   if (artifacts.length) lines.push(`Durable preview evidence: ${artifacts.join(", ")}`);
   lines.push(...humanBaselineEvidence(run));
+  lines.push(...projectCycleSummary(run));
   return lines;
+}
+
+function projectCycleSummary(run) {
+  const roadmap = run.projectCycle?.roadmap?.content;
+  if (!roadmap) return [];
+  return [
+    `Project cycle: ${roadmap.currentCycle.name} — ${roadmap.currentCycle.whyNow}`,
+    `Current bounded slice: ${roadmap.nextSlice.title}.`,
+    `Exit criteria: ${roadmap.currentCycle.exitCriteria.join("; ")}`,
+    ...(roadmap.currentCycle.risksAndDependencies.length
+      ? [`Risks or decisions: ${roadmap.currentCycle.risksAndDependencies.join("; ")}`] : []),
+  ];
 }
 
 export function workflowTechnicalEvidence(run) {
@@ -272,6 +289,7 @@ export function workflowTechnicalEvidence(run) {
   const files = candidate.files.map(({ relativePath }) => relativePath);
   return [
     ...renderCapabilitySummary(run),
+    ...(run.projectCycle ? renderProjectRoadmap(run).split("\n") : []),
     ...visibilityEvidence(run),
     ...(candidate.workspacePath ? [`Candidate workspace: ${candidate.workspacePath}`] : []),
     ...(files.length ? [`Changed files: ${files.join(", ")}`] : []),

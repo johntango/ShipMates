@@ -3,6 +3,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { z } from "zod";
+import { prepareProjectCycle } from "./project-cycle-pack.js";
 
 export const CAPABILITY_SCHEMA_VERSION = 1;
 
@@ -116,9 +117,13 @@ export async function prepareCapabilityBundle({ repository, request, modeOverrid
       distinguishBaselineFailures: true, remoteDelivery: false,
     },
   });
+  const cycle = prepareProjectCycle({
+    mode, request: safeRequest, context: { adrRefs: spec.adrRefs }, slice,
+  });
   return Object.freeze({
     pack: selected, context: artifact("context.captured", context),
     spec: artifact("spec.proposed", spec), slice: artifact("slice.selected", slice),
+    projectCycle: cycle,
   });
 }
 
@@ -146,13 +151,16 @@ export function packDigest(value) {
 
 export function parseCapabilityIntent(input) {
   const text = String(input || "").replaceAll(/\s+/gu, " ").trim();
-  const explicit = text.match(/^\/(spec|plan|build|test|review|ship|status|details|clean|wipe-clean)(?:\s+(.*))?$/iu);
+  const explicit = text.match(/^\/(spec|plan|roadmap|cycle|build|test|review|ship|status|details|clean|wipe-clean)(?:\s+(.*))?$/iu);
   if (explicit) return { command: explicit[1].toLowerCase(), argument: explicit[2]?.trim() || "" };
   if (/^(?:show|what(?:'s| is)|tell me) (?:the )?(?:current )?status[.!]?$/iu.test(text)) return { command: "status", argument: "" };
   if (/^(?:show|explain) (?:the )?(?:technical )?(?:details|evidence)[.!]?$/iu.test(text) ||
     /^show task evidence[.!]?$/iu.test(text)) return { command: "details", argument: "" };
   if (/^(?:show|explain) (?:the )?(?:current )?(?:specification|spec)[.!]?$/iu.test(text)) return { command: "spec", argument: "" };
   if (/^(?:show|explain) (?:the )?(?:current )?(?:plan|slice)[.!]?$/iu.test(text)) return { command: "plan", argument: "" };
+  if (/^(?:show|explain|what(?:'s| is)) (?:the )?(?:current )?(?:project )?(?:roadmap|cycle)[.!]?$/iu.test(text)) return { command: "roadmap", argument: "" };
+  const roadmapProposal = text.match(/^(?:propose|create|plan) (?:a )?(?:project )?(?:roadmap|cycle) (?:for )?(.+)$/iu);
+  if (roadmapProposal) return { command: "spec", argument: roadmapProposal[1].trim() };
   if (/^(?:start|continue) (?:the )?(?:approved )?(?:build|implementation)[.!]?$/iu.test(text)) return { command: "build", argument: "" };
   if (/^(?:show|review) (?:the )?(?:quality|result|evidence|changes)[.!]?$/iu.test(text)) return { command: "review", argument: "" };
   if (/^(?:prepare|preview|show) (?:a )?(?:delivery|ship|shipping) (?:request|plan|preview)?[.!]?$/iu.test(text)) return { command: "ship", argument: "" };

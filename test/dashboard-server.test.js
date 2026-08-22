@@ -211,6 +211,36 @@ test("projects capability mode, approved scope, slice, baseline policy, and revi
   assert.doesNotMatch(JSON.stringify(state.workflowRuns[0]), /workflow-private/iu);
 });
 
+test("projects a concise Project Cycle card without lifecycle identifiers", async () => {
+  const { store, projectContext } = fixture();
+  const state = await buildDashboardState({
+    store, projectContext,
+    workflowRunStore: { list: async () => [{
+      id: "workflow-private", phase: "awaiting_approval", request: "Build a page",
+      plan: "Build", updatedAt: "2026-08-22T12:00:00.000Z",
+      projectCycle: {
+        pack: { name: "greenfield" }, completion: null, nextRoadmap: null,
+        roadmap: { content: { mode: "greenfield", currentCycle: {
+          name: "Walking skeleton", whyNow: "Prove one end-to-end path first.",
+          architectureAssumptions: ["Dependency-light first"], adrRefs: ["docs/ADR-1.md"],
+          exitCriteria: ["Page works"], risksAndDependencies: ["Persistence is deferred"],
+        }, nextSlice: { title: "Build skeleton", objective: "Build a page", acceptanceChecks: ["Page works"] } } },
+      },
+    }] },
+  });
+  assert.deepEqual(state.workflowRuns[0].projectCycle, {
+    mode: "greenfield",
+    current: {
+      name: "Walking skeleton", whyNow: "Prove one end-to-end path first.",
+      architectureAssumptions: ["Dependency-light first"], adrRefs: ["docs/ADR-1.md"],
+      exitCriteria: ["Page works"], risksAndDependencies: ["Persistence is deferred"],
+    },
+    currentSlice: { title: "Build skeleton", objective: "Build a page", acceptanceChecks: ["Page works"] },
+    next: null, completed: null,
+  });
+  assert.doesNotMatch(JSON.stringify(state.workflowRuns[0]), /workflow-private/iu);
+});
+
 test("simple workflow dashboard accepts high-level intents only", () => {
   assert.deepEqual(validateWorkflowIntent({ intent: "approve", runId: "ignored" }), { intent: "approve" });
   assert.deepEqual(validateWorkflowIntent({ intent: "approve_validation" }), { intent: "approve_validation" });
@@ -460,6 +490,14 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
         plan: "Build it", presentation: {
           outcome: "Passed", nextAction: "Review it", why: "Validated", details: [],
         }, technicalEvidence: ["Implementer verification — node --test: 3 tests passed."],
+        projectCycle: {
+          mode: "greenfield",
+          current: { name: "Walking skeleton", whyNow: "Prove the path first.",
+            architectureAssumptions: ["Dependency-light first"], adrRefs: [],
+            exitCriteria: ["Page works"], risksAndDependencies: ["Persistence deferred"] },
+          currentSlice: { title: "Build skeleton", objective: "Build the page" },
+          next: { nextSlice: { title: "Strengthen the skeleton" } }, completed: { outcome: "passed" },
+        },
         milestones: [], candidate: {
           workspacePath: "/isolated/current",
           pageUrl: "file:///isolated/current/public/balls.html",
@@ -485,6 +523,7 @@ test("ships a Bootstrap page with light, dark, and system themes", async () => {
   assert.match(element("#tasks").innerHTML, /href="file:\/\/\/isolated\/current\/public\/balls\.html"/u);
   assert.match(element("#tasks").innerHTML, /Created or changed files.*public\/balls\.html/su);
   assert.match(element("#tasks").innerHTML, /<details class="small mt-2"><summary>Technical evidence<\/summary>.*node --test/su);
+  assert.match(element("#tasks").innerHTML, /Current project cycle: Walking skeleton.*Current slice:.*Build skeleton.*Next proposal:.*not approved or scheduled.*Roadmap and assumptions/su);
   assert.match(element("#tasks").innerHTML, /earlier workflow result.*History.*Older page/su);
 });
 

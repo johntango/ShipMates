@@ -2,6 +2,7 @@ import { renderWorkflowRun } from "./projection.js";
 import {
   artifact, parseCapabilityIntent, prepareCapabilityBundle, renderCapabilitySummary,
 } from "./capability-pack.js";
+import { renderProjectRoadmap } from "./project-cycle-pack.js";
 
 export class SimpleWorkflowConversation {
   constructor({ store, controller, planner, context, maintenance = null } = {}) {
@@ -150,17 +151,23 @@ export class SimpleWorkflowConversation {
     const runs = await this.store.list();
     const active = runs.find(({ phase }) => !new Set(["completed", "blocked"]).has(phase));
     const latest = runs[0] || null;
+    if (command === "cycle" && !active && argument) {
+      const selected = argument.match(/^(greenfield|brownfield)\s+(.+)$/iu);
+      if (!selected) return "Choose a project cycle before approval: /cycle greenfield <goal> or /cycle brownfield <goal>.";
+      return this.#prepareCapabilityRequest(selected[2], selected[1].toLowerCase());
+    }
     if (command === "spec" && !active && argument) {
       const override = argument.match(/^--mode\s+(brownfield|greenfield)\s+(.+)$/iu);
       const request = override?.[2] || argument;
       return this.#prepareCapabilityRequest(request, override?.[1]?.toLowerCase() || null);
     }
     if (!latest) {
-      return command === "spec"
+      return command === "spec" || command === "cycle"
         ? "Describe the goal after /spec. First Mate will capture read-only context and propose one bounded slice."
         : "No local capability workflow has been recorded yet. Start with /spec followed by the goal.";
     }
     if (command === "status") return renderWorkflowRun(latest);
+    if (command === "roadmap" || command === "cycle") return renderProjectRoadmap(latest);
     if (command === "details") return renderWorkflowRun(latest, { technical: true });
     if (command === "spec") return renderArtifact("Specification", latest.capability?.spec);
     if (command === "plan") {
@@ -177,6 +184,7 @@ export class SimpleWorkflowConversation {
         return [
           renderArtifact("Proposed follow-up slice", updated.capability.followupSlice),
           "This later slice is not approved or scheduled. It requires its own scoped approval before implementation.",
+          renderProjectRoadmap(updated),
         ].join("\n");
       }
       return renderSlice(latest.capability, latest.phase);

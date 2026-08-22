@@ -26,6 +26,10 @@ export class WorkflowRunStore {
         this.event(runId, "spec.proposed", { artifact: capabilityBundle.spec }, `artifact:${capabilityBundle.spec.digest}`),
         this.event(runId, "slice.selected", { artifact: capabilityBundle.slice }, `artifact:${capabilityBundle.slice.digest}`),
       );
+      if (capabilityBundle.projectCycle) events.push(
+        this.event(runId, "project_cycle.selected", { pack: capabilityBundle.projectCycle.pack }, "project-cycle-selected"),
+        this.event(runId, "roadmap.proposed", { artifact: capabilityBundle.projectCycle.roadmap }, `artifact:${capabilityBundle.projectCycle.roadmap.digest}`),
+      );
     }
     await this.#write(runId, events, { exclusive: true });
     const run = reduceWorkflowRun(events);

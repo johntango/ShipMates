@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { artifact } from "./capability-pack.js";
 import { WorkflowRunError } from "./reducer.js";
+import { nextProjectCycleArtifacts } from "./project-cycle-pack.js";
 
 export class WorkflowRunController {
   constructor({ store, worker, validator, isTransientError = defaultTransientError } = {}) {
@@ -48,7 +49,14 @@ export class WorkflowRunController {
   async #advance(runId) {
     for (let step = 0; step < 8; step += 1) {
       let run = await this.store.get(runId);
-      if (new Set(["awaiting_approval", "awaiting_validation_decision", "completed", "blocked"]).has(run.phase)) return run;
+      if (run.phase === "completed") {
+        const cycle = nextProjectCycleArtifacts(run);
+        if (!cycle) return run;
+        await this.store.append(run.id, "slice.completed", { artifact: cycle.completion }, `artifact:${cycle.completion.digest}`);
+        await this.store.append(run.id, "roadmap.next_proposed", { artifact: cycle.next }, `artifact:${cycle.next.digest}`);
+        return this.store.get(run.id);
+      }
+      if (new Set(["awaiting_approval", "awaiting_validation_decision", "blocked"]).has(run.phase)) return run;
       if (run.phase === "approved") {
         const operationId = operation(run.id, "worker");
         await this.store.append(run.id, "worker.launch_requested", { operationId }, "worker-launch-requested");

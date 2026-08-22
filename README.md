@@ -99,6 +99,8 @@ specification:
 ```text
 /spec Build a small local status page
 /spec --mode greenfield Bootstrap a new static site
+/cycle greenfield Build a walking-skeleton web experience
+/roadmap
 /plan
 /build
 /test
@@ -128,6 +130,18 @@ are redacted from durable context. Brownfield slices request base-head
 characterization and report pre-existing failures separately from candidate
 regressions. After a successful slice, `/plan FOLLOW_UP_GOAL` may record a typed
 follow-up proposal, but it is not scheduled or approved automatically.
+
+Each new capability workflow also records one versioned Project Cycle roadmap
+inside the same WorkflowRun event stream. Greenfield starts with a walking
+skeleton before security, datastore, or scale decisions. Brownfield starts with
+bounded repository context and characterization of existing behavior. Use
+`/roadmap` (or ask “show the current project cycle”) to see why the cycle is
+current, architecture assumptions and ADR references, exit criteria, risks,
+and exactly one next bounded slice. Before approval, `/cycle greenfield GOAL`
+or `/cycle brownfield GOAL` explicitly selects the mode. The ordinary single
+plan approval authorizes only the displayed current slice. After it passes,
+Firstmate records completion evidence and proposes one follow-up, but never
+launches or approves that later slice automatically.
 
 Simple mode also owns conservative local workspace maintenance. Treehouse
 leases are durably bound to one workflow, repository, and exact base head.

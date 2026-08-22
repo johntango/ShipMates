@@ -102,6 +102,18 @@
               <div class="mt-1"><strong>Baseline:</strong> ${escape(run.capability.slice.validationPolicy.baselineAtBase ? "Base-head behavior is compared separately from candidate regressions." : "The explicit acceptance policy is the bootstrap baseline.")}</div>` : ""}
             ${run.capability.review ? `<div class="mt-2"><strong>Review:</strong> ${escape(run.capability.review.summary)}</div>` : ""}
           </section>` : ""}
+          ${run.projectCycle ? `<section class="small mt-3" aria-label="Current project cycle">
+            <strong>Current project cycle: ${escape(run.projectCycle.current.name)}</strong>
+            <div class="text-body-secondary">${escape(run.projectCycle.current.whyNow)}</div>
+            <div class="mt-2"><strong>Current slice:</strong> ${escape(run.projectCycle.currentSlice.title)} — ${escape(run.projectCycle.currentSlice.objective)}</div>
+            <div class="mt-1"><strong>Exit criteria:</strong> ${escape(run.projectCycle.current.exitCriteria.join("; "))}</div>
+            ${run.projectCycle.next ? `<div class="alert alert-info py-2 mt-2 mb-0"><strong>Next proposal:</strong> ${escape(run.projectCycle.next.nextSlice.title)}. It is not approved or scheduled.</div>` : ""}
+            <details class="mt-2"><summary>Roadmap and assumptions</summary>
+              <div class="mt-2"><strong>Architecture assumptions:</strong> ${escape(run.projectCycle.current.architectureAssumptions.join("; "))}</div>
+              ${run.projectCycle.current.adrRefs.length ? `<div><strong>ADR references:</strong> ${escape(run.projectCycle.current.adrRefs.join("; "))}</div>` : ""}
+              ${run.projectCycle.current.risksAndDependencies.length ? `<div><strong>Risks or decisions:</strong> ${escape(run.projectCycle.current.risksAndDependencies.join("; "))}</div>` : ""}
+            </details>
+          </section>` : ""}
           <section class="small mt-3" aria-label="Actual execution milestones">
             <strong>Actual execution</strong>
             <ol class="mt-2 mb-0">${(run.milestones || []).map((milestone) => `<li class="mb-2"><strong>${escape(milestone.label)} — ${escape(milestone.status)}</strong><div class="text-body-secondary">${escape(milestone.summary)}</div></li>`).join("")}</ol>

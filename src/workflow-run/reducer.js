@@ -1,4 +1,5 @@
 import { artifact as verifiedArtifact, packDigest } from "./capability-pack.js";
+import { verifyProjectCycleArtifact, verifyProjectCyclePack } from "./project-cycle-pack.js";
 
 const TERMINAL = new Set(["completed", "blocked"]);
 
@@ -48,11 +49,37 @@ function applyEvent(run, event) {
   }
   if (event.runId !== run.id) throw new WorkflowRunError("WorkflowRun event has the wrong run id");
   if (TERMINAL.has(run.phase) && !event.type.startsWith("workspace.") &&
-    !new Set(["review.recorded", "ship.previewed", "slice.followup_proposed"]).has(event.type)) {
+    !new Set(["review.recorded", "ship.previewed", "slice.followup_proposed", "slice.completed", "roadmap.next_proposed"]).has(event.type)) {
     throw new WorkflowRunError(`Cannot advance a ${run.phase} WorkflowRun`);
   }
   const next = { ...run, updatedAt: event.at };
   switch (event.type) {
+    case "project_cycle.selected":
+      if (run.projectCycle || !event.data.pack?.digest || !event.data.pack?.version) {
+        throw new WorkflowRunError("Project cycle selection requires one versioned pack");
+      }
+      try { verifyProjectCyclePack(event.data.pack); }
+      catch (cause) { throw new WorkflowRunError("Project cycle pack is invalid", { cause }); }
+      next.projectCycle = { pack: event.data.pack, artifacts: [] };
+      return next;
+    case "roadmap.proposed":
+    case "roadmap.next_proposed":
+    case "slice.completed": {
+      if (!run.projectCycle || event.data.artifact?.kind !== event.type) {
+        throw new WorkflowRunError("Project cycle artifact must match its event");
+      }
+      let verified;
+      try { verified = verifyProjectCycleArtifact(event.type, event.data.artifact); }
+      catch (cause) { throw new WorkflowRunError("Project cycle artifact is invalid", { cause }); }
+      next.projectCycle = {
+        ...run.projectCycle,
+        ...(event.type === "roadmap.proposed" ? { roadmap: verified } : {}),
+        ...(event.type === "roadmap.next_proposed" ? { nextRoadmap: verified } : {}),
+        ...(event.type === "slice.completed" ? { completion: verified } : {}),
+        artifacts: [...run.projectCycle.artifacts.filter(({ kind }) => kind !== event.type), verified],
+      };
+      return next;
+    }
     case "capability.selected":
       if (run.capability) throw new WorkflowRunError("WorkflowRun capability selection cannot change");
       if (!event.data.pack?.name || !event.data.pack?.version || !event.data.pack?.digest) {

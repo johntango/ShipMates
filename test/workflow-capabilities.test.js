@@ -50,7 +50,7 @@ test("greenfield detection and pre-approval override are explicit", async () => 
 });
 
 test("command and natural-language routing is bounded to high-level intents", () => {
-  for (const command of ["spec", "plan", "build", "test", "review", "ship", "status", "details", "clean", "wipe-clean"]) {
+  for (const command of ["spec", "plan", "roadmap", "cycle", "build", "test", "review", "ship", "status", "details", "clean", "wipe-clean"]) {
     assert.equal(parseCapabilityIntent(`/${command}`).command, command);
   }
   assert.equal(parseCapabilityIntent("show the current status").command, "status");
@@ -58,6 +58,10 @@ test("command and natural-language routing is bounded to high-level intents", ()
   assert.equal(parseCapabilityIntent("preview a delivery request").command, "ship");
   assert.equal(parseCapabilityIntent("show technical evidence").command, "details");
   assert.equal(parseCapabilityIntent("show task evidence").command, "details");
+  assert.equal(parseCapabilityIntent("show the current project cycle").command, "roadmap");
+  assert.deepEqual(parseCapabilityIntent("propose a roadmap for a small page"), {
+    command: "spec", argument: "a small page",
+  });
   assert.equal(parseCapabilityIntent("build a page"), null);
 });
 
