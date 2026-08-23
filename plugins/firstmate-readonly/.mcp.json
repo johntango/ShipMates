@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "firstmate-readonly": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/scripts/firstmate-mcp.js"]
+    }
+  }
+}

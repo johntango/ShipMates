@@ -124,10 +124,23 @@ approval.
 Terminal status/result queries and the simple dashboard now share one versioned
 read-only First Mate application service. It exposes only status, current
 design, current plan, candidate artifacts, and technical evidence; reads append
-no events and cannot launch, approve, validate, clean, deliver, or publish. The
-same bounded service is the intended foundation for a future local MCP/plugin
-and voice adapter, so those interfaces do not become a second workflow
-controller.
+no events and cannot launch, approve, validate, clean, deliver, or publish.
+
+The repository also packages that same service as the local
+`firstmate-readonly` MCP plugin at
+[`plugins/firstmate-readonly`](plugins/firstmate-readonly). It offers exactly
+five read-only tools with the same projections: `firstmate_status`, current
+design, current plan, artifacts, and technical evidence. It is intentionally
+not a public service. Start it only with the selected local state directory:
+
+```sh
+SHIPMATES_STATE_DIR=/absolute/path/to/state npm run firstmate:mcp
+```
+
+The server refuses to start without that explicit directory, and it exposes no
+database, filesystem, shell, Git, controller, Implementer, no-mistakes,
+approval, cleanup, or delivery tools. This remains the foundation for a later
+voice compatibility spike, not a second workflow controller.
 
 Capability packs are advisory. Their versioned, content-addressed context,
 specification, slice, baseline policy, and review artifacts live in the same

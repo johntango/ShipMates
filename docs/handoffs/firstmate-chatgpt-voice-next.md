@@ -136,6 +136,15 @@ Wrap the Stage 1 service in a narrow local MCP server and package it as a First
 Mate plugin with minimal metadata. Do not expose the database, filesystem,
 shell, Git, controller, Implementer, or no-mistakes as tools.
 
+**Completed locally on `codex/firstmate-application-service`:** the repository
+now contains the `firstmate-readonly` plugin package and a stdio MCP server
+using the official MCP TypeScript SDK. It offers only the five Stage 1 read
+intents, declares every tool read-only/non-destructive/non-open-world, requires
+an explicit `SHIPMATES_STATE_DIR`, and returns the same application-service
+projection as terminal and dashboard. It has no HTTP listener. Focused tests
+exercise real stdio discovery/calls, malformed input, unknown tools, and the
+no-write boundary; package validation is part of the check.
+
 Exit criteria:
 
 - ChatGPT/Codex can request status, plan, design, artifacts, and evidence;
