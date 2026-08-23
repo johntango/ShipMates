@@ -147,6 +147,26 @@ test("supervisor reconciles and advances an externally completed validation", as
   ]);
 });
 
+test("supervisor ignores a removed legacy task ledger during validation recovery", async () => {
+  const { reconcileCompletedValidationApproval } = await import(
+    "../src/cli/firstmate-validation-approval.js"
+  );
+  const missing = Object.assign(new Error("missing ledger"), { code: "ENOENT" });
+  let advanced = false;
+
+  const result = await reconcileCompletedValidationApproval("task-missing", {
+    store: {
+      getSnapshot: async () => { throw missing; },
+    },
+    projectStore: {},
+    orchestrator: {},
+    advanceProject: async () => { advanced = true; },
+  });
+
+  assert.equal(result, null);
+  assert.equal(advanced, false);
+});
+
 test("retries delivery without rerunning validation after a terminal pass", async () => {
   const { handleValidationApproval } = await import(
     "../src/cli/firstmate-validation-approval.js"
