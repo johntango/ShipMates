@@ -174,6 +174,15 @@ Exit criteria:
 Stop after this stage if the host capability is unsuitable. The read-only MCP
 adapter remains useful and no core redesign should be required.
 
+**Implementation note:** retain a transcript-only read-only adapter as the
+portable fallback. It must route only clear status/design/plan/artifact/evidence
+questions through the application service, return a concise spoken projection,
+and treat silence, ambiguous speech, oversized input, prompt injection, and all
+mutating requests as no-op clarification. It must never store raw audio or
+create a second lifecycle authority. Actual host voice-to-plugin invocation is
+an installation/new-session compatibility test, not something the core can
+assume.
+
 ### Stage 4 — Design interview through text and voice
 
 Connect only the bounded Design Runtime interview actions: answer one Customer

@@ -139,8 +139,12 @@ SHIPMATES_STATE_DIR=/absolute/path/to/state npm run firstmate:mcp
 
 The server refuses to start without that explicit directory, and it exposes no
 database, filesystem, shell, Git, controller, Implementer, no-mistakes,
-approval, cleanup, or delivery tools. This remains the foundation for a later
-voice compatibility spike, not a second workflow controller.
+approval, cleanup, or delivery tools. A transcript-only voice adapter maps only
+clear read-only questions onto this same service and gives concise spoken
+summaries. Silence, ambiguity, oversized input, prompt injection, and any
+request to change work are safe no-ops. It stores no audio and is not a second
+workflow controller; host voice-to-plugin invocation remains a separately
+testable integration step.
 
 Capability packs are advisory. Their versioned, content-addressed context,
 specification, slice, baseline policy, and review artifacts live in the same
