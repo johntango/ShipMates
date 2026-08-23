@@ -28,6 +28,7 @@ import {
   resolvePinnedNoMistakesBinary,
 } from "../src/adapters/no-mistakes.js";
 import { FirstmateCodexConversation } from "../src/adapters/firstmate-codex.js";
+import { FirstMateApplicationService } from "../src/firstmate/application-service.js";
 import {
   resolvePinnedTreehouseBinary,
   TreehouseWorktreeManager,
@@ -660,8 +661,12 @@ async function runInteractiveFirstmate() {
   const conversation = new FirstmateCodexConversation({ rootDir: interactiveStore.rootDir });
   let simpleWorkflowController = null;
   let simpleWorkflowConversation = null;
+  let simpleApplicationService = null;
   let simpleWorkspaceMaintenance = null;
   if (simpleWorkflowStore) {
+    simpleApplicationService = new FirstMateApplicationService({
+      workflowRunStore: simpleWorkflowStore,
+    });
     const validatorBinary = await resolvePinnedNoMistakesBinary({
       explicitPath: process.env.NO_MISTAKES_BIN || null,
     });
@@ -731,6 +736,7 @@ async function runInteractiveFirstmate() {
         renderWipe: renderWipeManifest,
         renderWipeResult,
       },
+      applicationService: simpleApplicationService,
     });
   }
   const dashboardReview = new DashboardLavishReview({ stateRoot: interactiveStore.rootDir });
@@ -1556,6 +1562,7 @@ async function runInteractiveFirstmate() {
     projectStore,
     watchdog,
     workflowRunStore: simpleWorkflowStore,
+    firstMateApplicationService: simpleApplicationService,
     workflowWorkspaceMaintenance: simpleWorkspaceMaintenance,
     onWorkflowIntent: simpleWorkflowController ? async ({ intent }) => {
       if (intent === "workspace_status" || intent === "clean") {

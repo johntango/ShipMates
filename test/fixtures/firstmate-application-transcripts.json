@@ -1,0 +1,79 @@
+[
+  {
+    "name": "spoken status",
+    "transcript": "What is happening with the current project?",
+    "request": {
+      "schemaVersion": 1,
+      "intent": "firstmate_status",
+      "channel": "voice",
+      "idempotencyKey": "voice:status:fixture"
+    },
+    "availableReadOnly": true
+  },
+  {
+    "name": "spoken artifacts",
+    "transcript": "Where is the page and what files were created?",
+    "request": {
+      "schemaVersion": 1,
+      "intent": "firstmate_artifacts",
+      "channel": "voice",
+      "idempotencyKey": "voice:artifacts:fixture"
+    },
+    "availableReadOnly": true
+  },
+  {
+    "name": "plan approval is defined but unavailable",
+    "transcript": "I approve the current plan.",
+    "request": {
+      "schemaVersion": 1,
+      "intent": "firstmate_approve_current_plan",
+      "channel": "voice",
+      "idempotencyKey": "voice:approval:fixture",
+      "expectedRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "availableReadOnly": false
+  },
+  {
+    "name": "pause is defined but unavailable",
+    "transcript": "Pause the current work.",
+    "request": {
+      "schemaVersion": 1,
+      "intent": "firstmate_pause",
+      "channel": "voice",
+      "idempotencyKey": "voice:pause:fixture",
+      "expectedRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "availableReadOnly": false
+  },
+  {
+    "name": "cancel is defined but unavailable",
+    "transcript": "Cancel this workflow.",
+    "request": {
+      "schemaVersion": 1,
+      "intent": "firstmate_cancel",
+      "channel": "voice",
+      "idempotencyKey": "voice:cancel:fixture",
+      "expectedRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "availableReadOnly": false
+  },
+  {
+    "name": "design answer is defined but unavailable",
+    "transcript": "The deadline is six weeks.",
+    "request": {
+      "schemaVersion": 1,
+      "intent": "firstmate_answer_design_question",
+      "channel": "voice",
+      "idempotencyKey": "voice:design-answer:fixture",
+      "expectedRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "answer": "The deadline is six weeks."
+    },
+    "availableReadOnly": false
+  },
+  {
+    "name": "ambiguous speech has no typed request",
+    "transcript": "Yes, well, maybe do that thing.",
+    "request": null,
+    "availableReadOnly": false
+  }
+]

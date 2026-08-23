@@ -121,6 +121,14 @@ delivery preview. It never pushes, opens a pull request, merges, publishes, or
 changes the shared checkout. Those actions require a separate future delivery
 approval.
 
+Terminal status/result queries and the simple dashboard now share one versioned
+read-only First Mate application service. It exposes only status, current
+design, current plan, candidate artifacts, and technical evidence; reads append
+no events and cannot launch, approve, validate, clean, deliver, or publish. The
+same bounded service is the intended foundation for a future local MCP/plugin
+and voice adapter, so those interfaces do not become a second workflow
+controller.
+
 Capability packs are advisory. Their versioned, content-addressed context,
 specification, slice, baseline policy, and review artifacts live in the same
 WorkflowRun event stream. Packs cannot emit lifecycle events, launch workers,

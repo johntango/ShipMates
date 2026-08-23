@@ -2,15 +2,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import express from "express";
+import { FirstMateApplicationService } from "../firstmate/application-service.js";
 import { ReconciliationEngine } from "../reconciliation/reconciliation-engine.js";
 import { projectOperationalState } from "../projections/operational-state.js";
 import { projectTaskPresentation } from "../projections/task-presentation.js";
-import {
-  projectWorkflowRun, workflowCandidateArtifacts, workflowExecutionMilestones,
-  workflowTechnicalEvidence,
-} from "../workflow-run/projection.js";
-import { readWorkflowRunValidationProgress, readWorkflowRunVisibility } from "../workflow-run/adapters.js";
-import { renderValidationActivity } from "../workflow-run/progress.js";
 
 export class ShipMatesDashboardServer {
   constructor({
@@ -19,6 +14,7 @@ export class ShipMatesDashboardServer {
     projectStore = null,
     watchdog = null,
     workflowRunStore = null,
+    firstMateApplicationService = null,
     workflowWorkspaceMaintenance = null,
     onWorkflowIntent = null,
     onCommand,
@@ -38,6 +34,7 @@ export class ShipMatesDashboardServer {
     this.projectStore = projectStore;
     this.watchdog = watchdog;
     this.workflowRunStore = workflowRunStore;
+    this.firstMateApplicationService = firstMateApplicationService;
     this.workflowWorkspaceMaintenance = workflowWorkspaceMaintenance;
     this.onWorkflowIntent = onWorkflowIntent;
     this.onCommand = onCommand;
@@ -237,6 +234,7 @@ export class ShipMatesDashboardServer {
       projectStore: this.projectStore,
       watchdog: this.watchdog,
       workflowRunStore: this.workflowRunStore,
+      firstMateApplicationService: this.firstMateApplicationService,
       workflowWorkspaceMaintenance: this.workflowWorkspaceMaintenance,
       ...options,
     });
@@ -250,6 +248,7 @@ export class ShipMatesDashboardServer {
 export async function buildDashboardState({
   store, projectContext, projectStore = null, watchdog = null,
   workflowRunStore = null,
+  firstMateApplicationService = null,
   workflowWorkspaceMaintenance = null,
   workflowHistoryOffset = 0,
   workflowHistoryLimit = 10,
@@ -276,69 +275,21 @@ export async function buildDashboardState({
   const selectedProject = projectStore && typeof projectStore.active === "function"
     ? await projectStore.active() : null;
   const taskById = new Map(tasks.map((task) => [task.id, task]));
-  const allWorkflowRuns = workflowRunStore
-    ? [...await workflowRunStore.list()].sort((left, right) =>
-        Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
-    : [];
-  const historicalWorkflowRuns = allWorkflowRuns.slice(1);
-  const listedWorkflowRuns = allWorkflowRuns.length ? [
-    allWorkflowRuns[0],
-    ...historicalWorkflowRuns.slice(
-      workflowHistoryOffset,
-      workflowHistoryOffset + workflowHistoryLimit,
-    ),
-  ] : [];
-  const workflowRuns = workflowRunStore
-    ? await Promise.all(listedWorkflowRuns.map(async (run, index) => {
-        const visibility = await readWorkflowRunVisibility({
-          stateRoot: workflowRunStore.rootDir,
-          operationId: run.validation?.operationId,
-        });
-        const validationActivity = await readWorkflowRunValidationProgress({
-          stateRoot: workflowRunStore.rootDir,
-          operationId: run.validation?.operationId,
-        });
-        const projectedRun = {
-          ...run,
-          ...(visibility ? { visibility } : {}),
-          ...(validationActivity ? {
-            validationActivity,
-            validationActivityMessage: renderValidationActivity(validationActivity, { visibility }),
-          } : {}),
-        };
-        const presentation = projectWorkflowRun(projectedRun);
-        return {
-          phase: presentation.phase,
-          action: run.phase === "awaiting_approval"
-            ? "approve"
-            : run.phase === "awaiting_validation_decision"
-              ? "approve_validation"
-              : "status",
-          request: run.request,
-          plan: run.plan,
-          updatedAt: run.updatedAt,
-          current: index === 0,
-          presentation,
-          candidate: workflowCandidateArtifacts(run),
-          milestones: workflowExecutionMilestones(projectedRun),
-          technicalEvidence: workflowTechnicalEvidence(projectedRun),
-          ...(run.capability ? { capability: {
-            mode: run.capability.context?.content?.mode || null,
-            modeReason: run.capability.context?.content?.modeReason || null,
-            spec: run.capability.spec?.content || null,
-            slice: run.capability.slice?.content || null,
-            review: run.capability.artifacts?.find(({ kind }) => kind === "review.recorded")?.content || null,
-          } } : {}),
-          ...(run.projectCycle?.roadmap ? { projectCycle: {
-            mode: run.projectCycle.pack.name,
-            current: run.projectCycle.roadmap.content.currentCycle,
-            currentSlice: run.projectCycle.roadmap.content.nextSlice,
-            next: run.projectCycle.nextRoadmap?.content || null,
-            completed: run.projectCycle.completion?.content || null,
-          } } : {}),
-        };
-      }))
-    : [];
+  const application = workflowRunStore
+    ? firstMateApplicationService || new FirstMateApplicationService({ workflowRunStore })
+    : null;
+  const workflowProjection = application
+    ? await application.listWorkflowRuns({
+        historyOffset: workflowHistoryOffset,
+        historyLimit: workflowHistoryLimit,
+      })
+    : {
+        workflowRuns: [],
+        workflowHistory: {
+          offset: workflowHistoryOffset, limit: workflowHistoryLimit,
+          total: 0, nextOffset: workflowHistoryOffset, hasMore: false,
+        },
+      };
   const workspaceMaintenance = workflowWorkspaceMaintenance
     ? await workflowWorkspaceMaintenance.inventory()
     : null;
@@ -357,14 +308,8 @@ export async function buildDashboardState({
       ...projectProjection(project, taskById), selected: project.id === selectedProject?.id,
     })),
     tasks: workflowRunStore ? [] : tasks.slice(0, 30),
-    workflowRuns,
-    workflowHistory: {
-      offset: workflowHistoryOffset,
-      limit: workflowHistoryLimit,
-      total: historicalWorkflowRuns.length,
-      nextOffset: workflowHistoryOffset + Math.max(0, listedWorkflowRuns.length - 1),
-      hasMore: workflowHistoryOffset + Math.max(0, listedWorkflowRuns.length - 1) < historicalWorkflowRuns.length,
-    },
+    workflowRuns: workflowProjection.workflowRuns,
+    workflowHistory: workflowProjection.workflowHistory,
     workspaceMaintenance: workspaceMaintenance ? {
       counts: workspaceMaintenance.counts,
       summary: renderWorkspaceSummary(workspaceMaintenance),
