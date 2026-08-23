@@ -1,0 +1,20 @@
+{
+  "name": "shipmates-local",
+  "interface": {
+    "displayName": "ShipMates Local"
+  },
+  "plugins": [
+    {
+      "name": "firstmate-readonly",
+      "source": {
+        "source": "local",
+        "path": "./plugins/firstmate-readonly"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
