@@ -22,8 +22,12 @@ guess one:
 SHIPMATES_STATE_DIR=/absolute/path/to/state npm run firstmate:mcp
 ```
 
-The plugin's bundled MCP entrypoint delegates to that command. It is for local
-development only and is not an HTTP endpoint or a published plugin.
+The plugin's bundled CommonJS entrypoint delegates to that command. Installed
+plugin caches do not preserve the plugin source's relationship to this
+repository, so the launcher resolves the checkout from
+`SHIPMATES_REPOSITORY_ROOT` when set, or from the parent of the explicitly
+configured `SHIPMATES_STATE_DIR`. It is for local development only and is not
+an HTTP endpoint or a published plugin.
 
 Run the package validation from the repository root:
 

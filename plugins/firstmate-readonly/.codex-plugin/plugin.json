@@ -1,6 +1,6 @@
 {
   "name": "firstmate-readonly",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20260823171427",
   "description": "Read durable First Mate workflow status and evidence from a local ShipMates session.",
   "author": {
     "name": "ShipMates"
@@ -12,7 +12,9 @@
     "longDescription": "A local, read-only view of First Mate's durable workflow status, design, plan, artifacts, and evidence. It cannot approve, launch, modify, clean, or publish work.",
     "developerName": "ShipMates",
     "category": "Productivity",
-    "capabilities": ["Read"],
+    "capabilities": [
+      "Read"
+    ],
     "defaultPrompt": [
       "Ask First Mate for the current workflow status.",
       "Show the current First Mate plan and the candidate artifacts."

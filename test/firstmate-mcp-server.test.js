@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -115,5 +115,28 @@ test("plugin package declares only the local read-only MCP server", async () => 
   assert.deepEqual(manifest.interface.capabilities, ["Read"]);
   assert.equal(Object.keys(mcp).join(","), "mcpServers");
   assert.equal(mcp.mcpServers[FIRSTMATE_MCP_SERVER_NAME].command, "node");
+  assert.deepEqual(mcp.mcpServers[FIRSTMATE_MCP_SERVER_NAME].args,
+    ["${PLUGIN_ROOT}/scripts/firstmate-mcp.cjs"]);
   assert.doesNotMatch(JSON.stringify(mcp), /https?:|shell|git|publish/iu);
+});
+
+test("installed plugin launcher starts outside the repository tree", async (t) => {
+  const cacheRoot = await mkdtemp(path.join(tmpdir(), "firstmate-plugin-cache-"));
+  const pluginRoot = path.join(cacheRoot, "firstmate-readonly", "0.1.0");
+  await cp(path.resolve("plugins/firstmate-readonly"), pluginRoot, { recursive: true });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(pluginRoot, "scripts/firstmate-mcp.cjs")],
+    cwd: cacheRoot,
+    env: {
+      ...process.env,
+      SHIPMATES_STATE_DIR: path.resolve(".firstmate-mcp-test-state"),
+    },
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "firstmate-plugin-cache-test", version: "1.0.0" });
+  t.after(() => transport.close());
+  await client.connect(transport);
+  const listed = await client.listTools();
+  assert.deepEqual(listed.tools.map(({ name }) => name).sort(), TOOL_NAMES);
 });
