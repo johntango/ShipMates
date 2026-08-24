@@ -4,13 +4,11 @@ const { pathToFileURL } = require("node:url");
 
 const repositoryRoot = process.env.SHIPMATES_REPOSITORY_ROOT
   ? path.resolve(process.env.SHIPMATES_REPOSITORY_ROOT)
-  : process.env.SHIPMATES_STATE_DIR
-    ? path.dirname(path.resolve(process.env.SHIPMATES_STATE_DIR))
-    : null;
+  : null;
 
 if (!repositoryRoot) {
   process.stderr.write(
-    "First Mate MCP launcher requires SHIPMATES_REPOSITORY_ROOT or SHIPMATES_STATE_DIR.\n",
+    "First Mate MCP launcher requires SHIPMATES_REPOSITORY_ROOT.\n",
   );
   process.exitCode = 1;
 } else {

@@ -122,6 +122,7 @@ test("plugin package declares only the local read-only MCP server", async () => 
 
 test("installed plugin launcher starts outside the repository tree", async (t) => {
   const cacheRoot = await mkdtemp(path.join(tmpdir(), "firstmate-plugin-cache-"));
+  const stateRoot = await mkdtemp(path.join(tmpdir(), "firstmate-plugin-state-"));
   const pluginRoot = path.join(cacheRoot, "firstmate-readonly", "0.1.0");
   await cp(path.resolve("plugins/firstmate-readonly"), pluginRoot, { recursive: true });
   const transport = new StdioClientTransport({
@@ -130,7 +131,8 @@ test("installed plugin launcher starts outside the repository tree", async (t) =
     cwd: cacheRoot,
     env: {
       ...process.env,
-      SHIPMATES_STATE_DIR: path.resolve(".firstmate-mcp-test-state"),
+      SHIPMATES_REPOSITORY_ROOT: path.resolve(),
+      SHIPMATES_STATE_DIR: stateRoot,
     },
     stderr: "pipe",
   });
