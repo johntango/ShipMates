@@ -106,7 +106,15 @@ export async function reconcileCompletedValidationApproval(taskId, {
   schedule = setImmediate,
   onProgress = (value) => console.error(`[no-mistakes] ${value}`),
 } = {}) {
-  const snapshot = await store.getSnapshot(taskId);
+  let snapshot;
+  try {
+    snapshot = await store.getSnapshot(taskId);
+  } catch (error) {
+    // A legacy project can retain a historical attempt after its task ledger
+    // has been removed. It cannot have a validation result to adopt.
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
   const prior = snapshot.validationRuns?.at(-1);
   const intentIndex = prior?.command?.args?.indexOf("--intent") ?? -1;
   const intent = intentIndex >= 0 ? prior.command.args[intentIndex + 1] : null;

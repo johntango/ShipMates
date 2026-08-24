@@ -130,6 +130,21 @@ test("fails closed on corrupt JSONL", async (t) => {
   );
 });
 
+test("ignores an incomplete legacy task directory without hiding durable tasks", async (t) => {
+  const rootDir = await temporaryState(t);
+  const store = new TaskStore({
+    rootDir,
+    processIdentity: (pid) => pid === process.pid ? "current-process" : null,
+  });
+  await createTask(store);
+  await mkdir(path.join(rootDir, "tasks", "task-incomplete-001", "local-execution"), {
+    recursive: true,
+  });
+
+  assert.deepEqual(await store.listTaskIds(), ["ledger-test-001"]);
+  assert.equal((await store.getSnapshot("ledger-test-001")).eventsCount, 1);
+});
+
 test("times out instead of stealing a live task lease", async (t) => {
   const rootDir = await temporaryState(t);
   const claimsDir = path.join(rootDir, "tasks", "ledger-test-001", "write.lock.claims");

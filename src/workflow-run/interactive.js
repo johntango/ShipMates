@@ -1,11 +1,16 @@
 import { renderWorkflowRun } from "./projection.js";
 import {
+  FirstMateApplicationService, renderTypedArtifact,
+} from "../firstmate/application-service.js";
+import {
   artifact, isStatusIntent, parseCapabilityIntent, prepareCapabilityBundle, renderCapabilitySummary,
 } from "./capability-pack.js";
 import { renderProjectRoadmap } from "./project-cycle-pack.js";
 
 export class SimpleWorkflowConversation {
-  constructor({ store, controller, planner, context, maintenance = null } = {}) {
+  constructor({
+    store, controller, planner, context, maintenance = null, applicationService = null,
+  } = {}) {
     if (!store || !controller || typeof planner !== "function" || typeof context !== "function") {
       throw new TypeError("SimpleWorkflowConversation requires store, controller, planner, and context");
     }
@@ -14,6 +19,9 @@ export class SimpleWorkflowConversation {
     this.planner = planner;
     this.context = context;
     this.maintenance = maintenance;
+    this.applicationService = applicationService || new FirstMateApplicationService({
+      workflowRunStore: store,
+    });
     this.planningPromise = null;
     this.approvalQueued = false;
   }
@@ -43,19 +51,10 @@ export class SimpleWorkflowConversation {
     }
     if (isWorkflowFollowUp(message)) {
       if (this.planningPromise) return "Firstmate is still preparing and saving the short plan.";
-      const runs = await this.store.list();
-      const latest = runs[0];
-      if (!latest) return "No simple local workflow has been recorded yet.";
-      const selected = isCompletedResultFollowUp(message)
-        ? runs.find(({ phase }) => phase === "completed") || latest
-        : latest;
-      const lines = [renderWorkflowRun(selected)];
-      if (selected !== latest && latest.phase === "blocked") {
-        lines.push(
-          "Current status note: A newer workflow is blocked safely. That blocker is separate from the completed result above.",
-        );
-      }
-      return lines.join("\n");
+      return (await this.applicationService.execute(applicationRequest(
+        isCompletedResultFollowUp(message) ? "firstmate_artifacts" : "firstmate_status",
+        "terminal",
+      ))).text;
     }
     if (this.planningPromise) {
       return "Firstmate is still preparing the current short plan. No second request was started.";
@@ -166,10 +165,16 @@ export class SimpleWorkflowConversation {
         ? "Describe the goal after /spec. First Mate will capture read-only context and propose one bounded slice."
         : "No local capability workflow has been recorded yet. Start with /spec followed by the goal.";
     }
-    if (command === "status") return renderWorkflowRun(latest);
+    if (command === "status") return (await this.applicationService.execute(
+      applicationRequest("firstmate_status", "terminal"),
+    )).text;
     if (command === "roadmap" || command === "cycle") return renderProjectRoadmap(latest);
-    if (command === "details") return renderWorkflowRun(latest, { technical: true });
-    if (command === "spec") return renderArtifact("Specification", latest.capability?.spec);
+    if (command === "details") return (await this.applicationService.execute(
+      applicationRequest("firstmate_technical_evidence", "terminal"),
+    )).text;
+    if (command === "spec") return (await this.applicationService.execute(
+      applicationRequest("firstmate_current_design", "terminal"),
+    )).text;
     if (command === "plan") {
       if (argument && latest.phase === "completed" && latest.capability?.slice?.content) {
         const proposed = artifact("slice.followup_proposed", {
@@ -182,12 +187,14 @@ export class SimpleWorkflowConversation {
           artifact: proposed,
         }, `artifact:${proposed.digest}`);
         return [
-          renderArtifact("Proposed follow-up slice", updated.capability.followupSlice),
+          renderTypedArtifact("Proposed follow-up slice", updated.capability.followupSlice),
           "This later slice is not approved or scheduled. It requires its own scoped approval before implementation.",
           renderProjectRoadmap(updated),
         ].join("\n");
       }
-      return renderSlice(latest.capability, latest.phase);
+      return (await this.applicationService.execute(
+        applicationRequest("firstmate_current_plan", "terminal"),
+      )).text;
     }
     if (command === "build") {
       if (!active) return "No approved slice is waiting to build. Use /spec to propose a new bounded slice.";
@@ -272,26 +279,13 @@ export class SimpleWorkflowConversation {
   }
 }
 
-function renderArtifact(label, value) {
-  if (!value?.content) return `${label}: no typed artifact has been recorded.`;
-  return `${label}:\n${JSON.stringify(value.content, null, 2)}\nThis is advisory evidence inside the current WorkflowRun; it grants no authority.`;
-}
-
-function renderSlice(capability, phase) {
-  const slice = capability?.slice?.content;
-  const spec = capability?.spec?.content;
-  if (!slice || !spec) return "Selected slice: no typed artifact has been recorded.";
-  return [
-    `Selected slice: ${slice.title}`,
-    `Objective: ${slice.objective}`,
-    `Non-goals: ${spec.nonGoals.join("; ")}`,
-    `Acceptance checks: ${slice.acceptanceChecks.join("; ")}`,
-    `Validation: exact candidate head; ${slice.validationPolicy.baselineAtBase ? "record base-head behavior separately" : "use the approved acceptance policy as baseline"}; no remote delivery.`,
-    phase === "awaiting_approval"
-      ? "Next: Reply “I approve the plan” once to authorize this bounded slice."
-      : "Next: Ask for status to see the current execution evidence.",
-    "Detailed typed artifact remains available in durable diagnostic evidence.",
-  ].join("\n");
+function applicationRequest(intent, channel) {
+  return {
+    schemaVersion: 1,
+    intent,
+    channel,
+    idempotencyKey: `${channel}:${intent}`,
+  };
 }
 
 function reviewWorkerEvidence(run) {

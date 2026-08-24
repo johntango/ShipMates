@@ -779,11 +779,22 @@ export class TaskStore {
       if (error.code === "ENOENT") return [];
       throw error;
     }
-    return entries
+    const candidates = entries
       .filter((entry) => entry.isDirectory() &&
         /^[a-z0-9][a-z0-9._-]{2,63}$/u.test(entry.name))
-      .map(({ name }) => name)
-      .sort();
+      .map(({ name }) => name);
+
+    const durable = await Promise.all(candidates.map(async (taskId) => {
+      try {
+        return (await stat(this.#eventsPath(taskId))).isFile() ? taskId : null;
+      } catch (error) {
+        // An interrupted or manually removed legacy task directory has no
+        // durable ledger. It is not a task and must not break startup recovery.
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }
+    }));
+    return durable.filter(Boolean).sort();
   }
 
   async withExclusiveLock(lockId, operation) {
