@@ -11,6 +11,8 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { NoMistakesController } from "../control/no-mistakes-controller.js";
+
 const execFileAsync = promisify(execFile);
 
 export const LOCAL_ONLY_SKIP_STEPS = Object.freeze([
@@ -669,14 +671,14 @@ function localOnlyEnvironment({ stateRoot, taskId, taskRoot }) {
     delete env[name];
   }
   const resolvedTaskRoot = taskRoot || path.join(stateRoot, taskId);
-  return {
+  return new NoMistakesController().gateEnvironment({
     ...env,
     NM_HOME: resolvedTaskRoot,
     GH_CONFIG_DIR: path.join(resolvedTaskRoot, "empty-gh"),
     GLAB_CONFIG_DIR: path.join(resolvedTaskRoot, "empty-glab"),
     NO_MISTAKES_TELEMETRY: "0",
     NO_MISTAKES_NO_UPDATE_CHECK: "1",
-  };
+  });
 }
 
 function validateLocalSteps(steps, { terminal }) {

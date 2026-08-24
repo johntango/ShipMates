@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { validateWorkerReport } from "../adapters/codex-worker.js";
+import { NoMistakesController } from "../control/no-mistakes-controller.js";
 
 export class CodexShipWorkflow {
   constructor({
     store, runtime, worktreeManager, schemaPath, actor = "firstmate", observer = null,
+    noMistakesController = new NoMistakesController(),
   } = {}) {
     if (!store || !runtime || !worktreeManager || !schemaPath ||
       typeof runtime.run !== "function" ||
@@ -23,12 +25,14 @@ export class CodexShipWorkflow {
     this.actor = actor;
     this.observer = observer;
     this.backend = runtime.backend || "codex-cli";
+    this.noMistakesController = noMistakesController;
   }
 
   async run({ taskId, workerId = "implementer", brief }) {
     validateIdentifier("workerId", workerId);
     requireText("brief", brief);
     let snapshot = await this.store.getSnapshot(taskId);
+    this.noMistakesController.assertAllowed("worker.start", { snapshot });
     const existing = snapshot.workers.find(({ id }) => id === workerId);
     const briefSha256 = digest(brief);
     if (existing) {

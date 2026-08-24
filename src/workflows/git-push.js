@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { NoMistakesController } from "../control/no-mistakes-controller.js";
 
 export class ExactHeadPushWorkflow {
   constructor({
     store, pushAdapter, readGateway, actor = "firstmate", idFactory = randomUUID,
+    noMistakesController = new NoMistakesController(),
   } = {}) {
     if (!store || !pushAdapter || !readGateway ||
       typeof pushAdapter.inspect !== "function" ||
@@ -20,6 +22,7 @@ export class ExactHeadPushWorkflow {
     this.readGateway = readGateway;
     this.actor = actor;
     this.idFactory = idFactory;
+    this.noMistakesController = noMistakesController;
   }
 
   async approve({
@@ -64,6 +67,7 @@ export class ExactHeadPushWorkflow {
     validateIdentifier("operationId", operationId);
     validateIdentifier("approvalId", approvalId);
     let snapshot = await this.store.getSnapshot(taskId);
+    this.noMistakesController.assertAllowed("branch.push", { snapshot });
     const expected = binding({ repository, branch, headSha });
     validateTaskTarget(snapshot, expected);
     const existing = snapshot.gitPushes.find(({ operationId: id }) =>

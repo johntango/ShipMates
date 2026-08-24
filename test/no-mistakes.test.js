@@ -105,6 +105,7 @@ test("runs a passing validator with remote-capable steps disabled", async () => 
   assert.equal(invocation.options.env.GH_TOKEN, undefined);
   assert.equal(invocation.options.env.GITHUB_TOKEN, undefined);
   assert.equal(invocation.options.env.NO_MISTAKES_TELEMETRY, "0");
+  assert.equal(invocation.options.env.NO_MISTAKES_GATE, "1");
   assert.match(invocation.options.env.GH_CONFIG_DIR, /empty-gh$/u);
   assert.deepEqual(progress, ["Starting validation pipeline", "Running tests"]);
   assert.deepEqual(visibility, [{
