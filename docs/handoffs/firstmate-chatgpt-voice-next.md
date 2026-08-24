@@ -136,8 +136,8 @@ Wrap the Stage 1 service in a narrow local MCP server and package it as a First
 Mate plugin with minimal metadata. Do not expose the database, filesystem,
 shell, Git, controller, Implementer, or no-mistakes as tools.
 
-**Completed locally on `codex/firstmate-application-service`:** the repository
-now contains the `firstmate-readonly` plugin package and a stdio MCP server
+**Completed locally:** the repository now contains the `firstmate-readonly`
+plugin package and a stdio MCP server
 using the official MCP TypeScript SDK. It offers only the five Stage 1 read
 intents, declares every tool read-only/non-destructive/non-open-world, requires
 an explicit `SHIPMATES_STATE_DIR`, and returns the same application-service
@@ -274,15 +274,17 @@ For all cases assert:
 - adapter failure does not corrupt or block the core workflow;
 - consequential actions require the same or stronger approval as today.
 
-## Recommended first development slice
+## Recommended next development slice
 
-Implement Stages 0 and 1 only: the versioned application-service contract plus
-read-only status/design/plan/artifact/evidence methods, with golden parity tests
-against current terminal and dashboard projections.
+Stages 0 through 2 are implemented locally: the versioned application-service
+contract, shared read-only terminal/dashboard projections, and the local
+read-only MCP plugin. A transcript-only voice adapter also provides the
+portable Stage 3 fallback without storing audio or adding workflow authority.
 
-Do not start with audio, Realtime, plugin publication, or approval tools. This
-slice proves that every future interface can share one truthful First Mate
-boundary before any host-specific behavior is introduced.
+Continue with the Stage 3 host compatibility spike. Verify whether the current
+ChatGPT/Codex voice surface can invoke the installed read-only tools; document
+one supported voice path and the text fallback. Do not proceed to publication
+or controlled intents until the Stage 3 exit criteria are met.
 
 ## Non-goals for the first release
 
@@ -302,7 +304,8 @@ boundary before any host-specific behavior is introduced.
 3. Inventory active First Mate processes, saved-state roots, worktrees, leases,
    branches, and stashes before mutation.
 4. Create a fresh feature branch from current main.
-5. Implement Stage 0 and Stage 1 behind a compatibility-preserving boundary.
+5. Verify the completed Stages 0 through 2, then perform only the Stage 3 host
+   compatibility spike and document its supported voice and text paths.
 6. Run focused projection/dashboard/WorkflowRun tests and the repository suite;
    distinguish established environmental failures from candidate regressions.
 7. Stop at the stage exit gate and report evidence. Do not push or open a PR
